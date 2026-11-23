@@ -61,7 +61,7 @@ namespace
         { "0-2", "KICKERS AND TIES", level_kind::kickers, 20, 17, true },
         { "1-1", "SB SHOVE OR FOLD 10BB", level_kind::push_sb, 20, 17, true },
         { "1-2", "BB CALL OR FOLD 10BB", level_kind::call_bb, 20, 17, true },
-        { "MD-1", "OUTS AND THE RULE OF 4", level_kind::math_outs, 10, 8, true },
+        { "MD-1", "OUTS: RULE OF 4", level_kind::math_outs, 10, 8, true },
         { "MD-2", "POT ODDS", level_kind::math_pot_odds, 10, 8, true },
     };
 
@@ -223,7 +223,7 @@ namespace
     {
         bn::vector<bn::sprite_ptr, 32> sprites;
         t.big.generate(0, -44, "POKET GTO", sprites);
-        t.small.generate(0, -24, "LEARN POKER, ONE DECISION AT A TIME", sprites);
+        t.small.generate(0, -24, "ONE DECISION AT A TIME", sprites);
         bn::vector<bn::sprite_ptr, 8> blink;
         int timer = 0;
 
@@ -379,8 +379,13 @@ namespace
                     right[2 + i] = c;
                 }
 
-                if(level.kind != level_kind::kickers ||
-                        category_of(evaluate(left, 7)) == category_of(evaluate(right, 7)))
+                int left_category = category_of(evaluate(left, 7));
+                int right_category = category_of(evaluate(right, 7));
+                int gap = left_category > right_category ? left_category - right_category :
+                                                           right_category - left_category;
+                bool fits = level.kind == level_kind::kickers ? gap == 0 : gap >= (hand < 3 ? 2 : 1);
+
+                if(fits)
                 {
                     break;
                 }
@@ -423,6 +428,11 @@ namespace
             // Choose.
             feedback.clear();
 
+            if(hand < 3)
+            {
+                t.small.generate(0, 77, "LEFT/RIGHT: CHOOSE   A: OK", feedback);
+            }
+
             while(true)
             {
                 if(bn::keypad::left_pressed() && choice > 0)
@@ -461,6 +471,7 @@ namespace
             t.small.generate(-66, 48, category_names[category_of(left_score)], sprites);
             t.small.generate(66, 48, category_names[category_of(right_score)], sprites);
 
+            feedback.clear();   // drop the controls hint
             t.big.set_palette_item(ok ? gold_palette : ink_palettes[1]);
             t.big.generate(0, 4, ok ? "CORRECT!" : "WRONG", feedback);
             t.big.set_palette_item(common::variable_8x16_sprite_font.item().palette_item());
@@ -497,9 +508,18 @@ namespace
     }
 
     // Up to 4 option buttons on the bottom row; returns the chosen index.
+    // Controls hint shown under the buttons in the first decisions of a level (rule 6).
+    bool show_control_hint = false;
+
     int ask_options(texts& t, const char* const* labels, int count)
     {
-        bn::vector<bn::sprite_ptr, 24> sprites;
+        bn::vector<bn::sprite_ptr, 32> sprites;
+
+        if(show_control_hint)
+        {
+            t.small.generate(0, 77, "LEFT/RIGHT: CHOOSE   A: OK", sprites);
+        }
+
         int spacing = 240 / count;
         int xs[4] = {};
 
@@ -595,7 +615,7 @@ namespace
         t.small.set_left_alignment();
         t.small.generate(-116, -72, bn::string<48>(level.code) + "  " + level.name, sprites);
         t.small.set_right_alignment();
-        bn::string<16> counter("Q ");
+        bn::string<16> counter("QUESTION ");
         counter += bn::to_string<4>(question + 1);
         counter += "/";
         counter += bn::to_string<4>(level.hands);
@@ -603,10 +623,10 @@ namespace
         t.small.set_center_alignment();
     }
 
-    void show_verdict(texts& t, bn::ivector<bn::sprite_ptr>& sprites, bool ok)
+    void show_verdict(texts& t, bn::ivector<bn::sprite_ptr>& sprites, bool ok, bool half = false)
     {
         t.big.set_palette_item(ok ? gold_palette : ink_palettes[1]);
-        t.big.generate(0, 30, ok ? "CORRECT!" : "NOT QUITE", sprites);
+        t.big.generate(0, 30, ok ? "CORRECT!" : (half ? "HALF RIGHT" : "NOT QUITE"), sprites);
         t.big.set_palette_item(common::variable_8x16_sprite_font.item().palette_item());
     }
 
@@ -789,7 +809,9 @@ namespace
                 labels[i] = labels_storage[i].c_str();
             }
 
-            bool outs_ok = option_values[ask_options(t, labels, 4)] == outs;
+            show_control_hint = q < 2;
+            int outs_answer = option_values[ask_options(t, labels, 4)];
+            bool outs_ok = outs_answer == outs;
 
             sprites.clear();
             draw_header(t, sprites, level, q);
@@ -805,7 +827,7 @@ namespace
 
             sprites.clear();
             draw_header(t, sprites, level, q);
-            show_verdict(t, sprites, ok);
+            show_verdict(t, sprites, ok, outs_ok || equity_ok);
             bn::string<48> line(bn::to_string<4>(outs));
             line += " OUTS: ";
             line += draw_names[kind];
@@ -818,7 +840,12 @@ namespace
             line += bn::to_string<4>(outs * 4);
             line += "%";
             t.small.generate(0, 60, line, sprites);
-            t.small.generate(0, 72, "A: NEXT", sprites);
+            line = "YOU: ";
+            line += bn::to_string<4>(outs_answer);
+            line += outs_ok ? " OUTS OK   " : " OUTS X   ";
+            line += bn::to_string<4>(answer);
+            line += equity_ok ? "% OK   A: NEXT" : "% X   A: NEXT";
+            t.small.generate(0, 72, line, sprites);
             wait_for_a();
         }
 
@@ -860,9 +887,11 @@ namespace
             line += bn::to_string<4>(percent);
             line += "% POT)";
             t.small.generate(0, -18, line, sprites);
+            bn::string<48> bet_line = line;
             t.small.generate(0, 30, "EQUITY YOU NEED TO CALL? (%)", sprites);
 
             bool need_ok;
+            int need_answer = 0;
 
             if(q < 4)
             {
@@ -897,12 +926,14 @@ namespace
                     labels[i] = storage[i].c_str();
                 }
 
-                need_ok = option_values[ask_options(t, labels, 4)] == need;
+                show_control_hint = q < 2;
+                need_answer = option_values[ask_options(t, labels, 4)];
+                need_ok = need_answer == need;
             }
             else
             {
-                int answer = ask_number(t, "%", 30, 0, 100);
-                int diff = answer > need ? answer - need : need - answer;
+                need_answer = ask_number(t, "%", 30, 0, 100);
+                int diff = need_answer > need ? need_answer - need : need - need_answer;
                 need_ok = diff <= 2;
             }
 
@@ -912,7 +943,11 @@ namespace
             equity = equity < 1 ? 1 : equity;
             sprites.clear();
             draw_header(t, sprites, level, q);
+            line = "POT ";
+            line += bn::to_string<4>(pot);
+            line += " BB";
             t.big.generate(0, -40, line, sprites);
+            t.small.generate(0, -18, bet_line, sprites);
             line = "YOUR EQUITY: ";
             line += bn::to_string<4>(equity);
             line += "%";
@@ -929,7 +964,7 @@ namespace
 
             sprites.clear();
             draw_header(t, sprites, level, q);
-            show_verdict(t, sprites, ok);
+            show_verdict(t, sprites, ok, need_ok || decision_ok);
             line = "NEED = ";
             line += bn::to_string<4>(bet);
             line += " / (";
@@ -944,7 +979,12 @@ namespace
             t.small.generate(0, 48, line, sprites);
             line = equity >= need ? "EQUITY ABOVE NEED: CALL" : "EQUITY BELOW NEED: FOLD";
             t.small.generate(0, 60, line, sprites);
-            t.small.generate(0, 72, "A: NEXT", sprites);
+            line = "YOU: ";
+            line += bn::to_string<4>(need_answer);
+            line += need_ok ? "% OK   " : "% X   ";
+            line += call ? "CALL" : "FOLD";
+            line += decision_ok ? " OK   A: NEXT" : " X   A: NEXT";
+            t.small.generate(0, 72, line, sprites);
             wait_for_a();
         }
 
@@ -1062,6 +1102,7 @@ namespace
 
             constexpr const char* push_labels[2] = { "FOLD", "ALL-IN" };
             constexpr const char* call_labels[2] = { "FOLD", "CALL" };
+            show_control_hint = hand < 3;
             bool aggressive = ask_options(t, sb ? push_labels : call_labels, 2) == 1;
 
             bool right_action = ev > 0;
