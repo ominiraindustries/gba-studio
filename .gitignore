@@ -1,0 +1,22 @@
+# Toolchain and engine: installed by tools/scripts/install_toolchain.py (pinned versions, see tools/README.md)
+/toolchain/
+/engine/
+/tools/mgba/
+/tools/mesen/
+
+# Build outputs
+build/
+*.gba
+*.elf
+*.sav
+*.ss[0-9]
+!releases/**/*.gba
+run/
+
+# Python / harness state
+__pycache__/
+*.pyc
+.claude/worktrees/
+.claude/rom_archive/
+docs/datos/tareas.lock
+docs/datos/tareas.tmp
