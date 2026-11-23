@@ -21,6 +21,13 @@ Semillas: `_seed/sewer_art.py` (texturas, monstruos, atrezzo; usa `_seed/sewer_p
 (adornos), `_seed/delve_ui.py` + colores UI de `_seed/delve_art.py`. Las aberturas (puerta, arco, reja, escalera)
 conservan las máscaras exactas del arte anterior (`_seed/legacy/`), que el motor usa para recortar el muro.
 
+## Temas de mazmorra (G-36)
+
+Además de la cloaca (tema 1, estos `.aseprite`), `themes/<tema>/` guarda juegos completos con los mismos 20 `tex_*`
+(mismos nombres, tamaños y máscaras de abertura), su paleta propia de ~47 colores y las paletas de los adornos
+`deco_*`: hielo, mina entibada, sala de espejos, cripta de huesos, forja de lava, templo de raíces y madriguera de
+carne. Lista, cómo regenerar y decisiones abiertas: `themes/README.md`.
+
 ## Paleta del entorno (texturas, índices 0–63)
 
 Común a todas las texturas `tex_*` (43 colores usados, el resto negro). **0 = negro** (en `tex_bars`, `tex_arch` y
