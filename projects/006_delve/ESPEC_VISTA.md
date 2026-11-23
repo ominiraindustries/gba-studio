@@ -28,13 +28,17 @@ tres. El diseño del juego va en `DISENO.md`.
   `tools/build_view.py` los lee de ahí.
 - Objetos y monstruos de pie a 0,3 casillas del borde cercano de su casilla: escala 1,0 / 0,565 / 0,394 / 0,302
   (d = 1..4).
-- **Grosor de pared** (`wall_thick_64` = 8 texels = 1/8 de casilla): las caras siguen en las aristas y la losa
-  crece hacia fuera. Se ve en los extremos libres (cara lateral de la pared frontal de (d, x) junto a una casilla
-  abierta, piezas `cap`) y en los huecos: puertas, arcos, rejas y escalera llevan jambas, dintel y umbral con la piedra
-  girada y oscurecida, y la hoja / reja va hundida (puerta y reja a 1/2 del grosor, escalera al fondo). Todo lo
-  proyecta `tools/build_view.py` (trazado de rayos por píxel en el hueco).
-- **Adornos de pared** (antorcha, estandarte, cadenas, palanca): sprites `deco_*` sobre su cara (frontal: centro de la
-  cara frontal; lateral: centro de la cara lateral), escala = alto de la cara / 64 (`deco_ref_z10`), máx. 2; en las
+- **Grosor de pared** (G-29, tras jugar el usuario; modelo tipo Dungeon Hack): cada pared es una **losa centrada en
+  su arista** de grosor `wall_thick_64` = 24 texels (3/8 de casilla; se puede afinar entre 0,375 y 0,5). Todas las
+  caras quedan metidas 3/16 de casilla: las frontales en z = lejano − 3/16 y las laterales en |X| = l/2 − 3/16, así
+  que el pasillo visible es más estrecho que la casilla (5/8) y en los cruces se ve suelo y techo entre losas. Cada
+  vértice con alguna arista de pared es un **bloque** (cara frontal algo más oscura + cara lateral hacia el jugador):
+  así todo extremo libre de pared se ve como un bloque macizo a cualquier distancia. La textura entera se reparte
+  en el ancho de la cara (5/8); los bloques usan la piedra a la misma densidad. Puertas, arcos, rejas y escalera
+  llevan jambas, dintel y umbral tan hondos como la losa, con la hoja / reja en el centro (escalera al fondo). Todo lo
+  proyecta `tools/build_view.py` (trazado de rayos por píxel; cámara parametrizada con `cam_dz` y `yaw` para G-31).
+- **Adornos de pared** (antorcha, estandarte, cadenas, palanca): sprites `deco_*` sobre su cara metida (frontal: centro
+  de la cara frontal; lateral: centro de la cara lateral), escala = alto de la cara / 64 (`deco_ref_z10`), máx. 2; en las
   laterales la escala horizontal sigue el escorzo real frente al 0,32 del dibujo (0,6–1,5). Se oscurecen por bandas
   (d = 1: 60 %, d ≥ 2: 36 %; la llama no). Sólo se muestran si su cara es lo que se ve en su columna (no atraviesan
   paredes). Los nombres de los items están sólo en `include/dl_deco_items.h`.
@@ -43,6 +47,11 @@ tres. El diseño del juego va en `DISENO.md`.
   `tex_wall_stone_v1..v3` del artista). Al avanzar, la vista vieja se amplía 1,0 → 1,12 (3 imágenes en 6 f) y luego
   se dibuja la nueva; al retroceder, la nueva pasa de 1,12 a 1,0; al girar, deslizamiento lateral de 6 f; balanceo de
   1–2 px. Interruptores en `include/dl_fx.h`. Se compone por software sólo en la vista (el panel comparte BG2).
+- **Monstruos y objetos** (G-29): se ocultan si una cara opaca más cercana que ellos es lo que se ve en alguna columna
+  de los 3/4 centrales de su sprite (`dl::view::occluded`, misma propiedad de columnas que los adornos). No se
+  recortan con ventanas: hay 2 ventanas para todos los sprites y el arte deja margen transparente.
+- **Halo de antorcha** (G-29): mezcla aditiva (pesos 1 / 1) con una paleta que baja a negro en el borde, así el disco
+  no deja bordes rectos ni anillos sobre lo de detrás; intensidad por bandas 100 / 85 / 65 % (d = 0 / 1 / ≥ 2).
 - Puertas abiertas dejan ver lo que hay detrás; la puerta con cerradura usa `tex_door_locked` (provisional generada
   desde `tex_door` con banda y candado de hierro hasta que el artista la dibuje).
 

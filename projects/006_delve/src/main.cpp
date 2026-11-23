@@ -188,7 +188,9 @@ namespace
                 _painter.flip_page_now();
             }
 
-            bn::blending::set_transparency_alpha(bn::fixed(dl::deco::glow_alpha_x100) / 100);
+            // torch glow: additive light (bottom weight 1) with a palette that fades to black at the rim, so the
+            // disc never shows an edge over whatever is behind it (G-29; was a 40 % alpha blend of a bright disc)
+            bn::blending::set_transparency_weights(1, 1);
             create_deco_palettes();
             descend(0);
             message("UP: WALK   LEFT/RIGHT: TURN");
@@ -253,6 +255,7 @@ namespace
         bn::vector<deco_sprite, 24> _deco_info;
         bn::vector<bn::sprite_affine_mat_ptr, dl::view::max_decos> _deco_mats;
         bn::vector<int, dl::view::max_decos> _deco_mat_keys;
+        bn::vector<bn::sprite_palette_ptr, 3> _glow_palettes;     // torch glow light [d = 0 / 1 / >= 2]
         bn::vector<bn::sprite_palette_ptr, 4> _deco_palettes;     // [palette A / B][band d = 1 / d >= 2]
         int _flame_frame = 0;
         int _flame_timer = 0;
@@ -779,6 +782,15 @@ namespace
                         continue;
                     }
 
+                    // hidden when a wall nearer than the object is what the view shows anywhere across the middle
+                    // 3/4 of its sprite (the outer eighths are mostly the transparent margin of the art)
+                    int hw = (scale * (size * 3 / 8)).round_integer();
+
+                    if(dl::view::occluded(vx - hw, vx + hw, 32 * geo::object_z10(d)))
+                    {
+                        continue;
+                    }
+
                     bn::fixed sx = vx - 120;
                     bn::fixed sy = bn::fixed(geo::object_feet_y(d)) - scale * (size / 2) - 80;
                     object_sprite o{ ent, monster, spikes, sx, sy, scale, sx, sy, scale, monster_lerp_frames };
@@ -841,6 +853,24 @@ namespace
                             bn::span<const bn::color>(colors[p][b], 16), bn::bpp_mode::BPP_4).create_palette());
                 }
             }
+
+            // glow light per index of deco_torch_glow (1 = outer ring .. 7 = centre): added to the scene, so the
+            // rim adds nothing (index 1 rounds to black in 5-bit colour) and the centre adds a warm ~45 %
+            static bn::color glow_colors[3][16];
+            static constexpr int ramp_x100[8] = { 0, 2, 5, 9, 15, 22, 31, 42 };
+            static constexpr int band_glow_x100[3] = { 100, 85, 65 };   // d = 0, d = 1, d >= 2: small far halos need more
+
+            for(int b = 0; b < 3; ++b)
+            {
+                for(int i = 0; i < 16; ++i)
+                {
+                    int f = i < 8 ? ramp_x100[i] * band_glow_x100[b] : 0;   // x 10000
+                    glow_colors[b][i] = bn::color(31 * f / 10000, 22 * f / 10000, 11 * f / 10000);
+                }
+
+                _glow_palettes.push_back(bn::sprite_palette_item(
+                        bn::span<const bn::color>(glow_colors[b], 16), bn::bpp_mode::BPP_4).create_palette());
+            }
         }
 
         void clear_decos()
@@ -899,16 +929,16 @@ namespace
                 const dl::view::deco_place& p = gs.vis.decos[i];
                 const deco::art& a = deco::arts[p.kind];
                 int view = p.lateral ? (p.slot < 0 ? deco::VIEW_LEFT : deco::VIEW_RIGHT) : deco::VIEW_FRONT;
-                int z10 = p.lateral ? geo::deco_lateral_z10(p.d) : geo::deco_front_z10(p.d);
+                int z_u = p.lateral ? geo::deco_lateral_u(p.d) : geo::deco_front_u(p.d);
                 bn::fixed max_scale = bn::fixed(geo::deco_max_scale_x100) / 100;
-                bn::fixed vs = bn::min(bn::fixed(geo::deco_ref_z10) / z10, max_scale);
+                bn::fixed vs = bn::min(bn::fixed(geo::deco_ref_u) / z_u, max_scale);
                 bn::fixed hs = vs;
                 int l = p.slot < 0 ? -p.slot : p.slot;
 
                 if(p.lateral && dl::fx::enabled.lateral_squeeze)
                 {
-                    // real foreshortening |X| / Z = 5 l / z10 against the 0.32 the art is drawn with
-                    bn::fixed k = bn::fixed(5 * 100 * l) / (deco::lateral_squeeze_x100 * z10);
+                    // real foreshortening |X| / Z of the inset face against the 0.32 the art is drawn with
+                    bn::fixed k = bn::fixed(100 * geo::lateral_face_abs_u(l)) / (deco::lateral_squeeze_x100 * z_u);
                     hs = bn::min(vs * bn::max(bn::min(k, bn::fixed(1.5)), bn::fixed(0.6)), max_scale);
                 }
 
@@ -952,6 +982,7 @@ namespace
                     g.set_bg_priority(0);
                     g.set_z_order(4 * p.d + 3);     // behind its torch (no blending between sprites)
                     g.set_blending_enabled(true);
+                    g.set_palette(_glow_palettes[p.d < 2 ? p.d : 2]);
                     _deco_sprites.push_back(bn::move(g));
                     _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true, gx, gy });
                 }

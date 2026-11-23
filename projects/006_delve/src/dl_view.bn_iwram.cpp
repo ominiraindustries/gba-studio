@@ -35,7 +35,11 @@ namespace
         return uint8_t(64 + d * vd::lines + li);
     }
 
-    constexpr uint8_t cap_id = 250;
+    // vertex block of vertex row dv (Z = near(0) for dv = 0, far(dv - 1) otherwise) on lateral line index li
+    constexpr uint8_t vertex_id(int dv, int li)
+    {
+        return uint8_t(128 + dv * vd::lines + li);
+    }
 
     void blit_piece(uint16_t* page, const vd::piece& p)
     {
@@ -150,16 +154,77 @@ namespace
         return idx < 0 || (lv.ed[idx] & 15) != K_OPEN;
     }
 
-    bool open_edge(const level& lv, int idx)
-    {
-        return idx >= 0 && (lv.ed[idx] & 15) == K_OPEN;
-    }
-
     void add_deco(visibility& vis, int kind, int d, int slot, bool lateral)
     {
         if(kind != DECO_NONE && vis.ndecos < max_decos)
         {
             vis.decos[vis.ndecos++] = deco_place{ uint8_t(kind), uint8_t(d), int8_t(slot), uint8_t(lateral) };
+        }
+    }
+
+    bool visible_at(const visibility& vis, int d, int x)
+    {
+        return d >= 0 && d < rows && x >= -half && x <= half && vis.cell[d][x + half] >= 0;
+    }
+
+    // Slabs are centred on their edges (G-29), so the four slabs meeting at a vertex share a block there: drawn
+    // when any of its edges is a slab and one of its four cells is visible (front face + the side face towards
+    // the player; the painter's order hides what is behind nearer faces).
+    void draw_vertices(uint16_t* page, const level& lv, int cell, int dir, const visibility& vis, int dv)
+    {
+        static constexpr int lat_l[vd::lines] = { -7, 7, -5, 5, -3, 3, -1, 1 };
+        const int right = (dir + 1) & 3;
+        const int ra = dv - 1;      // row in front of the vertex (-1: behind the player's row)
+
+        for(int k = 0; k < vd::lines; ++k)
+        {
+            int l = lat_l[k];
+            int li = (l + vd::lines - 1) >> 1;
+            const vd::piece& pf = vd::vertex_front[dv][li];
+            const vd::piece& ps = vd::vertex_side[dv][li];
+
+            if(! pf.count && ! ps.count)
+            {
+                continue;
+            }
+
+            int xa = (l - 1) / 2;   // cells left and right of the line
+            int xb = xa + 1;
+
+            if(! visible_at(vis, ra, xa) && ! visible_at(vis, ra, xb) && ! visible_at(vis, dv, xa) &&
+                    ! visible_at(vis, dv, xb))
+            {
+                continue;
+            }
+
+            int caa = relative_cell(cell, dir, ra, xa);
+            int cab = relative_cell(cell, dir, ra, xb);
+            int cba = relative_cell(cell, dir, dv, xa);
+            bool front_a = caa < 0 || slab(lv, edge_index(caa, dir));
+            bool front_b = cab < 0 || slab(lv, edge_index(cab, dir));
+            bool lat_near = caa < 0 || slab(lv, edge_index(caa, right));     // line l, row in front of the vertex
+            bool lat_far = cba < 0 || slab(lv, edge_index(cba, right));
+
+            if(! (front_a || front_b || lat_near || lat_far))
+            {
+                continue;
+            }
+
+            // measured (G-29, tour max): both faces of every block 1.22 f -> 1.10 f with this culling. The side face is hidden behind the front wall of the inner cell in front of the vertex; the front
+            // face behind the lateral wall in front of it (beside the player's row it is behind the eye).
+            bool inner_front = l < 0 ? front_b : front_a;
+
+            if(ps.count && ! inner_front)
+            {
+                blit_piece(page, ps);
+                own(ps, vertex_id(dv, li));
+            }
+
+            if(pf.count && dv > 0 && ! lat_near)
+            {
+                blit_piece(page, pf);
+                own(pf, vertex_id(dv, li));
+            }
         }
     }
 
@@ -267,39 +332,9 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
 
     for(int d = rows - 1; d >= 0; --d)
     {
-        // free wall ends: side face of the front wall of (d, x) next to an open inner cell (wall thickness)
-        if(d < rows - 1)
-        {
-            static constexpr int cap_x[vd::cap_lines] = { -3, -2, -1, 1, 2, 3 };       // owner of the wall end
-            static constexpr int cap_xi[vd::cap_lines] = { -2, -1, 0, 0, 1, 2 };       // inner cell
+        // vertex blocks on the far edge of row d (Z = far(d)), outer lines first: behind the faces of row d
+        draw_vertices(page, lv, cell, dir, vis, d + 1);
 
-            for(int k = 0; k < vd::cap_lines; ++k)
-            {
-                int ci = vis.cell[d][cap_xi[k] + half];
-
-                if(ci < 0 || ! open_edge(lv, edge_index(ci, dir)))
-                {
-                    continue;
-                }
-
-                int co = relative_cell(cell, dir, d, cap_x[k]);
-
-                if(! slab(lv, co >= 0 ? edge_index(co, dir) : -1))
-                {
-                    continue;
-                }
-
-                int cn = relative_cell(cell, dir, d + 1, cap_xi[k]);
-
-                if(cn < 0 || ! open_edge(lv, edge_index(cn, cap_x[k] < 0 ? left : right)))
-                {
-                    continue;
-                }
-
-                blit_piece(page, vd::cap[d][k]);
-                own(vd::cap[d][k], cap_id);
-            }
-        }
 
         static constexpr int far_order[cols] = { -3, 3, -2, 2, -1, 1, 0 };
 
@@ -332,6 +367,7 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
         static constexpr int lat_x[vd::lines] = { -3, 3, -2, 2, -1, 1, 0, 0 };
         static constexpr int lat_l[vd::lines] = { -7, 7, -5, 5, -3, 3, -1, 1 };
 
+
         for(int k = 0; k < vd::lines; ++k)
         {
             int c = vis.cell[d][lat_x[k] + half];
@@ -359,6 +395,8 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
         }
     }
 
+    draw_vertices(page, lv, cell, dir, vis, 0);     // the blocks beside the player's own row
+
     // keep only the decorations whose face is what is seen around their anchor
     int n = 0;
 
@@ -375,6 +413,49 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
     }
 
     vis.ndecos = n;
+}
+
+bool occluded(int x0, int x1, int z_u)
+{
+    int c0 = geo::clamp(x0 >> 1, 0, owner_cols);
+    int c1 = geo::clamp((x1 + 1) >> 1, 0, owner_cols);
+
+    for(int c = c0; c < c1; ++c)
+    {
+        int id = owner[c];
+        int z;
+
+        if(id == 0)
+        {
+            continue;
+        }
+        else if(id < 64)
+        {
+            z = geo::front_face_u((id - 1) / cols);
+        }
+        else if(id < 128)
+        {
+            // lateral face of row d on line l: depth at this column from offset = 96 px * |X| / Z
+            int d = (id - 64) / vd::lines;
+            int l = 2 * ((id - 64) % vd::lines) - (vd::lines - 1);
+            int dist = 2 * c + 1 - geo::vp_x;
+            dist = dist < 0 ? -dist : dist;
+            z = dist ? geo::proj_num / 5 * geo::lateral_face_abs_u(l) / dist : geo::far_u(d);
+            z = geo::clamp(z, geo::near_u(d) + geo::wall_half_u, geo::far_u(d) - geo::wall_half_u);
+        }
+        else
+        {
+            int dv = (id - 128) / vd::lines;
+            z = (dv ? geo::far_u(dv - 1) : geo::near_u(0)) - geo::wall_half_u;
+        }
+
+        if(z < z_u)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void invalidate_minimap()

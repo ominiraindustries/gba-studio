@@ -62,8 +62,9 @@ OPENINGS = {
 # Wall variants "stem#k": the artist's tex_wall_stone_v<k>.bmp when it exists, else procedural from the base
 # (PROVISIONAL until drawn by hand): 1 = mirrored, 2 = courses shifted 21 texels, 3 = shifted 37 and mirrored.
 WALL_VARIANTS = {1: (0, True), 2: (21, False), 3: (37, True)}
-CAP_LINES = [-5, -3, -1, 1, 3, 5]     # free wall ends: side face of the front wall of (d, x) on line l
 JAMB_SHADE, SOFFIT_SHADE, SILL_SHADE, CONTENT_SHADE = 0.62, 0.48, 0.75, 0.9
+PILLAR_FRONT_SHADE = 0.72       # front face of a vertex block: a wall end reads as a block (user capture 2.png)
+MIN_Z = 0.05                    # near clip (cells)
 ART_EXPORT = os.path.join(PROJ, "art", "export")
 UI_FRAME = os.path.join(GFX, "ui_frame.bmp")
 # minimap colours (palette 240..247; ui_frame uses 192-209): floor, wall, player, door, bars, stairs, lever, dark
@@ -82,12 +83,19 @@ def parse_geometry():
 
 
 class Geo:
-    def __init__(self, g):
+    """View geometry. cam_dz (cells, + = forward) and yaw (radians, + = right) move the camera for sub-step /
+    sub-turn pieces (G-31); 0 / 0 is the resting view the game uses today. Every face is placed from near() / far()
+    and rays come from ray_dirs(), so both parameters reach every piece."""
+
+    def __init__(self, g, cam_dz=0.0, yaw=0.0):
         self.__dict__.update(g)
+        self.cam_dz = cam_dz
+        self.yaw = yaw
         self.F = g["proj_num"] / 5.0       # px per cell
+        self.h = g["wall_thick_64"] / 128.0  # half slab thickness (cells): faces are inset by h from the edges
 
     def near(self, d):
-        return 10 * d + 5 - self.eye_back_z10 + 4
+        return 10 * d + 5 - self.eye_back_z10 + 4 - 10.0 * self.cam_dz
 
     def far(self, d):
         return self.near(d) + 10
@@ -271,67 +279,87 @@ def sample(tex, u, v):
     return tex[tv, tu]
 
 
-def project_front(geo, tex, d, x):
-    """-> (x0, y0, rgba (h, w, 4), z) for the unclipped->clipped front face or None."""
-    z10 = geo.far(d)
-    ux0 = geo.vp_x + geo.off(2 * x - 1, z10)
-    ux1 = geo.vp_x + geo.off(2 * x + 1, z10)
-    hh = geo.off(1, z10)
-    uy0, uy1 = geo.vp_y - hh, geo.vp_y + hh
-    x0, x1 = max(ux0, 0), min(ux1, geo.view_w)
-    y0, y1 = max(uy0, 0), min(uy1, geo.view_h)
-    if x1 <= x0 or y1 <= y0:
+def face_px(geo, plane, c, a0, a1):
+    """Per-pixel ray hit of an axis-aligned wall face of unit height centred on the eye line.
+    plane "z": Z = c, X in [a0, a1); plane "x": X = c, Z in [a0, a1). -> (ok, depth Z, along, v) full-view arrays,
+    along = X for "z" faces and Z for "x" faces; v = 0 at the top of the wall."""
+    W, H = geo.view_w, geo.view_h
+    sy, sx = np.mgrid[0:H, 0:W]
+    rx, ry, rz = rays3(geo, sx, sy)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        if plane == "z":
+            t = c / rz
+            s = np.full(rx.shape, float(c))
+            along = rx * t
+        else:
+            t = c / rx
+            s = rz * t
+            along = s
+    ok = np.isfinite(t) & (t >= MIN_Z) & np.isfinite(along) & (along >= a0) & (along < a1)
+    t = np.where(ok, t, 1.0)
+    s = np.where(ok, s, 1.0)
+    Y = ry * t
+    ok &= (Y >= -0.5) & (Y < 0.5)
+    return ok, s, np.where(ok, along, a0), 0.5 - Y
+
+
+def crop(ok, img):
+    """-> (x0 even, y0, img, cov) of the bounding box, or None."""
+    if not ok.any():
         return None
-    sx = np.arange(x0, x1)
-    sy = np.arange(y0, y1)
-    u = (sx + 0.5 - ux0) / (ux1 - ux0)
-    v = (sy + 0.5 - uy0) / (uy1 - uy0)
-    U, V = np.meshgrid(u, v)
-    px = sample(tex, U, V).astype(float)
-    px[..., :3] *= shade(z10 / 10.0)
-    return x0, y0, px
+    ys, xs = np.nonzero(ok)
+    bx0, bx1 = xs.min() & ~1, (xs.max() + 2) & ~1
+    by0, by1 = ys.min(), ys.max() + 1
+    return bx0, by0, img[by0:by1, bx0:bx1], ok[by0:by1, bx0:bx1]
+
+
+def paint(img, ok, tex, u, v, k):
+    col = sample(tex, u, v).astype(float)
+    col[..., :3] *= k[..., None]
+    img[ok] = col[ok]
+
+
+def project_front(geo, tex, d, x):
+    """Front face of the (centred) slab on the far edge of (d, x): Z = far - h, X between the vertex blocks. The
+    whole texture is mapped across it. -> (x0, y0, rgba, cov) or None."""
+    h = geo.h
+    Z = geo.far(d) / 10.0 - h
+    xa, xb = x - 0.5 + h, x + 0.5 - h
+    ok, s, al, v = face_px(geo, "z", Z, xa, xb)
+    img = np.zeros(ok.shape + (4,), float)
+    paint(img, ok, tex, (al - xa) / (xb - xa), v, shade(s))
+    return crop(ok, img)
 
 
 def project_lateral(geo, tex, d, l):
-    """Lateral face of row d on line X = l/2, 2-px column granularity. -> (x0, y0, rgba) or None."""
-    zn, zf = geo.near(d) / 10.0, geo.far(d) / 10.0
-    X = l / 2.0
-    W, H = geo.view_w, geo.view_h
-    img = np.zeros((H, W, 4), float)
-    cov = np.zeros((H, W), bool)
-    any_px = False
-    for p in range(W // 2):
-        cx = 2 * p + 1.0                      # pair centre
-        dxc = cx - geo.vp_x
-        if dxc == 0 or (dxc > 0) != (X > 0):
-            continue
-        zc = geo.F * X / dxc
-        if zc < zn or zc > zf:
-            continue
-        hh = geo.F * 0.5 / zc
-        y0 = max(int(round(geo.vp_y - hh)), 0)
-        y1 = min(int(round(geo.vp_y + hh)), H)
-        if y1 <= y0:
-            continue
-        for sx in (2 * p, 2 * p + 1):
-            dx = sx + 0.5 - geo.vp_x
-            z = geo.F * X / dx if (dx > 0) == (X > 0) and dx != 0 else zc
-            z = min(max(z, zn), zf)
-            u = (z - zn) if X < 0 else 1.0 - (z - zn)
-            # vertical texture coordinate through the column's own wall height
-            sy = np.arange(y0, y1)
-            v = (sy + 0.5 - (geo.vp_y - hh)) / (2 * hh)
-            col = sample(tex, np.full_like(v, u), v).astype(float)
-            col[:, :3] *= shade(z)
-            img[y0:y1, sx] = col
-            cov[y0:y1, sx] = True
-            any_px = True
-    if not any_px:
-        return None
-    ys, xs = np.nonzero(cov)
-    bx0, bx1 = xs.min() & ~1, (xs.max() + 2) & ~1
-    by0, by1 = ys.min(), ys.max() + 1
-    return bx0, by0, img[by0:by1, bx0:bx1], cov[by0:by1, bx0:bx1]
+    """Side face of the slab on line X = l/2 in row d: X = l/2 -+ h (towards the viewer), Z between the vertex
+    blocks. -> (x0, y0, rgba, cov) or None."""
+    h = geo.h
+    X = l / 2.0 - np.sign(l) * h
+    za, zb = geo.near(d) / 10.0 + h, geo.far(d) / 10.0 - h
+    ok, s, al, v = face_px(geo, "x", X, za, zb)
+    t = (al - za) / (zb - za)
+    img = np.zeros(ok.shape + (4,), float)
+    paint(img, ok, tex, t if l < 0 else 1.0 - t, v, shade(s))
+    return crop(ok, img)
+
+
+def project_vertex(geo, stone, zv, l, front):
+    """Block of the slabs at the vertex (line X = l/2, Z = zv): its front face (darker) or its side face towards
+    the viewer. Stone at the texel density of the walls, so it continues the walls it joins."""
+    h = geo.h
+    L = l / 2.0
+    span = 1.0 - 2 * h
+    img = np.zeros((geo.view_h, geo.view_w, 4), float)
+    if front:
+        ok, s, al, v = face_px(geo, "z", zv - h, L - h, L + h)
+        paint(img, ok, stone, np.mod((al - (L - h)) / span, 1.0), v, PILLAR_FRONT_SHADE * shade(s))
+    else:
+        ok, s, al, v = face_px(geo, "x", L - np.sign(l) * h, zv - h, zv + h)
+        t = (al - (zv - h)) / span
+        paint(img, ok, stone, np.mod(t if l < 0 else 1.0 - t, 1.0), v, shade(s))
+    r = crop(ok, img)
+    return r[:3] if r else None
 
 
 def load_index(stem):
@@ -377,16 +405,25 @@ def cap_texture(stone):
 
 
 def thick(geo):
-    return geo.wall_thick_64 / float(TS)
+    return geo.wall_thick_64 / float(TS)     # whole slab (2h)
 
 
 def ray_dirs(geo, sx, sy):
+    """Ray of a view pixel per unit of camera depth: (X, Y) slopes; with a yaw also the Z per unit (rays3)."""
     return (sx + 0.5 - geo.vp_x) / geo.F, -(sy + 0.5 - geo.vp_y) / geo.F
+
+
+def rays3(geo, sx, sy):
+    """World ray (rx, ry, rz) per unit of camera depth, the camera turned by geo.yaw (rz = 1 when yaw = 0)."""
+    u, ry = ray_dirs(geo, sx, sy)
+    c, s = np.cos(geo.yaw), np.sin(geo.yaw)
+    return u * c + s, ry, c - u * s
 
 
 def march_fill(geo, img, cov, x0, y0, face, tex, mask, recess, cap):
     """Fills the hole pixels of a framed piece: jambs / soffit / sill of the slab and the recessed content.
-    face: ("z", Z, cell x) for a front face, ("x", X, zn, zf) for a lateral one."""
+    face: ("z", Z, xa, xb) for a front face, ("x", X, za, zb) for a lateral one (the face rectangle the texture
+    is mapped on; the slab goes on by 2h behind it)."""
     hole = cov & (img[..., 3] == 0)
     ys, xs = np.nonzero(hole)
     if len(xs) == 0:
@@ -404,11 +441,12 @@ def march_fill(geo, img, cov, x0, y0, face, tex, mask, recess, cap):
         with np.errstate(divide="ignore", invalid="ignore"):
             if face[0] == "z":
                 s = np.full(n, face[1] + q * T)
-                u = dx * s - (face[2] - 0.5)
+                u = (dx * s - face[2]) / (face[3] - face[2])
             else:
                 L = face[1]
                 s = (L + np.sign(L) * q * T) / dx
-                u = (s - face[2]) if L < 0 else 1.0 - (s - face[2])
+                t = (s - face[2]) / (face[3] - face[2])
+                u = t if L < 0 else 1.0 - t
         v = 0.5 - dy * s
         bad = ~np.isfinite(s) | (s <= 0)
         iu = np.floor(np.nan_to_num(u, nan=-1.0) * TS).astype(int)
@@ -446,33 +484,6 @@ def march_fill(geo, img, cov, x0, y0, face, tex, mask, recess, cap):
         prev_iu = cu
     fill = out[:, 3] > 0
     img[ys[fill], xs[fill]] = out[fill]
-
-
-def project_cap(geo, cap, d, l):
-    """Side face of a free wall end: line X = l/2 from the far edge of row d to the back of the slab."""
-    W, H = geo.view_w, geo.view_h
-    zf = geo.far(d) / 10.0
-    T = thick(geo)
-    X = l / 2.0
-    sy, sx = np.mgrid[0:H, 0:W]
-    dx, dy = ray_dirs(geo, sx, sy)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        s = X / dx
-    ok = np.isfinite(s) & (s >= zf) & (s <= zf + T)
-    Y = dy * np.nan_to_num(s)
-    ok &= (Y >= -0.5) & (Y < 0.5)
-    if not ok.any():
-        return None
-    s = np.where(ok, s, zf)
-    q = np.clip(((s - zf) / T * geo.wall_thick_64).astype(int), 0, TS - 1)
-    v = np.clip(((0.5 - Y) * TS).astype(int), 0, TS - 1)
-    img = np.zeros((H, W, 4), float)
-    img[..., :3] = cap[v, q][..., :3] * (JAMB_SHADE * shade(s))[..., None]
-    img[..., 3] = np.where(ok, 255, 0)
-    ys, xs = np.nonzero(ok)
-    bx0, bx1 = xs.min() & ~1, (xs.max() + 2) & ~1
-    by0, by1 = ys.min(), ys.max() + 1
-    return bx0, by0, img[by0:by1, bx0:bx1]
 
 
 def make_locked_placeholder():
@@ -643,28 +654,34 @@ def main():
             for x in range(-geo.max_lateral, geo.max_lateral + 1):
                 r = project_front(geo, face_t, d, x)
                 if r:
+                    x0, y0, img, cov = r
                     if mask is not None:
-                        x0, y0, img = r
-                        cov = np.ones(img.shape[:2], bool)
-                        march_fill(geo, img, cov, x0, y0, ("z", geo.far(d) / 10.0, x), t, mask, recess, cap)
-                    pieces.append(r)
-                    index.append((si, 0, d, x + geo.max_lateral))
+                        march_fill(geo, img, cov, x0, y0,
+                                   ("z", geo.far(d) / 10.0 - geo.h, x - 0.5 + geo.h, x + 0.5 - geo.h),
+                                   t, mask, recess, cap)
+                    if (img[..., 3] > 0).any():
+                        pieces.append((x0, y0, img))
+                        index.append((si, 0, d, x + geo.max_lateral))
             for li, l in enumerate(LATERALS):
                 r = project_lateral(geo, face_t, d, l)
                 if r:
                     x0, y0, img, cov = r
                     if mask is not None:
-                        march_fill(geo, img, cov, x0, y0, ("x", l / 2.0, geo.near(d) / 10.0, geo.far(d) / 10.0),
-                                   t, mask, recess, cap)
+                        march_fill(geo, img, cov, x0, y0,
+                                   ("x", l / 2.0 - np.sign(l) * geo.h, geo.near(d) / 10.0 + geo.h,
+                                    geo.far(d) / 10.0 - geo.h), t, mask, recess, cap)
                     if (img[..., 3] > 0).any():
                         pieces.append((x0, y0, img))
                         index.append((si, 1, d, li))
-    for d in range(geo.depths - 1):          # row 4 caps lie in the fog
-        for ci, l in enumerate(CAP_LINES):
-            r = project_cap(geo, cap, d, l)
-            if r:
-                pieces.append(r)
-                index.append((-1, 3, d, ci))
+    stone = tex("tex_wall_stone", 0)
+    for dv in range(geo.depths + 1):         # vertex rows: Z = near(0), far(0) .. far(4)
+        zv = (geo.near(0) if dv == 0 else geo.far(dv - 1)) / 10.0
+        for li, l in enumerate(LATERALS):
+            for kind, front in ((3, True), (5, False)):
+                r = project_vertex(geo, stone, zv, l, front)
+                if r:
+                    pieces.append(r)
+                    index.append((-1, kind, dv, li))
     for parity in (0, 1):
         pieces.append(project_floor_ceiling(geo, tex("tex_floor", 0), tex("tex_ceiling", 0), parity))
         index.append((-1, 2, 0, parity))
@@ -683,6 +700,8 @@ def main():
             spans.append((y, x2, n2, len(pix)))
             pix.extend(hw)
         ptab[(si, kind, d, slot)] = (first, len(spans) - first, x0 >> 1, (x0 + px.shape[1] + 1) >> 1)
+    if len(spans) >= 1 << 16:
+        sys.exit("build_view: too many spans for piece.first")
     if len(pix) >= 1 << 22:
         sys.exit("build_view: too much pixel data")
     nsets = len(SETS)
@@ -714,10 +733,11 @@ def main():
         lines.append("        {" + ",".join("{" + ",".join(pref((si, 1, d, s)) for s in range(len(LATERALS))) + "}"
                                             for d in range(geo.depths)) + "},")
     lines.append("    };\n")
-    lines.append("    const piece cap[depths][cap_lines] = {")
-    lines.append("        " + ",".join("{" + ",".join(pref((-1, 3, d, c)) for c in range(len(CAP_LINES))) + "}"
-                                     for d in range(geo.depths)) + ",")
-    lines.append("    };\n")
+    for name, kind in (("vertex_front", 3), ("vertex_side", 5)):
+        lines.append("    const piece %s[depths + 1][lines] = {" % name)
+        lines.append("        " + ",".join("{" + ",".join(pref((-1, kind, dv, c)) for c in range(len(LATERALS))) + "}"
+                                         for dv in range(geo.depths + 1)) + ",")
+        lines.append("    };\n")
     lines.append("    const piece background[2] = { %s, %s };\n" % (pref((-1, 2, 0, 0)), pref((-1, 2, 0, 1))))
     full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
     ui = Image.open(UI_FRAME).getpalette() if os.path.exists(UI_FRAME) else [0] * 768
@@ -744,8 +764,6 @@ def main():
            "    // opaque sets hide whatever is behind them (wall decorations behind them are not shown)",
            "    constexpr bool set_opaque[set_count] = { %s };" % ", ".join(
                "true" if q else "false" for _n, _s, _k, _o, q in SETS),
-           "    constexpr int cap_lines = %d;  // free wall end side faces on lines %s" % (
-               len(CAP_LINES), ", ".join(str(v) for v in CAP_LINES)),
            "    constexpr int depths = %d;" % geo.depths,
            "    constexpr int cols = %d;      // x = -%d..%d" % (2 * geo.max_lateral + 1, geo.max_lateral, geo.max_lateral),
            "    constexpr int lines = %d;     // lateral lines X = (2 * i - %d) / 2" % (len(LATERALS), len(LATERALS) - 1),
@@ -754,7 +772,9 @@ def main():
            "", "    extern const uint16_t pixels[];", "    extern const span spans[];",
            "    extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]",
            "    extern const piece lateral[set_count][depths][lines]; // [set][d][line]",
-           "    extern const piece cap[depths][cap_lines];       // [d][cap line]",
+           "    // block of the slabs at the vertex on line i at Z = near(0) (row 0) or far(row - 1): front / side face",
+           "    extern const piece vertex_front[depths + 1][lines];   // [vertex row][line]",
+           "    extern const piece vertex_side[depths + 1][lines];",
            "    extern const piece background[2];               // [player cell parity]",
            "    constexpr int wall_variants = 4;               // set_wall .. set_wall + 3", "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
     with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:

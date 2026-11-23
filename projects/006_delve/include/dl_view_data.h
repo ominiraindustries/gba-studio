@@ -44,7 +44,6 @@ namespace dl::view_data
 
     // opaque sets hide whatever is behind them (wall decorations behind them are not shown)
     constexpr bool set_opaque[set_count] = { true, true, true, true, true, true, true, true, true, false, false, false, true };
-    constexpr int cap_lines = 6;  // free wall end side faces on lines -5, -3, -1, 1, 3, 5
     constexpr int depths = 5;
     constexpr int cols = 7;      // x = -3..3
     constexpr int lines = 8;     // lateral lines X = (2 * i - 7) / 2
@@ -55,7 +54,9 @@ namespace dl::view_data
     extern const span spans[];
     extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]
     extern const piece lateral[set_count][depths][lines]; // [set][d][line]
-    extern const piece cap[depths][cap_lines];       // [d][cap line]
+    // block of the slabs at the vertex on line i at Z = near(0) (row 0) or far(row - 1): front / side face
+    extern const piece vertex_front[depths + 1][lines];   // [vertex row][line]
+    extern const piece vertex_side[depths + 1][lines];
     extern const piece background[2];               // [player cell parity]
     constexpr int wall_variants = 4;               // set_wall .. set_wall + 3
     extern const bn::color palette_colors[256];

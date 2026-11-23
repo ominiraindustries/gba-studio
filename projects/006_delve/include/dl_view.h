@@ -64,6 +64,11 @@ namespace dl::view
     // Draws the 176x120 view into `page` (the back page, 240 px wide, 2 px per uint16_t).
     BN_CODE_IWRAM void draw(uint16_t* page, const dl::gen::level& lv, const edge_state& es, int cell, int dir, visibility& vis);
 
+    // After draw(): true when an opaque face nearer than z_u (dl::geo u = 1/320 cell) is what the last draw() shows
+    // in any 2-px column of the view pixels [x0, x1). World sprites (monsters, props) standing at z_u use it to stay
+    // hidden behind walls.
+    [[nodiscard]] bool occluded(int x0, int x1, int z_u);
+
     // Minimap model: per-cell block keys. Reset after loading a floor; touch a cell when it becomes seen or one of
     // its edges changes state (door opened, lever pulled, bars raised: touch both cells of the edge).
     void minimap_reset(const dl::gen::level& lv, const edge_state& es, const uint8_t* seen);

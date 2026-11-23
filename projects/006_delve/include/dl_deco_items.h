@@ -59,7 +59,6 @@ namespace dl::deco
     inline constexpr const bn::sprite_item& torch_glow = bn::sprite_items::deco_torch_glow;
     inline constexpr int8_t glow_x[3] = { 16, 16, 15 };
     constexpr int glow_y = 12;
-    constexpr int glow_alpha_x100 = 40;
 
     // lateral art draws what is parallel to the wall squeezed to 0.32 (art/LÉEME.md)
     constexpr int lateral_squeeze_x100 = 32;
