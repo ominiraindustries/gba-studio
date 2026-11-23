@@ -109,20 +109,22 @@ class Game:
     def nb(c, d):
         return c + DX[d][0] + DX[d][1] * W
 
-    def blocked(self, avoid_traps):
+    def blocked(self, avoid_traps, monsters=True):
         b = set()
         for t, x, y, a, bb, cc in self.ents:
             if t == E_FURN and FURN_BLOCKS[cc if cc < 7 else 0]:
                 b.add(y * W + x)
             if avoid_traps and t == E_TRAP:
                 b.add(y * W + x)
-        for m in self.mons:
-            b.add(m["cell"])
+        if monsters:
+            for m in self.mons:
+                b.add(m["cell"])
         return b
 
-    def path(self, goal_cells, avoid_traps=True):
-        """BFS over cells from the player to any goal cell; returns the cell list (without the start)."""
-        block = self.blocked(avoid_traps) - set(goal_cells)
+    def path(self, goal_cells, avoid_traps=True, monsters=True):
+        """BFS over cells from the player to any goal cell; returns the cell list (without the start). Falls back
+        to walking over traps, then through monsters (the fight starts when one is adjacent)."""
+        block = self.blocked(avoid_traps, monsters) - set(goal_cells)
         prev = {self.cell: None}
         q = deque([self.cell])
         while q:
@@ -140,7 +142,9 @@ class Game:
                         prev[n] = c
                         q.append(n)
         if avoid_traps:
-            return self.path(goal_cells, False)
+            return self.path(goal_cells, False, monsters)
+        if monsters:
+            return self.path(goal_cells, False, False)
         return None
 
     def face(self, d):
@@ -324,7 +328,7 @@ def main():
     final.inputs = g.inputs
     final.run(total, shots, os.path.join(out, "route_sheet.png"))
     perf = {k: final.i32(k) for k in final.syms if k.startswith("test_") and k.endswith(("max_ticks", "_ticks_per_frame",
-            "max_x1000")) or k in ("test_deaths", "test_mode", "test_floor", "test_spike_hits")}
+            "max_x1000")) or k in ("test_deaths", "test_mode", "test_floor", "test_spike_hits", "test_palette_skips", "test_sprite_palettes_max")}
     print(json.dumps({"player": final.p, "shots": {s: labels.get(s) for s in shots}, "perf": perf}, indent=1))
 
 

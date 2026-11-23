@@ -50,7 +50,15 @@ namespace dl
             {
                 for(int bottom = 0; bottom < 2; ++bottom)
                 {
-                    bn::sprite_ptr s = bn::sprite_items::fx_edge_h.create_sprite(edge_h_x[i], bottom ? 116 - 80 : 4 - 80);
+                    bn::optional<bn::sprite_ptr> so = bn::sprite_items::fx_edge_h.create_sprite_optional(edge_h_x[i], bottom ? 116 - 80 : 4 - 80);
+
+                    if(! so)
+                    {
+                        _edge.clear();     // no sprite palette / OAM left: no edge this time
+                        return;
+                    }
+
+                    bn::sprite_ptr s = bn::move(*so);
                     s.set_vertical_flip(bottom);
                     s.set_bg_priority(0);
                     s.set_z_order(-50);
@@ -62,7 +70,15 @@ namespace dl
             {
                 for(int right = 0; right < 2; ++right)
                 {
-                    bn::sprite_ptr s = bn::sprite_items::fx_edge_v.create_sprite(right ? 172 - 120 : 4 - 120, edge_v_y[i]);
+                    bn::optional<bn::sprite_ptr> so = bn::sprite_items::fx_edge_v.create_sprite_optional(right ? 172 - 120 : 4 - 120, edge_v_y[i]);
+
+                    if(! so)
+                    {
+                        _edge.clear();     // no sprite palette / OAM left: no edge this time
+                        return;
+                    }
+
+                    bn::sprite_ptr s = bn::move(*so);
                     s.set_horizontal_flip(right);
                     s.set_bg_priority(0);
                     s.set_z_order(-50);
@@ -131,7 +147,7 @@ namespace dl
             _text.set_center_alignment();
             _text.set_bg_priority(0);
             _text.set_z_order(-60);
-            _text.generate(q.x, q.y, q.text, p.sprites);
+            (void) _text.generate_optional(q.x, q.y, q.text, p.sprites);    // skipped if no sprite is left
             _text.set_bg_priority(3);
             _text.set_z_order(0);
             _popups.push_back(bn::move(p));

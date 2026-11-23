@@ -9,7 +9,10 @@
 #include "bn_fixed.h"
 #include "bn_keypad.h"
 #include "bn_palette_bitmap_bg_painter.h"
+#include "bn_optional.h"
 #include "bn_palette_bitmap_bg_ptr.h"
+#include "bn_sprite_tiles_item.h"
+#include "bn_sprite_tiles_ptr.h"
 #include "bn_span.h"
 #include "bn_sprite_affine_mat_ptr.h"
 #include "bn_sprite_affine_mats.h"
@@ -115,6 +118,8 @@ volatile int test_cfx_max_ticks;
 volatile int test_frame_max_ticks;     // whole game update (logic + view), timer ticks
 volatile int test_frame_heavy_max_ticks;
 volatile int test_deaths;
+volatile int test_palette_skips;       // sprites not created because the 16 sprite palettes were full (G-35)
+volatile int test_sprite_palettes_max;
 
 namespace
 {
@@ -943,7 +948,25 @@ namespace
             const entity& e = gs.lv.ents[ent];
             int frame = spikes ? (_spike_state > 0 ? 1 : 0) :
                         e.type == E_KEY ? dl::ITEM_KEY : e.type == E_ITEM ? e.b % dl::ITEM_COUNT : 0;
-            bn::sprite_ptr s = item->create_sprite(0, 0, frame);
+            // 16 sprite palettes are shared by text, HUD, decos, glow, monster FX and every prop / monster art:
+            // a prop whose palette is not loaded yet only gets one if 2 stay free (monsters, arrows, red edge);
+            // whatever does not fit is skipped instead of asserting
+            if(! monster && ! bn::sprite_palette_ptr::find(item->palette_item()) &&
+               bn::sprite_palettes::available_colors_count() < 32)
+            {
+                test_palette_skips = test_palette_skips + 1;
+                return;
+            }
+
+            bn::optional<bn::sprite_ptr> so = item->create_sprite_optional(0, 0, frame);
+
+            if(! so)
+            {
+                test_palette_skips = test_palette_skips + 1;
+                return;
+            }
+
+            bn::sprite_ptr s = bn::move(*so);
             s.set_bg_priority(0);
             s.set_visible(false);
 
@@ -1151,6 +1174,19 @@ namespace
             }
         }
 
+        static bn::optional<bn::sprite_ptr> create_with_palette(const bn::sprite_item& item, bn::fixed x, bn::fixed y,
+                                                               int frame, const bn::sprite_palette_ptr& palette)
+        {
+            bn::optional<bn::sprite_tiles_ptr> tiles = item.tiles_item().create_tiles_optional(frame);
+
+            if(! tiles)
+            {
+                return bn::nullopt;
+            }
+
+            return bn::sprite_ptr::create_optional(x, y, item.shape_size(), bn::move(*tiles), palette);
+        }
+
         void clear_decos()
         {
             _deco_sprites.clear();
@@ -1232,14 +1268,22 @@ namespace
                 const bn::sprite_affine_mat_ptr& mat = deco_mat(hs.data() | (vs.data() << 16), hs, vs);
                 bn::fixed sx = cx - 120;
                 bn::fixed sy = geo::vp_y - 80;     // the anchor row cancels out: sprite centre = eye row
-                bn::sprite_ptr s = a.item[view]->create_sprite(sx, sy, deco_frame(p.kind));
+                // created straight with the theme palette (theme colours at every band, G-37; faded with the
+                // depth when deco_depth_fade): the art's own palette is never loaded (sprite palettes are scarce)
+                const bn::sprite_palette_ptr& pal = _deco_palettes[(a.palette_b ? 3 : 0) +
+                        (dl::fx::enabled.deco_depth_fade ? (band >= 2 ? 2 : band) : 0)];
+                bn::optional<bn::sprite_ptr> so = create_with_palette(*a.item[view], sx, sy, deco_frame(p.kind), pal);
+
+                if(! so)
+                {
+                    test_palette_skips = test_palette_skips + 1;
+                    continue;
+                }
+
+                bn::sprite_ptr s = bn::move(*so);
                 s.set_affine_mat(mat);
                 s.set_bg_priority(0);
                 s.set_z_order(4 * band + 2);
-
-                // theme colours at every band (G-37); faded with the depth when deco_depth_fade
-                s.set_palette(_deco_palettes[(a.palette_b ? 3 : 0) +
-                        (dl::fx::enabled.deco_depth_fade ? (band >= 2 ? 2 : band) : 0)]);
 
                 if(p.kind == dl::view::DECO_LEVER_UP || p.kind == dl::view::DECO_LEVER_DOWN)
                 {
@@ -1253,12 +1297,20 @@ namespace
                 {
                     bn::fixed gx = sx + (deco::glow_x[view] - 16) * hs;
                     bn::fixed gy = sy + (deco::glow_y - 32) * vs;
-                    bn::sprite_ptr g = deco::torch_glow.create_sprite(gx, gy);
+                    bn::optional<bn::sprite_ptr> go = create_with_palette(deco::torch_glow, gx, gy, 0,
+                            _glow_palettes[band < 2 ? band : 2]);
+
+                    if(! go)
+                    {
+                        test_palette_skips = test_palette_skips + 1;
+                        continue;
+                    }
+
+                    bn::sprite_ptr g = bn::move(*go);
                     g.set_affine_mat(mat);
                     g.set_bg_priority(0);
                     g.set_z_order(4 * band + 3);     // behind its torch (no blending between sprites)
                     g.set_blending_enabled(true);
-                    g.set_palette(_glow_palettes[band < 2 ? band : 2]);
                     _deco_sprites.push_back(bn::move(g));
                     _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true, gx, gy });
                 }
@@ -1529,6 +1581,7 @@ namespace
             test_mfx_slots = _mfx.slots_used();
             test_sprite_palettes = (bn::sprite_palettes::used_colors_count() + 15) / 16;
             test_affine_mats = bn::sprite_affine_mats::used_count();
+            test_sprite_palettes_max = bn::max(int(test_sprite_palettes_max), int(test_sprite_palettes));
             test_cpu_x1000 = (bn::core::last_cpu_usage() * 1000).right_shift_integer();
             if(_frame > 120)
             {
