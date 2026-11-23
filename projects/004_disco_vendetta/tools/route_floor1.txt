@@ -1,9 +1,14 @@
 65 -        # card
-81 right    # through door (7,3) towards goon 1
+36 right    # into door (7,3): it opens, the noise sends goon 1 to investigate
+14 up       # hide beside the door, out of his sight
+140 -       # he reaches the door and looks around (north, then east)
+13 down     # behind his back
 1 a         # punch
 3 -
 1 a         # finish
 20 -
+173 -       # wait one patrol period of goons 2 and 5 (341 f) to keep the rest of the route in phase
+45 right
 30 right+down
 18 right    # onto the pistol
 1 b         # pick up
@@ -35,16 +40,16 @@
 19 right    # through door (19,17) into the kitchen
 37 up+right
 21 right
-39 up       # door (24,13) into the office
-73 up
-15 l        # aim at gunman 7 behind the desk
+12 up       # into door (24,13): it opens, goon 5 comes to investigate
+23 down+l   # back into the kitchen, aim north at the door
+22 -        # goon 5 sees us through the door ("!")
+1 a         # shoot goon 5 (assist)
+208 -       # the shot calls goon 6 (path noise); gunman 7 does not hear it
+1 a         # shoot goon 6 (assist) while he shows "!"
+30 -
+110 up      # into the office
+13 up+r     # aim at gunman 7 behind the desk
 1 a         # shoot
-4 -
-10 r        # turn east to meet goon 6
-53 -
-1 a         # shoot goon 6 (assist)
-14 -
-1 a         # second shot in case the first missed
 20 -
 37 up
 110 right   # to the exit

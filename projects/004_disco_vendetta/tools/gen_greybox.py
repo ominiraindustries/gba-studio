@@ -93,14 +93,16 @@ def strip(tiles, size=8):
 
 def main():
     random.seed(1975)
-    for name, body, arm in (("gb_player", (235, 225, 200), (60, 60, 70)),
-                            ("gb_thug", (150, 85, 40), (200, 170, 120)),
-                            ("gb_gunman", (60, 60, 90), (40, 40, 45))):
+    # Readability: player white-cream, thug dark maroon, gunman blue (none alike).
+    for name, body, arm in (("gb_player", (245, 238, 215), (60, 60, 70)),
+                            ("gb_thug", (140, 25, 45), (70, 15, 25)),
+                            ("gb_gunman", (50, 90, 200), (25, 30, 60))):
         pal, px = character(body, (230, 180, 140), arm)
         save(name, 16, 64, pal, px, {"type": "sprite", "height": 16})
 
-    # Bullets 8x8: 0 player, 1 enemy, 2 muzzle flash, 3 player trail, 4 enemy trail.
-    pal = [MAGENTA, (255, 240, 120), (200, 140, 40), (255, 90, 70), (160, 30, 20), (255, 255, 230)]
+    # Bullets 8x8: 0 player (yellow), 1 enemy (white core, red rim), 2 muzzle flash, 3 player trail,
+    # 4 enemy trail (red; drawn one frame behind the bullet).
+    pal = [MAGENTA, (255, 230, 40), (210, 160, 0), (255, 255, 255), (230, 20, 20), (255, 255, 230)]
     frames = []
     for core, halo in ((1, 2), (3, 4)):
         f = blank(8, 8)
@@ -122,14 +124,14 @@ def main():
         frames.append(f)
     save("gb_bullet", 8, 40, pal, [r for f in frames for r in f], {"type": "sprite", "height": 8})
 
-    # Aim dots 8x8 (2x2 dot with a dark rim): 0 fists (white), 1 pistol (yellow), 2 locked (red).
-    pal = [MAGENTA, (255, 255, 255), (255, 220, 60), (255, 30, 30), (20, 10, 10)]
+    # Aim dots 8x8 (a plain 2x2 dot): 0 fists (white), 1 pistol (cream), 2 locked on an enemy (red).
+    pal = [MAGENTA, (255, 255, 255), (255, 240, 200), (255, 30, 30)]
     frames = []
     for c in (1, 2, 3):
         f = blank(8, 8)
-        for y in range(2, 6):
-            for x in range(2, 6):
-                f[y][x] = c if 3 <= x <= 4 and 3 <= y <= 4 else 4
+        for y in range(3, 5):
+            for x in range(3, 5):
+                f[y][x] = c
         frames.append(f)
     save("gb_dot", 8, 24, pal, [r for f in frames for r in f], {"type": "sprite", "height": 8})
 

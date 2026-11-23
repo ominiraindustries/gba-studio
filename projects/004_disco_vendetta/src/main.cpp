@@ -64,6 +64,7 @@ volatile int test_throw_knocks;
 volatile int test_finishes;
 volatile int test_hint;
 volatile int test_hints_done;
+volatile int test_noise_heard;         // bitmask of enemies sent to investigate by the last noise
 volatile int test_floor_frames;
 volatile int test_exit_open;
 volatile int test_cpu;
@@ -216,6 +217,7 @@ namespace
     DV_EWRAM uint8_t enemy_fields[12][pad_count];
     DV_EWRAM int16_t bfs_queue[pad_count];
     DV_EWRAM uint8_t walkable[pad_count];
+    DV_EWRAM uint8_t noise_field[pad_count];
 
     struct level
     {
@@ -590,6 +592,60 @@ namespace
         }
     };
 
+    // Noise: 8-connected breadth-first path distances from a tile, cut at limit (255 = not reached). Doors are
+    // walkable so noise goes through them; walls, windows and bars are not. Diagonals need both sides open.
+    void noise_flood(int source_tx, int source_ty, int limit)
+    {
+        bn::memory::set_bytes(255, pad_count, noise_field);
+
+        if(source_tx < 0 || source_ty < 0 || source_tx >= map_columns || source_ty >= map_rows)
+        {
+            return;
+        }
+
+        int start = pad_index(source_tx, source_ty);
+
+        if(! walkable[start])
+        {
+            return;
+        }
+
+        int head = 0;
+        int tail = 0;
+        noise_field[start] = 0;
+        bfs_queue[tail++] = int16_t(start);
+
+        while(head < tail)
+        {
+            int index = bfs_queue[head++];
+            int next = noise_field[index] + 1;
+
+            if(next > limit)
+            {
+                continue;
+            }
+
+            bool e = walkable[index + 1];
+            bool w = walkable[index - 1];
+            bool s = walkable[index + pad_w];
+            bool n = walkable[index - pad_w];
+            const int neighbours[8] = {
+                e ? index + 1 : -1, w ? index - 1 : -1, s ? index + pad_w : -1, n ? index - pad_w : -1,
+                e && s ? index + pad_w + 1 : -1, w && s ? index + pad_w - 1 : -1,
+                e && n ? index - pad_w + 1 : -1, w && n ? index - pad_w - 1 : -1,
+            };
+
+            for(int ni : neighbours)
+            {
+                if(ni >= 0 && noise_field[ni] == 255 && walkable[ni])
+                {
+                    noise_field[ni] = uint8_t(next);
+                    bfs_queue[tail++] = int16_t(ni);
+                }
+            }
+        }
+    }
+
     level lvl;
 
     // -----------------------------------------------------------------------------------------------------
@@ -721,6 +777,10 @@ namespace
         int shake_frames = 0;
         int shake_amp = 0;
         int player_tile = -1;
+        bool noise_pending = false;     // the noise flood runs in the next frame's flood slot
+        int noise_tx = 0;
+        int noise_ty = 0;
+        int noise_limit = 0;
         bool exit_open = false;
         bool moved = false;
         bool turned = false;
@@ -795,6 +855,7 @@ namespace
             hitstop = 0;
             shake_frames = 0;
             player_tile = -1;
+            noise_pending = false;
             exit_open = false;
             moved = false;
             turned = false;
@@ -972,7 +1033,7 @@ namespace
             {
                 for(const enemy& e : enemies)
                 {
-                    if(e.unaware() && dist2(e.x, e.y, px, py) <= 32 * 32)
+                    if(e.standing() && dist2(e.x, e.y, px, py) <= 32 * 32)
                     {
                         return hint_punch;
                     }
@@ -1165,7 +1226,7 @@ namespace
                 }
             }
 
-            make_noise(door_x, door_y, noise_door);
+            make_noise(door_x, door_y, noise_door_tiles);
             bn::sound_items::blip.play();
         }
 
@@ -1431,7 +1492,7 @@ namespace
                 }
 
                 spawn_bullet(px + cos_of(aim) * 8, py + sin_of(aim) * 8, vx, vy, true);
-                make_noise(px, py, noise_pistol);
+                make_noise(px, py, noise_pistol_tiles);
                 shake(2, 6);
                 hint_done[hint_shoot] = true;
                 bn::sound_items::blip.play();
@@ -1503,15 +1564,38 @@ namespace
             bullets.push_back(bullet{ x, y, vx, vy, from_player, bn::move(sprite), bn::move(trail) });
         }
 
-        void make_noise(bn::fixed x, bn::fixed y, int radius)
+        // Enemies hear a noise when their path distance to it (in tiles) is at most limit. Queued: the flood
+        // runs in the next frame's flood slot (a louder pending noise wins).
+        void make_noise(bn::fixed x, bn::fixed y, int limit)
         {
+            if(noise_pending && noise_limit > limit)
+            {
+                return;
+            }
+
+            noise_pending = true;
+            noise_tx = level::tile(x);
+            noise_ty = level::tile(y);
+            noise_limit = limit;
+        }
+
+        void hear_noise()
+        {
+            noise_pending = false;
+            int limit = noise_limit;
+            bn::fixed x = noise_tx * tile_size + 8;
+            bn::fixed y = noise_ty * tile_size + 8;
+            noise_flood(noise_tx, noise_ty, limit);
+            test_noise_heard = 0;
+
             for(int i = 0; i < enemies.size(); ++i)
             {
                 enemy& e = enemies[i];
 
-                if(e.unaware() && dist2(e.x, e.y, x, y) < radius * radius)
+                if(e.unaware() && noise_field[pad_index(level::tile(e.x), level::tile(e.y))] <= limit)
                 {
                     investigate(e, i, x, y);
+                    test_noise_heard = test_noise_heard | (1 << i);
                 }
             }
         }
@@ -1654,7 +1738,13 @@ namespace
         {
             int tile = level::tile(py) * map_columns + level::tile(px);
 
-            // At most one flood per frame: a pending enemy goal first, then the player's field.
+            // At most one flood per frame: a pending noise first, then a pending enemy goal, then the player's field.
+            if(noise_pending)
+            {
+                hear_noise();
+                return;
+            }
+
             for(int i = 0; i < enemies.size(); ++i)
             {
                 enemy& e = enemies[i];
@@ -1936,8 +2026,8 @@ namespace
             bool visible = on_screen(e.x, e.y, offscreen_margin);
             e.warned += visible;
 
-            // The last frames (muzzle flash) only run while the gunman is on screen: nothing fires unseen.
-            if(e.timer > gunman_flash_frames || visible)
+            // The aim countdown only runs while the gunman is on screen, offscreen_margin px inside every edge.
+            if(visible)
             {
                 --e.timer;
             }
@@ -2248,6 +2338,7 @@ int main()
     int shown_held = -1;
     int shown_combo = -1;
     int shown_hint = -2;
+    int hint_frames = 0;
     int shown_menu = -1;
     game_state shown_state = game_state::playing;
     int state_frames = 0;
@@ -2445,9 +2536,19 @@ int main()
         // Hint line at the bottom, one at a time.
         int hint = g.wanted_hint();
 
+        // A shown "A: PUNCH" stays at least hint_min_frames while playing.
+        if(shown_hint == hint_punch && hint != hint_punch && hint_frames < hint_min_frames &&
+                g.state == game_state::playing)
+        {
+            hint = hint_punch;
+        }
+
+        ++hint_frames;
+
         if(hint != shown_hint)
         {
             shown_hint = hint;
+            hint_frames = 0;
             hint_sprites.clear();
 
             if(hint >= 0)
@@ -2473,7 +2574,7 @@ int main()
 
             case game_state::card:
                 big_text.generate(0, -8, "FLOOR 1 - LOBBY", message);
-                small_text.generate(0, 12, "A: START", message);
+                small_text.generate(0, 12, "A: SKIP", message);
                 break;
 
             case game_state::paused:

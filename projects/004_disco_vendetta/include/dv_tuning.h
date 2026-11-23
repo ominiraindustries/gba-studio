@@ -50,8 +50,9 @@ namespace dv
     constexpr int knock_trail_interval = 20;            // a blood drop while knocked
 
     // Noise.
-    constexpr int noise_pistol = 192;
-    constexpr int noise_door = 64;
+    // Noise travels along walkable tiles (8-connected BFS; doors let it through, walls/windows/bars do not).
+    constexpr int noise_pistol_tiles = 14;              // path distance in tiles
+    constexpr int noise_door_tiles = 4;
 
     // Enemies.
     constexpr bn::fixed goon_patrol_speed = 0.75;
@@ -61,7 +62,7 @@ namespace dv
     constexpr bn::fixed enemy_turn_speed = 8;           // drawn angle interpolation, degrees per frame
     constexpr int vision_range = 112;
     constexpr int vision_half_angle = 45;
-    constexpr int vision_near = 24;                     // 360 degrees this close
+    constexpr int vision_near = 16;                     // 360 degrees this close
     constexpr int gunman_aim_frames = 30;               // "!" while aiming
     constexpr int gunman_flash_frames = 10;             // muzzle flash in the last aim frames
     constexpr int gunman_shot_gap = 20;                 // + 30 aim = 50 f between shots
@@ -70,7 +71,7 @@ namespace dv
     constexpr int goon_windup_frames = 18;
     constexpr int goon_hit_reach = 20;                  // 16 px + half the 8 px player box
     constexpr int goon_recover_frames = 20;
-    constexpr int offscreen_margin = 8;                 // enemies only fire inside the camera rect minus this
+    constexpr int offscreen_margin = 24;                // enemies only fire inside the camera rect minus this
     constexpr int enemy_hit_half = 6;                   // 12x12 damage box
     constexpr int enemy_wall_half = 5;
 
@@ -91,6 +92,7 @@ namespace dv
     constexpr int death_slowmo_frames = 30;
     constexpr int death_retry_frame = 20;
     constexpr int retry_fade_frames = 10;
+    constexpr int hint_min_frames = 60;                 // a shown "A: PUNCH" stays at least this long
     constexpr int pointer_delay = 600;                  // arrow to the nearest enemy after 10 s without a kill
 
     // Gore (greybox).
