@@ -59,3 +59,13 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
 
   `--fidelity`: CRC idéntico a la v2 de Python; `--seeds`: métricas, reglas duras y solucionador (0 sin solución).
 - **Controles de prueba**: B coloca un monstruo de prueba 3 casillas delante (provisional, B será "objeto rápido").
+
+## Vista (G-25, bloque 2)
+
+- `python -I projects/006_delve/tools/build_view.py` regenera `include/dl_view_data.h` y `src/dl_view_data.cpp`
+  (grosor de pared, jambas, variantes de muro, fondos por paridad, cerradura provisional en `tools/test_textures/`).
+- Rendimiento medido con gbarun (4389 ticks = 1 f): vista máx. 0,78 f, minimapa máx. 0,22 f (incremental), redibujado
+  total máx. 0,82 f; zoom de paso 0,76 f por imagen compuesta (se compone en fotogramas alternos); generación de planta
+  0,37 s (pantalla `DESCENDING...` con el marco mientras tanto).
+- Efectos con interruptor: `include/dl_fx.h` (llama, estandarte, halo, oscurecido de adornos, zoom de paso, giro,
+  balanceo de cabeza).

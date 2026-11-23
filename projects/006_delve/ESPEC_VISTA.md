@@ -28,9 +28,23 @@ tres. El diseño del juego va en `DISENO.md`.
   `tools/build_view.py` los lee de ahí.
 - Objetos y monstruos de pie a 0,3 casillas del borde cercano de su casilla: escala 1,0 / 0,565 / 0,394 / 0,302
   (d = 1..4).
-- Pendiente (relevo G-25): grosor de pared (~1/8 de casilla, cantos y jambas) y decoraciones de pared como sprites
-  (`deco_*_front/left/right`) con parpadeo de luz; mientras, antorcha/estandarte/cadenas/palanca siguen dentro de la
-  textura del muro.
+- **Grosor de pared** (`wall_thick_64` = 8 texels = 1/8 de casilla): las caras siguen en las aristas y la losa
+  crece hacia fuera. Se ve en los extremos libres (cara lateral de la pared frontal de (d, x) junto a una casilla
+  abierta, piezas `cap`) y en los huecos: puertas, arcos, rejas y escalera llevan jambas, dintel y umbral con la piedra
+  girada y oscurecida, y la hoja / reja va hundida (puerta y reja a 1/2 del grosor, escalera al fondo). Todo lo
+  proyecta `tools/build_view.py` (trazado de rayos por píxel en el hueco).
+- **Adornos de pared** (antorcha, estandarte, cadenas, palanca): sprites `deco_*` sobre su cara (frontal: centro de la
+  cara frontal; lateral: centro de la cara lateral), escala = alto de la cara / 64 (`deco_ref_z10`), máx. 2; en las
+  laterales la escala horizontal sigue el escorzo real frente al 0,32 del dibujo (0,6–1,5). Se oscurecen por bandas
+  (d = 1: 60 %, d ≥ 2: 36 %; la llama no). Sólo se muestran si su cara es lo que se ve en su columna (no atraviesan
+  paredes). Los nombres de los items están sólo en `include/dl_deco_items.h`.
+- **Sensación de paso**: suelo y techo con baldosas espejadas en damero del mundo (dos fondos según la paridad de la
+  casilla del jugador); 4 variantes de pared por arista (base, espejo y 2 procedurales PROVISIONALES hasta que haya
+  `tex_wall_stone_v1..v3` del artista). Al avanzar, la vista vieja se amplía 1,0 → 1,12 (3 imágenes en 6 f) y luego
+  se dibuja la nueva; al retroceder, la nueva pasa de 1,12 a 1,0; al girar, deslizamiento lateral de 6 f; balanceo de
+  1–2 px. Interruptores en `include/dl_fx.h`. Se compone por software sólo en la vista (el panel comparte BG2).
+- Puertas abiertas dejan ver lo que hay detrás; la puerta con cerradura usa `tex_door_locked` (provisional generada
+  desde `tex_door` con banda y candado de hierro hasta que el artista la dibuje).
 
 ## Flujo de arte (editable por el usuario)
 1. El artista dibuja **texturas planas** en `art/*.aseprite` (indexado, paleta común del entorno de hasta 64 colores):
