@@ -88,6 +88,8 @@ Juegos de Game Boy Advance en C++ con **Butano** (`engine/butano/`, v21.10). Cli
 
 - Commit al cerrar cada bloque verificado, añadiendo sólo tus rutas (`git add <rutas>`, nunca `git add -A` con otros
   agentes activos). Mensajes en inglés. Push sólo cuando el usuario lo pida.
+- Remoto: `origin` = https://github.com/ominiraindustries/gba-studio.git (privado; rama `main`). Push con
+  `git push origin main` (ramas de trabajo: `git push origin <rama>`); nunca `--force`.
 - Trabajo paralelo: worktrees **sólo** con `python -I .claude/scripts/worktree.py add|remove|list`
   (disperso; junctions sólo a directorios no versionados). Nunca `git worktree add` a mano ni `rm -rf` de un worktree.
   Al integrar la rama del agente, `worktree.py remove NOMBRE`. Detalle: `docs/harness/worktrees.md`.
