@@ -14,7 +14,7 @@ propias. No se usa nada de Hotline Miami: ni máscaras, ni personajes, ni nombre
 | Botón | Acción | Nota |
 |---|---|---|
 | Cruceta | moverse en 8 direcciones (decisión del usuario) | se puede ametrallar en movimiento: la mira no sigue a la cruceta |
-| L / R | girar la mira 1 paso de 22,5° (16 direcciones) | al pulsar gira 1 paso; manteniendo, **10 f de espera y luego 1 paso cada 3 f** |
+| L / R | girar la mira (continua, rotación por hardware) | un toque gira **5,625°** al instante; manteniendo, **6 f de espera y luego 6°/f** (180° en ~36 f) |
 | A | golpear o disparar con lo que lleves | sobre un enemigo noqueado: rematar |
 | B | coger el arma del suelo (si vas con las manos vacías) o lanzar la que llevas | prioridad fija: si llevas un arma, B la lanza (regla 14) |
 | START | pausa: RESUME / RETRY / QUIT | |
@@ -38,23 +38,23 @@ de 32 px a un enemigo de espaldas) → `A: FINISH` (tras noquearlo) → `B: PICK
 | Jugador | 1,5 px/f; en diagonal se normaliza a 1,06 por eje | flujo: cruzar la pantalla en 160 f (2,7 s); más rápido que cualquier enemigo que persigue |
 | Matón patrullando / persiguiendo | 0,75 / 1,25 px/f | perdón: siempre puedes alejarte de un matón |
 | Pistolero | quieto o 0,5 px/f; si te pierde, va a 1,0 al último punto donde te vio | tensión: no te persigue |
-| Mira | pulsar = 1 paso; mantener = 10 f de espera y 3 f/paso | inmediatez: el primer paso no espera (regla 14) |
+| Mira | toque = 5,625°; mantener = 6 f de espera y 6°/f | inmediatez: el primer toque no espera (regla 14) |
 | Ayuda a apuntar | si hay un enemigo visible a ±22,5° y a menos de 120 px, el disparo o golpe va a él | perdón sin que se note (regla 2): 16 direcciones son pocas a esta distancia |
 | Caja de daño del jugador | 8×8 dentro del sprite de 16×16 | perdón: las balas te rozan sin matarte |
 | Caja de muro del jugador | 10×10; se desliza por los muros y corrige 3 px en las esquinas | perdón: no te atascas en los marcos de las puertas |
 | Caja de daño del enemigo | 12×12 | generosa a favor del jugador |
 | Bala del jugador / enemiga | 6 / 4 px/f, sprite de 4×4 con estela de 1 frame; colisión en 2 subpasos | se ve: la enemiga cruza 112 px en 28 f y da tiempo a apartarse |
-| Visión del enemigo | cono de ±45°, 112 px, con línea de visión por tiles (las ventanas `w` y la barra `=` no la tapan) y 360° a 24 px | legibilidad: 112 px caben en la media pantalla |
+| Visión del enemigo | cono de ±45°, 112 px, con línea de visión por tiles (las ventanas `w` y la barra `=` no la tapan) y 360° a **16 px** (menor que el alcance del puño, 20) | legibilidad: 112 px caben en la media pantalla; regla 2: el golpe por la espalda funciona |
 | Reacción del pistolero | `!` y apunta durante 30 f (fogonazo en los 10 últimos) → dispara → 50 f entre disparos | anticipación (regla 5) |
 | Reacción del matón | `!` y 20 f quieto → persigue → a 20 px levanta el brazo 18 f (parpadeo blanco) → golpe en arco de 90° a 16 px | anticipación; el golpe se cancela si te alejas |
-| Disparar fuera de pantalla | prohibido: sólo disparan los enemigos que están en el rectángulo de la cámara menos 8 px | nada mata sin aviso (regla 5) |
-| Oído | pistola 192 px, escopeta 256, patada a una puerta 64; los golpes no se oyen; los muros no lo frenan | riesgo y recompensa: el ruido atrae; quien oye va a mirar (`?`, 1,0 px/f), pero no dispara hasta verte |
-| Puerta | se abre al empujarla andando (patada) y gira 90° en 6 f; quien esté en el barrido de 16×16 al otro lado queda noqueado 120 f | estilo: la puerta es un arma gratis |
+| Disparar fuera de pantalla | prohibido: sólo apuntan y disparan los enemigos con el centro a **24 px** o más de cada borde de la cámara | nada mata sin aviso (regla 5): el enemigo entero y su `!` se ven |
+| Oído | **por camino andando** (BFS por tiles, 8 conexiones; las puertas dejan pasar el ruido, los muros no): pistola **14 tiles**, escopeta 18, patada a una puerta **4 tiles**; los golpes no se oyen | riesgo y recompensa legible: el ruido atrae a quien está cerca por el camino; quien oye va a mirar (`?`, 1,0 px/f) y no dispara hasta verte |
+| Puerta | se abre al empujarla andando (patada), al instante; quien esté en el barrido de 16×16 al otro lado queda noqueado 120 f | estilo: la puerta es un arma gratis |
 | Noqueo | puño 180 f, lanzamiento 90 f, puerta 120 f; antes de levantarse tiembla durante 30 f; remate con A a 16 px (16 f, quieto) | riesgo y recompensa: rematar te deja quieto 16 f |
 
 | Arma | Alcance | Cadencia | Munición | Ruido | Efecto | Al lanzarla |
 |---|---|---|---|---|---|---|
-| Puño | 14 px, arco de 90° | 20 f | ∞ | no | **noquea** | no se lanza |
+| Puño | 20 px entre centros, arco de ±45° | 20 f | ∞ | no | **noquea** | no se lanza |
 | Bate (bloque 2) | 20 px, arco de 120° | 24 f | ∞ | no | mata | noquea 90 f y cae donde golpea |
 | Pistola | bala hasta el muro | 12 f | 8 (las del suelo, según el sitio) | 192 px | mata | noquea 90 f; conserva sus balas |
 | Escopeta (bloque 2) | 5 perdigones en ±15°, vida de 18 f (unos 108 px) | 45 f | 4 | 256 px | mata y empuja a menos de 32 px | noquea 90 f |
@@ -146,12 +146,16 @@ mira sigue a la cruceta" sería una tarea P4, sólo como opción (regla 14).
 | Decisión | Principio | Métrica |
 |---|---|---|
 | El puño noquea y lo demás mata | andamiaje, riesgo y recompensa | el 70 % de los jugadores de prueba rematan sin que se lo expliquen más que con el rótulo |
-| Mira de 10 f de espera y 3 f/paso, con ayuda de ±22,5° | regla 2 | menos de 1 de cada 5 disparos del jugador fallan a 64 px o menos en la entrada grabada |
+| Mira continua (5,625° por toque, 6°/f manteniendo) con ayuda de ±22,5° | regla 2 | menos de 1 de cada 5 disparos del jugador fallan a 64 px o menos en la entrada grabada |
 | Los enemigos sólo disparan en pantalla y tras 30 f | regla 5 | 0 muertes en las que el que dispara no aparezca en la captura de los 30 f anteriores |
 | Reiniciar con A tras morir; nunca con R+A | reglas 10 y 14 | reintento < 90 f medido con `gbarun.py` |
 | (Usuario, 2026-11-23) Mira continua: L/R giran 6°/f manteniendo y 5,625° por toque; jugador y enemigos rotan por hardware (sprites afines), un solo dibujo por personaje | flujo e inmediatez: el giro a saltos de 22,5° no se sentía fluido | ≤ 13 matrices afines en uso (jugador + vivos); 180° en ~30 f |
 | (Usuario) Gore: partículas de sangre en la dirección del golpe, manchas persistentes en una capa de fondo, charcos bajo cadáveres, hitstop 3 f y temblor de cámara | cada acción tiene respuesta (checklist del primer minuto); recompensa | 60 fps con 7 enemigos + 24 partículas |
 | (Usuario) Vista cenital total, sin perspectiva: muros, puertas, muebles, personajes y manchas vistos desde arriba, sin caras laterales ni sombras proyectadas | lenguaje visual coherente; legibilidad de colisiones (lo que se ve es lo que choca) | ningún tile o sprite con cara frontal en la revisión de arte |
+| (Revisión 1.er minuto) Ruido por camino: pistola 14 tiles, puerta 4 | regla 3 (D presenta "el ruido atrae" con un solo enemigo); regla 4 (la cocina E sigue siendo pausa) | con la ruta, al disparar a 3, el 4 investiga y el 5 no cambia |
+| (Revisión) Visión cercana 16 px < alcance del puño 20 px; `A: PUNCH` sin exigir enemigo desprevenido y ≥ 60 f en pantalla | reglas 2 y 6 | en la ruta no hay `!` sobre el matón 1 antes del golpe y `A: PUNCH` se ve el frame anterior |
+| (Revisión) Margen de disparo de 24 px | regla 5 | el que dispara está a ≥ 24 px de cada borde en el primer frame de apuntar |
+| Otras cifras reales: golpe del matón 20 px; el pistolero no suelta el blanco hasta 160 px | medido en la ROM (regla 13) | — |
 
 ## Riesgos
 - **Rotación**: Butano tiene 32 matrices afines, que bastan para 13 sprites en el greybox, pero el pixel art rotado por
