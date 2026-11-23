@@ -141,6 +141,9 @@ volatile int test_cfx_max_ticks;
 volatile int test_frame_max_ticks;     // whole game update (logic + view), timer ticks
 volatile int test_frame_heavy_max_ticks;
 volatile int test_deaths;
+volatile int test_retries;             // G-42: A: RETRY FLOOR taken
+volatile int test_hints;               // G-42: dl::hint_id bits taught (dl_combat.cpp)
+volatile int test_hint_frame[8];       // G-42: test_mode-frame count when each hint bit was shown
 volatile int test_palette_skips;       // sprites not created because the 16 sprite palettes were full (G-35)
 volatile int test_sprite_palettes_max;
 
@@ -154,7 +157,8 @@ namespace
     constexpr int step_cooldown = 12;           // DISENO.md 1
     constexpr int turn_cooldown = 8;
     constexpr int monster_lerp_frames = 12;
-    constexpr int spike_period = 150;           // down 90 f -> peek 24 f -> up 36 f (DISENO.md 6b)
+    constexpr int spike_period = 150;
+    constexpr int dead_input_frames = 60;       // G-42: the death screen ignores A / SELECT this long           // down 90 f -> peek 24 f -> up 36 f (DISENO.md 6b)
 
     struct game_state
     {
@@ -643,6 +647,7 @@ namespace
             _text.set_center_alignment();
             _text.generate(dl::geo::view_w / 2 - 120, dl::geo::view_h / 2 - 80, "DESCENDING...", text);
             bn::core::update();
+            _combat.save_floor_start();     // G-42: retry snapshot (before load_floor resets the per-floor state)
             load_floor(floor);
             _hud.invalidate();
             _hud.set_visible(true);
@@ -2053,8 +2058,8 @@ namespace
             }
         }
 
-        // title and death screens: the frame without the view, three centred lines
-        void show_screen(const char* line0, const char* line1, const char* line2)
+        // title and death screens: the frame without the view or its game icons, up to four centred lines
+        void show_screen(const char* line0, const char* line1, const char* line2, const char* line3 = nullptr)
         {
             _objects.clear();
             _object_sprites.clear();
@@ -2068,6 +2073,7 @@ namespace
             for(int k = 0; k < 2; ++k)
             {
                 _painter.blit(0, 0, bn::palette_bitmap_items::ui_frame.pixels_item());
+                dl::hud::blank_icons(_painter);     // G-42: no key / potion / sword out of the game
                 _painter.flip_page_now();
             }
 
@@ -2086,6 +2092,11 @@ namespace
                 _text.generate(cx, 0, line2, _screen_text);
             }
 
+            if(line3)
+            {
+                _text.generate(cx, 16, line3, _screen_text);
+            }
+
             _mode_t = 0;
         }
 
@@ -2093,10 +2104,36 @@ namespace
         {
             ++_mode_t;
 
-            if(bn::keypad::a_pressed() && _mode_t > 20)
+            if(_mode == 2)
+            {
+                // G-42 DISENO 7: A / SELECT ignored for 60 f (a held attack does not skip the screen)
+                if(_mode_t > dead_input_frames)
+                {
+                    if(bn::keypad::a_pressed())
+                    {
+                        retry_floor();
+                    }
+                    else if(bn::keypad::select_pressed())
+                    {
+                        start_run();
+                    }
+                }
+            }
+            else if(bn::keypad::a_pressed() && _mode_t > 20)
             {
                 start_run();
             }
+        }
+
+        // G-42 DISENO 7: the same floor (same seed) with the player as he came down to it
+        void retry_floor()
+        {
+            test_retries = test_retries + 1;
+            _screen_text.clear();
+            _combat.restore_floor_start();
+            _mode = 1;
+            test_mode = 1;
+            descend(_floor);
         }
 
         void start_run()
@@ -2126,7 +2163,7 @@ namespace
             test_mode = 2;
             bn::string<24> t("FLOOR ");
             t.append(bn::to_string<4>(_floor + 1));
-            show_screen("YOU DIED", t.c_str(), "A: NEW RUN");
+            show_screen("YOU DIED", t.c_str(), "A: RETRY FLOOR", "SELECT: NEW RUN");
         }
 
         void update_shake()

@@ -23,6 +23,8 @@ namespace dl
         constexpr int mp_regen_f = 90;          // MAGIA 1.2
         constexpr int ring_regen_f = 72;        // MAGIA 3.3
         constexpr int belt_hint_delay = 130;
+        constexpr int bag_hint_delay = 120;                 // G-42: after a plain pickup line (120 f)
+        constexpr int bag_hint_after_hint_delay = 240;      // ... after a pickup hint (240 f)
 
         combat_data& cd = dl_combat_data;
 
@@ -111,6 +113,12 @@ namespace dl
             hint(HINT_SWITCH, "SELECT: SWITCH   B: CAST");
         }
 
+        if(_next_hint_timer > 0 && --_next_hint_timer == 0 && _next_hint)
+        {
+            hint(HINT_BAG, _next_hint);
+            _next_hint = nullptr;
+        }
+
         if(m.cast_timer > 0 && --m.cast_timer == 0)
         {
             _cast_done();
@@ -191,7 +199,7 @@ namespace dl
             return;
         }
 
-        // MP first; a spare scroll pays when the MP does not reach (PROVISIONAL, design doubt in the G-40 report)
+        // MP first; a spare scroll pays when the MP does not reach (DISENO 10, G-42)
         if(m.mp >= st.mp)
         {
             m.mp -= st.mp;
@@ -416,6 +424,7 @@ namespace dl
     {
         player_stats& p = cd.p;
         magic_state& m = cd.m;
+        int hints_before = _hints;
 
         switch(item)
         {
@@ -500,6 +509,23 @@ namespace dl
 
         default:
             break;
+        }
+
+        // G-42 (DISENO 10): the first thing kept in the bag teaches START, after the pickup line (and after the
+        // pickup hint when there is one)
+        bool to_bag = item == ITEM_KEY || item == ITEM_POTION || item == ITEM_RING_MANA ||
+                ((item == ITEM_SCROLL_MISSILE || item == ITEM_SCROLL_LIGHT || item == ITEM_SCROLL_HEAL) &&
+                 m.scrolls[item - ITEM_SCROLL_MISSILE] > 0);
+
+        if(to_bag && ! (_hints & HINT_BAG) && ! _next_hint)
+        {
+            _next_hint = "START: BAG";
+            _next_hint_timer = (_hints & ~hints_before) ? bag_hint_after_hint_delay : bag_hint_delay;
+
+            if(item == ITEM_RING_MANA)
+            {
+                _next_hint_timer = bag_hint_after_hint_delay;   // its line already says START: WEAR
+            }
         }
 
         return true;
@@ -591,6 +617,20 @@ namespace dl
             return n;
         };
 
+        // G-42 (DISENO 10): a fallback chest never hides a crack (SECRET edge) at the end of a dead end
+        auto secret_wall = [&lv](int c)
+        {
+            for(int d = 0; d < 4; ++d)
+            {
+                if(kind_at(lv, c, d) == K_SECRET)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
         for(int pass = 0; pass < 3; ++pass)
         {
             for(int i = 0; i < lv.nents && m.nchests < want; ++i)
@@ -616,7 +656,7 @@ namespace dl
                 bool ok = ! taken && (pass == 0 ? e.c == FURN_CHEST :
                           pass == 1 ? (e.c == FURN_CRATE || e.c == FURN_BARREL || e.c == FURN_STATUE) && lv.th[c] &&
                                       cell_dist(c) > 3 :
-                          cell_dist(c) > 3 && (sides == 1 || (lv.th[c] && sides >= 3)));
+                          cell_dist(c) > 3 && ! secret_wall(c) && (sides == 1 || (lv.th[c] && sides >= 3)));
 
                 if(ok)
                 {

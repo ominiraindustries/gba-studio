@@ -134,6 +134,13 @@ namespace dl
         _glow_timer = 0;
     }
 
+    void hud::blank_icons(bn::palette_bitmap_bg_painter& painter)
+    {
+        painter.rectangle(weapon_x0 + 2, weapon_y0 + 2, weapon_x1 - 2, reload_y0 - 3, plate);
+        painter.rectangle(key_x0, key_y0, key_x1, key_y1, plate);
+        painter.rectangle(belt_x0, belt_y0, belt_x1, belt_y1, belt_dark);
+    }
+
     void hud::set_visible(bool visible)
     {
         _visible = visible;

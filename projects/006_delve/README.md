@@ -87,6 +87,11 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
 - Arte provisional (G-35): `art/item_floor.aseprite` (pan, poción, espada corta, llave; 32×32) y `art/fx_edge_h/v`
   (borde rojo), sembrados por `art/_seed/item_art.py`. Sonidos: `audio/blip.wav` a distintas velocidades.
 
+- Muerte (G-42, DISENO §7): `A: RETRY FLOOR` rehace la planta con la misma semilla y el jugador copiado al empezarla
+  (EWRAM); `SELECT: NEW RUN` empieza de cero. La pantalla ignora A y SELECT los primeros 60 f. Prueba corta con la
+  sala de prueba: `--input "60:a;110:left;130:up;170:right;190:right;210:up;250:left;270:up;300:left;1420:a"
+  --check "test_retries.32==1,test_hp.32==30,test_mp.32==0"` (muere hacia el f 1312 de lado, sin rótulo de esquiva).
+
 ## Magia y tesoros (G-40, bloque M1)
 
 - Código: `src/dl_magic.cpp` (MP, cinturón, Magic Missile / Light / Heal, pergaminos, Ring of Mana, cofres normal y

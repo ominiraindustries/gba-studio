@@ -195,7 +195,7 @@ def main():
         if g.mode == 2:
             g.shots.append(g.frame + 2)
             g.labels.append("dead")
-            g.press("a", at=g.frame + 40)
+            g.press("a", at=g.frame + 70)    # G-42: the death screen ignores A for 60 f; A = RETRY FLOOR
             g.shots.append(g.frame + 100)
             g.labels.append("restart")
             next_frame = g.frame + 110

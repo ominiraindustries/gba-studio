@@ -67,6 +67,10 @@ namespace dl
         // Hide / show every HUD sprite (e.g. the DESCENDING screen).
         void set_visible(bool visible);
 
+        // G-42 title / death screens: paint the game icons of the frame (weapon, key, quick item) out of the current
+        // page (the next ui_frame blit brings them back)
+        static void blank_icons(bn::palette_bitmap_bg_painter& painter);
+
         // G-40 pause: the right panel (compass, floor, keys, status icons) is covered by the pause bitmap
         void set_panel_visible(bool visible);
 

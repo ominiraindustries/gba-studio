@@ -180,7 +180,8 @@ namespace dl
 
     enum hint_id : uint8_t
     {
-        HINT_MONSTER = 1, HINT_DODGE = 2, HINT_POTION = 4, HINT_STAIRS = 8, HINT_SWITCH = 16
+        HINT_MONSTER = 1, HINT_DODGE = 2, HINT_POTION = 4, HINT_STAIRS = 8, HINT_SWITCH = 16,
+        HINT_LOW_HP = 32, HINT_BAG = 64     // G-42
     };
 
     // chest state bits in entity::a of an E_FURN FURN_CHEST (the low bits are the drawing orientation)
@@ -193,6 +194,10 @@ namespace dl
         combat(hud& hud, monster_fx& mfx);
 
         void new_run();
+
+        // G-42 DISENO 7: floor retry. save at the start of each floor (before load_floor), restore on A: RETRY FLOOR
+        void save_floor_start();
+        void restore_floor_start();
 
         // after generating a floor: monsters from E_MONSTER (none within 6 cells of the entry), items normalised to
         // item_id, ent_of_cell is the game's static index (items, keys, furniture, traps)
@@ -243,6 +248,8 @@ namespace dl
         int _hints = 0;
         int _think_ticks = 0;
         int _think_max = 0;
+        const char* _next_hint = nullptr;  // G-42: a hint shown after the current pickup message
+        int _next_hint_timer = 0;
 
         bool _edge_pass(int cell, int d, bool doors_closed_block) const;
         bool _sees_player(const monster& m) const;
@@ -256,6 +263,7 @@ namespace dl
         void _remove(int index);
         void _drop(int ent, int cell, int item);   // item < 0: nothing (the entity goes)
         void _gain_xp(int xp);
+        void _low_hp_hint();
         void _post(uint8_t type, int ent, int value, bool crit = false, int side = 0);
         bool _give(int item);               // false: not taken (bag full)
         void _magic_update(bool b_pressed, bool select_pressed);

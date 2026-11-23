@@ -14,6 +14,8 @@
 #include "dl_view.h"
 
 BN_DATA_EWRAM dl::combat_data dl_combat_data;
+extern volatile int test_hints;
+extern volatile int test_hint_frame[8];
 
 namespace dl
 {
@@ -60,10 +62,12 @@ namespace dl
     void combat::new_run()
     {
         cd.p = player_stats();
-        cd.p.potions = 1;       // PROVISIONAL (design doubt): DISENO starts with 1 bread; bread heals on pickup here
+        cd.p.potions = 1;       // DISENO 10 (G-42 review): 1 potion instead of bread, so B gets taught
         cd.p.reload = weapon_table[0].reload_f;
         cd.m = magic_state();
         _hints = 0;
+        _next_hint = nullptr;
+        _next_hint_timer = 0;
     }
 
     player_stats& combat::player()
@@ -82,7 +86,69 @@ namespace dl
         {
             _hints |= id;
             _hud.message(text, 240);
+            test_hints = _hints;
+
+            for(int b = 0; b < 8; ++b)
+            {
+                if(id == (1 << b))
+                {
+                    test_hint_frame[b] = _frame;
+                }
+            }
         }
+    }
+
+    // G-42 (DISENO 10): the first time HP drops below half with a potion in the bag
+    void combat::_low_hp_hint()
+    {
+        const player_stats& p = cd.p;
+
+        if(p.hp > 0 && p.hp * 2 < p.hp_max && p.potions > 0)
+        {
+            hint(HINT_LOW_HP, "LOW HP! B: DRINK POTION");
+        }
+    }
+
+    // G-42 DISENO 7: floor retry. The player as he came down (stats, HP / MP, level, spells, belt, bag, equipment);
+    // EWRAM, the IWRAM stack has little room (01f3822)
+    namespace
+    {
+        struct floor_snapshot
+        {
+            player_stats p;
+            magic_state m;
+        };
+
+        BN_DATA_EWRAM floor_snapshot floor_start;
+    }
+
+    void combat::save_floor_start()
+    {
+        floor_start.p = cd.p;
+        floor_start.m = cd.m;
+    }
+
+    void combat::restore_floor_start()
+    {
+        player_stats stats = cd.p;      // metrics of the whole run survive the retry
+        cd.p = floor_start.p;
+        cd.p.kills = stats.kills;
+        cd.p.dodges = stats.dodges;
+        cd.p.crits = stats.crits;
+        cd.p.hits_taken = stats.hits_taken;
+        cd.p.attacks = stats.attacks;
+        cd.p.reload = reload_max();
+        int casts = cd.m.casts;
+        int missile_kills = cd.m.missile_kills;
+        cd.m = floor_start.m;
+        cd.m.casts = casts;
+        cd.m.missile_kills = missile_kills;
+        cd.m.light = 0;
+        cd.m.heal_fx = 0;
+        cd.m.light_fx = 0;
+        cd.m.hint_timer = 0;
+        _next_hint = nullptr;
+        _next_hint_timer = 0;
     }
 
     void combat::_post(uint8_t type, int ent, int value, bool crit, int side)
@@ -412,9 +478,11 @@ namespace dl
             {
                 _player_attack();
             }
-            else if(rmax - p.reload <= attack_buffer_frames || p.busy)
+            else if(bn::max(rmax - p.reload, p.busy) <= attack_buffer_frames)
             {
-                p.attack_buffered = true;   // R2: kept when the bar is almost full
+                // R2: kept when the bar is almost full and a cast / drink ends within the same 8 f (G-42); an
+                // earlier press is dropped
+                p.attack_buffered = true;
             }
         }
         else if(p.attack_buffered && p.reload >= rmax && ! p.busy)
@@ -592,7 +660,11 @@ namespace dl
                     }
                 }
 
-                hint(HINT_DODGE, "STEP AWAY TO DODGE!");
+                if(m.side == 0)
+                {
+                    // G-42 (DISENO 10): taught only with the monster in view; from the side the red arrow is enough
+                    hint(HINT_DODGE, "STEP AWAY TO DODGE!");
+                }
             }
 
             return;
@@ -696,6 +768,7 @@ namespace dl
         ++p.hits_taken;
         _post(EV_PLAYER_HIT, m.ent, damage, false, m.side);
         sfx(0.7, 0.9);
+        _low_hp_hint();
 
         if(p.hp <= 0)
         {
@@ -717,6 +790,7 @@ namespace dl
         ++p.hits_taken;
         _post(EV_PLAYER_HIT, -1, damage, false, 0);
         sfx(0.7, 0.9);
+        _low_hp_hint();
 
         if(p.hp <= 0)
         {
