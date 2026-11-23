@@ -40,6 +40,7 @@
 #include "dl_fx.h"
 #include "dl_gen.h"
 #include "dl_hud.h"
+#include "dl_blit.h"
 #include "dl_transition.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
@@ -71,6 +72,14 @@ volatile int test_gen_ticks;           // last floor generation, timer ticks
 volatile int test_gen_max_ticks;
 volatile int test_visible_decos;
 volatile int test_transition_frames;
+volatile int test_motion_frames;       // G-31 smooth moves: composed intermediate poses
+volatile int test_motion_ticks;        // last pose, view only
+volatile int test_motion_max_ticks;
+volatile int test_view_items;          // pieces copied by the last resting redraw (after the coverage cull)
+volatile int test_motion_items;
+volatile int test_view_spans;          // spans visited / halfwords copied by the last resting redraw
+volatile int test_view_halfwords;
+volatile int test_prepare_max_ticks;   // visibility + grid part of a resting redraw
 volatile int test_compose_max_ticks;
 volatile int test_lever_frame;         // frame of the last lever sprite shown (0 up, 1 down)
 volatile int test_ticks_per_frame;
@@ -174,6 +183,8 @@ namespace
     struct object_sprite
     {
         int ent;
+        int8_t d;       // base-relative cell (resting view: the player's cell and facing)
+        int8_t x;
         bool monster;
         bool spikes;
         bn::fixed from_x, from_y, from_s;
@@ -253,7 +264,10 @@ namespace
         };
 
         // step / turn transition (dl_transition.h): 0 none, 1 forward, 2 back, 3 turn left, 4 turn right
-        int _trans = 0;
+        int _trans = 0;         // 5: smooth move (G-31)
+        int _mkind = 0;
+        int _mt = 0;
+        bool _mreverse = false;
         int _trans_t = 0;
         bn::vector<bn::fixed, dl::view::max_decos> _deco_mat_hs;
         bn::vector<bn::fixed, dl::view::max_decos> _deco_mat_vs;
@@ -442,7 +456,18 @@ namespace
             if(cmd == 3 || cmd == 4)
             {
                 const uint16_t* old_page = dl::view::front_page(_painter.page().data());
+                int old_dir = _dir;
                 _dir = (_dir + (cmd == 3 ? 3 : 1)) & 3;
+
+                if(dl::fx::enabled.smooth_moves)
+                {
+                    // turning left plays the right turn from the new facing backwards
+                    _cooldown = motion_cooldown;
+                    start_motion(dl::view::MOTION_TURN, _cell, cmd == 4 ? old_dir : _dir, _cell,
+                                 cmd == 4 ? _dir : old_dir, cmd == 3);
+                    return;
+                }
+
                 _cooldown = turn_cooldown;
                 start_turn(old_page, cmd == 4);
                 return;
@@ -450,7 +475,7 @@ namespace
 
             static constexpr int rel[7] = { 0, 0, 2, 0, 0, 3, 1 };
             try_move((_dir + rel[cmd]) & 3, cmd == 1);
-            _cooldown = step_cooldown;
+            _cooldown = _trans == 5 ? motion_cooldown : step_cooldown;
         }
 
         void bump()
@@ -580,10 +605,20 @@ namespace
                 return;
             }
 
+            int from = _cell;
             _cell = nb;
             test_moves = test_moves + 1;
 
-            if(forward)
+            if(dl::fx::enabled.smooth_moves)
+            {
+                // the back step and the left strafe play the forward / right poses from the destination backwards
+                bool back = d == ((_dir + 2) & 3);
+                bool left = d == ((_dir + 3) & 3);
+                int kind = (forward || back) ? dl::view::MOTION_STEP : dl::view::MOTION_STRAFE;
+                bool reverse = back || left;
+                start_motion(kind, reverse ? nb : from, _dir, reverse ? from : nb, _dir, reverse);
+            }
+            else if(forward)
             {
                 // the old view zooms toward the vanishing point, then the new one is drawn
                 dl::view::snapshot(dl::view::front_page(_painter.page().data()), 0);
@@ -657,8 +692,14 @@ namespace
             _dirty = false;
             bn::timer timer;
             uint16_t* page = _painter.page().data();
+            dl::view::blit_stat_spans = 0;
+            dl::view::blit_stat_halfwords = 0;
             dl::view::draw(page, gs.lv, gs.es, _cell, _dir, gs.vis);
             test_view_ticks = timer.elapsed_ticks();
+            test_view_items = dl::view::drawn_items();
+            test_view_spans = dl::view::blit_stat_spans;
+            test_view_halfwords = dl::view::blit_stat_halfwords;
+            test_prepare_max_ticks = bn::max(int(test_prepare_max_ticks), dl::view::prepare_ticks());
             test_view_max_ticks = test_view_ticks > test_view_max_ticks ? test_view_ticks : test_view_max_ticks;
 
             for(int d = 0; d < dl::view::rows; ++d)
@@ -732,13 +773,108 @@ namespace
             test_hud_tiles = _hud.sprite_tiles_count();
         }
 
+        // world sprite of an entity in base-relative cell (d, x): item and base size, or nullptr
+        const bn::sprite_item* object_item(int ent, int& size, bool& monster, bool& spikes) const
+        {
+            const entity& e = gs.lv.ents[ent];
+            monster = e.type == E_MONSTER;
+            spikes = e.type == E_TRAP && e.c == TRAP_SPIKES;
+            size = monster ? dl::geo::monster_size : dl::geo::object_size;
+
+            if(monster)
+            {
+                return monster_item(ent);
+            }
+
+            if(e.type == E_FURN)
+            {
+                return furn_item(e.c);
+            }
+
+            return spikes ? &bn::sprite_items::prop_spikes : nullptr;
+        }
+
+        // Screen position (centre, sprite coordinates) and scale of object i at pose (kind, k) of the current base;
+        // false when it is not seen (behind the eye, off the view or behind a nearer wall). Objects stand 0.2 cells
+        // in front of their cell centre, toward the camera (so during a turn they slide with it).
+        bool object_place(const object_sprite& o, int kind, int k, bn::fixed& sx, bn::fixed& sy, bn::fixed& scale,
+                          int& band) const
+        {
+            namespace geo = dl::geo;
+            int fx, fz;
+            dl::view::forward(kind, k, fx, fz);
+            int xu = geo::cell_x_u(o.x) - ((geo::object_front_u * fx) >> 14);
+            int zu = geo::cell_z_u(o.d) - ((geo::object_front_u * fz) >> 14);
+            int vx, z;
+
+            if(! dl::view::project(kind, k, xu, zu, vx, z) || z < geo::cell_u / 2)
+            {
+                return false;
+            }
+
+            scale = bn::fixed(geo::object_ref_u) / z;
+            int size = o.monster ? geo::monster_size : geo::object_size;
+
+            if(vx < 8 || vx > geo::view_w - 8 || scale > 2)
+            {
+                return false;
+            }
+
+            // hidden when a wall nearer than the object is what the view shows anywhere across the middle 3/4 of
+            // its sprite (the outer eighths are mostly the transparent margin of the art)
+            int hw = (scale * (size * 3 / 8)).round_integer();
+
+            if(dl::view::occluded(vx - hw, vx + hw, z))
+            {
+                return false;
+            }
+
+            sx = vx - 120;
+            sy = bn::fixed(geo::floor_y(z)) - scale * (size / 2) - 80;
+            band = geo::depth_band(z);
+            return true;
+        }
+
+        void add_object(int ent, int d, int x)
+        {
+            int size;
+            bool monster, spikes;
+            const bn::sprite_item* item = object_item(ent, size, monster, spikes);
+
+            if(! item || _objects.full())
+            {
+                return;
+            }
+
+            object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
+            bn::sprite_ptr s = item->create_sprite(0, 0);
+            s.set_bg_priority(0);
+            s.set_visible(false);
+
+            if(spikes)
+            {
+                s.set_tiles(item->tiles_item(), _spike_state > 0 ? 1 : 0);
+            }
+
+            _object_sprites.push_back(bn::move(s));
+            _objects.push_back(o);
+        }
+
         // objects in the visible cells (d >= 1): monsters interpolate from where they were drawn last time
         void rebuild_objects()
         {
             bn::vector<object_sprite, 16> old = _objects;
+            bn::vector<bn::fixed, 16> old_x, old_y, old_s;
+
+            for(const bn::sprite_ptr& s : _object_sprites)
+            {
+                old_x.push_back(s.x());
+                old_y.push_back(s.y());
+                old_s.push_back(s.horizontal_scale());
+            }
+
             _objects.clear();
             _object_sprites.clear();
-            namespace geo = dl::geo;
 
             for(int d = dl::view::rows - 1; d >= 1; --d)
             {
@@ -746,90 +882,98 @@ namespace
                 {
                     int c = gs.vis.cell[d][xi];
 
-                    if(c < 0 || gs.ent_of_cell[c] < 0 || _objects.full())
+                    if(c >= 0 && gs.ent_of_cell[c] >= 0)
                     {
-                        continue;
+                        add_object(gs.ent_of_cell[c], d, xi - dl::view::half);
                     }
-
-                    int ent = gs.ent_of_cell[c];
-                    const entity& e = gs.lv.ents[ent];
-                    const bn::sprite_item* item = nullptr;
-                    bool monster = e.type == E_MONSTER;
-                    bool spikes = e.type == E_TRAP && e.c == TRAP_SPIKES;
-                    int size = geo::object_size;
-
-                    if(monster)
-                    {
-                        item = monster_item(ent);
-                        size = geo::monster_size;
-                    }
-                    else if(e.type == E_FURN)
-                    {
-                        item = furn_item(e.c);
-                    }
-                    else if(spikes)
-                    {
-                        item = &bn::sprite_items::prop_spikes;
-                    }
-
-                    if(! item)
-                    {
-                        continue;
-                    }
-
-                    int x = xi - dl::view::half;
-                    bn::fixed scale = bn::fixed(geo::object_scale_num()) / geo::object_z10(d);
-                    int vx = geo::object_x(d, x);
-
-                    if(vx < 8 || vx > geo::view_w - 8)
-                    {
-                        continue;
-                    }
-
-                    // hidden when a wall nearer than the object is what the view shows anywhere across the middle
-                    // 3/4 of its sprite (the outer eighths are mostly the transparent margin of the art)
-                    int hw = (scale * (size * 3 / 8)).round_integer();
-
-                    if(dl::view::occluded(vx - hw, vx + hw, 32 * geo::object_z10(d)))
-                    {
-                        continue;
-                    }
-
-                    bn::fixed sx = vx - 120;
-                    bn::fixed sy = bn::fixed(geo::object_feet_y(d)) - scale * (size / 2) - 80;
-                    object_sprite o{ ent, monster, spikes, sx, sy, scale, sx, sy, scale, monster_lerp_frames };
-
-                    if(monster)
-                    {
-                        for(const object_sprite& p : old)
-                        {
-                            if(p.ent == ent && p.monster)
-                            {
-                                bn::fixed k = bn::fixed(p.t) / monster_lerp_frames;
-                                o.from_x = p.from_x + (p.to_x - p.from_x) * k;
-                                o.from_y = p.from_y + (p.to_y - p.from_y) * k;
-                                o.from_s = p.from_s + (p.to_s - p.from_s) * k;
-                                o.t = 0;
-                            }
-                        }
-                    }
-
-                    bn::sprite_ptr s = item->create_sprite(o.from_x, o.from_y);
-                    s.set_scale(o.from_s);
-                    s.set_bg_priority(0);
-                    s.set_z_order(4 * d);       // in front of the wall decorations of its row (4 d + 2)
-
-                    if(spikes)
-                    {
-                        s.set_tiles(item->tiles_item(), _spike_state > 0 ? 1 : 0);
-                    }
-
-                    _object_sprites.push_back(bn::move(s));
-                    _objects.push_back(o);
                 }
             }
 
+            for(int i = 0, n = _objects.size(); i < n; )
+            {
+                object_sprite& o = _objects[i];
+                bn::fixed sx, sy, scale;
+                int band;
+
+                if(! object_place(o, 0, 0, sx, sy, scale, band))
+                {
+                    _objects.erase(_objects.begin() + i);
+                    _object_sprites.erase(_object_sprites.begin() + i);
+                    --n;
+                    continue;
+                }
+
+                o.from_x = o.to_x = sx;
+                o.from_y = o.to_y = sy;
+                o.from_s = o.to_s = scale;
+
+                for(int j = 0, m = old.size(); j < m; ++j)
+                {
+                    if(old[j].ent == o.ent && o.monster)
+                    {
+                        // from what the screen shows now (the last pose of a smooth move or a monster in motion)
+                        o.from_x = old_x[j];
+                        o.from_y = old_y[j];
+                        o.from_s = old_s[j];
+                        o.t = 0;
+                    }
+                }
+
+                bn::sprite_ptr& s = _object_sprites[i];
+                s.set_position(o.from_x, o.from_y);
+                s.set_scale(o.from_s);
+                s.set_z_order(4 * band);       // in front of the wall decorations of its row (4 d + 2)
+                s.set_visible(true);
+                ++i;
+            }
+
             test_visible_objects = _objects.size();
+        }
+
+        // smooth move: every object of the cells either end of the move sees, placed per pose
+        void collect_motion_objects()
+        {
+            _objects.clear();
+            _object_sprites.clear();
+
+            for(int d = 6; d >= -4; --d)
+            {
+                for(int x = -5; x <= 5; ++x)
+                {
+                    int c = dl::view::motion_cell(d, x);
+
+                    if(c >= 0 && gs.ent_of_cell[c] >= 0)
+                    {
+                        add_object(gs.ent_of_cell[c], d, x);
+                    }
+                }
+            }
+        }
+
+        void place_objects(int kind, int k)
+        {
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                object_sprite& o = _objects[i];
+                bn::sprite_ptr& s = _object_sprites[i];
+                bn::fixed sx, sy, scale;
+                int band;
+
+                if(! object_place(o, kind, k, sx, sy, scale, band))
+                {
+                    s.set_visible(false);
+                    continue;
+                }
+
+                o.from_x = o.to_x = sx;
+                o.from_y = o.to_y = sy;
+                o.from_s = o.to_s = scale;
+                o.t = monster_lerp_frames;
+                s.set_position(sx, sy);
+                s.set_scale(scale);
+                s.set_z_order(4 * band);
+                s.set_visible(true);
+            }
         }
 
         // ---- wall decorations (sprites on their wall face; the bitmap never contains them)
@@ -932,22 +1076,21 @@ namespace
             {
                 const dl::view::deco_place& p = gs.vis.decos[i];
                 const deco::art& a = deco::arts[p.kind];
-                int view = p.lateral ? (p.slot < 0 ? deco::VIEW_LEFT : deco::VIEW_RIGHT) : deco::VIEW_FRONT;
-                int z_u = p.lateral ? geo::deco_lateral_u(p.d) : geo::deco_front_u(p.d);
+                int view = p.view;      // dl::deco::VIEW_FRONT / LEFT / RIGHT
+                int z_u = p.z_u;
                 bn::fixed max_scale = bn::fixed(geo::deco_max_scale_x100) / 100;
                 bn::fixed vs = bn::min(bn::fixed(geo::deco_ref_u) / z_u, max_scale);
                 bn::fixed hs = vs;
-                int l = p.slot < 0 ? -p.slot : p.slot;
 
-                if(p.lateral && dl::fx::enabled.lateral_squeeze)
+                if(view != deco::VIEW_FRONT && dl::fx::enabled.lateral_squeeze)
                 {
-                    // real foreshortening |X| / Z of the inset face against the 0.32 the art is drawn with
-                    bn::fixed k = bn::fixed(100 * geo::lateral_face_abs_u(l)) / (deco::lateral_squeeze_x100 * z_u);
+                    // real foreshortening |X| / Z of the face at its anchor against the 0.32 the art is drawn with
+                    int ax = p.x - geo::vp_x;
+                    bn::fixed k = bn::fixed(100 * (ax < 0 ? -ax : ax)) / (96 * deco::lateral_squeeze_x100);
                     hs = bn::min(vs * bn::max(bn::min(k, bn::fixed(1.5)), bn::fixed(0.6)), max_scale);
                 }
 
-                int wall_x = p.lateral ? geo::deco_lateral_x(p.d, p.slot) : geo::deco_front_x(p.d, p.slot);
-                bn::fixed cx = wall_x - (a.anchor_x[view] - 16) * hs;
+                bn::fixed cx = p.x - (a.anchor_x[view] - 16) * hs;
                 bn::fixed half_w = hs * 16;
 
                 if(cx - half_w < 0 || cx + half_w > geo::view_w || _deco_sprites.size() + 2 > _deco_sprites.max_size())
@@ -955,18 +1098,18 @@ namespace
                     continue;
                 }
 
-                int key = p.lateral ? 64 + p.d * 8 + l : p.d;
-                const bn::sprite_affine_mat_ptr& mat = deco_mat(key, hs, vs);
+                int band = geo::depth_band(z_u);
+                const bn::sprite_affine_mat_ptr& mat = deco_mat(hs.data() | (vs.data() << 16), hs, vs);
                 bn::fixed sx = cx - 120;
                 bn::fixed sy = geo::vp_y - 80;     // the anchor row cancels out: sprite centre = eye row
                 bn::sprite_ptr s = a.item[view]->create_sprite(sx, sy, deco_frame(p.kind));
                 s.set_affine_mat(mat);
                 s.set_bg_priority(0);
-                s.set_z_order(4 * p.d + 2);
+                s.set_z_order(4 * band + 2);
 
-                if(dl::fx::enabled.deco_depth_fade && p.d >= 1)
+                if(dl::fx::enabled.deco_depth_fade && band >= 1)
                 {
-                    s.set_palette(_deco_palettes[(a.palette_b ? 2 : 0) + (p.d >= 2 ? 1 : 0)]);
+                    s.set_palette(_deco_palettes[(a.palette_b ? 2 : 0) + (band >= 2 ? 1 : 0)]);
                 }
 
                 if(p.kind == dl::view::DECO_LEVER_UP || p.kind == dl::view::DECO_LEVER_DOWN)
@@ -984,9 +1127,9 @@ namespace
                     bn::sprite_ptr g = deco::torch_glow.create_sprite(gx, gy);
                     g.set_affine_mat(mat);
                     g.set_bg_priority(0);
-                    g.set_z_order(4 * p.d + 3);     // behind its torch (no blending between sprites)
+                    g.set_z_order(4 * band + 3);     // behind its torch (no blending between sprites)
                     g.set_blending_enabled(true);
-                    g.set_palette(_glow_palettes[p.d < 2 ? p.d : 2]);
+                    g.set_palette(_glow_palettes[band < 2 ? band : 2]);
                     _deco_sprites.push_back(bn::move(g));
                     _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true, gx, gy });
                 }
@@ -1048,8 +1191,63 @@ namespace
             }
         }
 
+        // ---- G-31 smooth moves: real intermediate camera poses (dl_view.h), one image every 2 frames (30 fps):
+        // poses 1..5 on frames 0, 2, .. 8 of the move, the new resting view on frame 10, the next move on frame 12
+        static constexpr int motion_cooldown = 2 * (dl::view::motion_frames + 1) - 1;
+
+        void start_motion(int kind, int base_cell, int base_dir, int dest_cell, int dest_dir, bool reverse)
+        {
+            dl::view::begin_motion(gs.lv, gs.es, base_cell, base_dir, dest_cell, dest_dir);
+            _mkind = kind;
+            _mreverse = reverse;
+            _mt = 0;
+            _trans = 5;
+            _dirty = false;
+            clear_decos();
+            collect_motion_objects();
+        }
+
+        void smooth_step()
+        {
+            int t = _mt++;
+
+            if(t & 1)
+            {
+                return;                 // hold the composed pose one more frame
+            }
+
+            int k = t / 2 + 1;
+
+            if(k > dl::view::motion_frames)
+            {
+                _trans = 0;
+                redraw();
+                return;
+            }
+
+            int pk = _mreverse ? dl::view::motion_frames + 1 - k : k;
+            uint16_t* page = _painter.page().data();
+            bn::timer timer;
+            dl::view::draw_motion(page, _mkind, pk, gs.vis);
+            test_motion_ticks = timer.elapsed_ticks();
+            test_motion_max_ticks = test_motion_ticks > test_motion_max_ticks ? test_motion_ticks : test_motion_max_ticks;
+            test_motion_items = dl::view::drawn_items();
+            test_motion_frames = test_motion_frames + 1;
+            dl::view::draw_minimap(page, _page, dl::hud::minimap_x, dl::hud::minimap_y, _cell, _dir);
+            _painter.flip_page_later();
+            _page ^= 1;
+            place_objects(_mkind, pk);
+            rebuild_decos();
+        }
+
         void step_transition()
         {
+            if(_trans == 5)
+            {
+                smooth_step();
+                return;
+            }
+
             int t = ++_trans_t;
             uint16_t* page = _painter.page().data();
             bool done;

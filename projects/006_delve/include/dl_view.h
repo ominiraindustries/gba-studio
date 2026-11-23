@@ -37,37 +37,74 @@ namespace dl::view
         uint8_t open[2 * dl::gen::N];   // 1 = door / lock open, bars raised; for lever walls 1 = pulled
     };
 
-    // a decoration seen on a wall face: front face of cell (d, slot) or lateral face of row d on line slot (odd,
-    // -7..7: < 0 left wall, > 0 right wall)
+    // a decoration seen on a wall face: anchor (centre of its face) at view x, camera depth z_u (dl::geo u);
+    // view 0 front, 1 left wall, 2 right wall (dl::deco::VIEW_*), by the angle of the face to the camera
     struct deco_place
     {
         uint8_t kind;
-        uint8_t d;
-        int8_t slot;
-        uint8_t lateral;
+        uint8_t view;
+        int16_t x;
+        int16_t z_u;
     };
 
     // result of a redraw: the visible cells, used for sprites, the minimap and the "seen" marks
     struct visibility
     {
-        int16_t cell[rows][cols];   // map cell or -1 when not visible
+        int16_t cell[rows][cols];   // map cell or -1 when not visible (resting view only)
         deco_place decos[max_decos];    // unoccluded decorations, far to near
         int ndecos;
     };
 
     // world cell at relative (d, x) from cell `c` facing `dir`, or -1 outside the map
-    [[nodiscard]] int relative_cell(int c, int dir, int d, int x);
+    [[nodiscard]] BN_CODE_IWRAM int relative_cell(int c, int dir, int d, int x);
 
     // decoration shown on an edge (a lever wall shows its lever)
     [[nodiscard]] int edge_deco(const dl::gen::level& lv, const edge_state& es, int idx);
 
-    // Draws the 176x120 view into `page` (the back page, 240 px wide, 2 px per uint16_t).
+    // Draws the resting 176x120 view into `page` (the back page, 240 px wide, 2 px per uint16_t).
     BN_CODE_IWRAM void draw(uint16_t* page, const dl::gen::level& lv, const edge_state& es, int cell, int dir, visibility& vis);
 
-    // After draw(): true when an opaque face nearer than z_u (dl::geo u = 1/320 cell) is what the last draw() shows
-    // in any 2-px column of the view pixels [x0, x1). World sprites (monsters, props) standing at z_u use it to stay
+    // ---- G-31 smooth grid moves: real intermediate camera poses pre-rendered by tools/build_view.py
+    // (dl_view_motion_data.h). Pose k = 1..motion_frames of a kind sits at k / (motion_frames + 1) of the move from
+    // the base resting view: step = base cell -> the cell ahead, strafe = -> the cell on the right, turn = base dir
+    // -> base dir + 1 (turning right). Back, left strafe and left turn play the same poses in reverse with the
+    // destination as base. k = 0 is the resting view of the base.
+    enum motion_kind : uint8_t
+    {
+        MOTION_STEP,
+        MOTION_STRAFE,
+        MOTION_TURN
+    };
+
+    constexpr int motion_frames = 5;
+
+    // Prepares a move: the visible cells are the union of both resting views (base and dest).
+    void begin_motion(const dl::gen::level& lv, const edge_state& es, int base_cell, int base_dir, int dest_cell,
+                      int dest_dir);
+
+    // After draw() or begin_motion(): the map cell at base-relative (d, x) when it is seen, else -1.
+    [[nodiscard]] int motion_cell(int d, int x);
+
+    // Draws pose k (1..motion_frames) of `kind` (vis.cell is not touched).
+    BN_CODE_IWRAM void draw_motion(uint16_t* page, int kind, int k, visibility& vis);
+
+    // Projects a point of the base frame (u; X from the centre column, Z from the resting eye: dl_view_geometry.h)
+    // with pose (kind, k): view x and camera depth; false when behind the eye.
+    [[nodiscard]] bool project(int kind, int k, int x_u, int z_u, int& view_x, int& depth_u);
+
+    // camera forward (sin yaw, cos yaw) of a pose in the base frame, q14
+    void forward(int kind, int k, int& fx_q14, int& fz_q14);
+
+    // After draw() / draw_motion(): true when an opaque face nearer than camera depth z_u is what the last drawn
+    // pose shows in any 2-px column of the view pixels [x0, x1). World sprites (monsters, props) use it to stay
     // hidden behind walls.
     [[nodiscard]] bool occluded(int x0, int x1, int z_u);
+
+    // pieces actually copied by the last draw (after the coverage cull), for the profiler tests
+    [[nodiscard]] int drawn_items();
+
+    // timer ticks of the visibility + grid preparation of the last draw()
+    [[nodiscard]] int prepare_ticks();
 
     // Minimap model: per-cell block keys. Reset after loading a floor; touch a cell when it becomes seen or one of
     // its edges changes state (door opened, lever pulled, bars raised: touch both cells of the edge).
@@ -82,6 +119,7 @@ namespace dl::view
 
     // Forget what both pages show (after something else painted over the minimap area).
     void invalidate_minimap();
+
 }
 
 #endif

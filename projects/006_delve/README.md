@@ -64,8 +64,10 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
 
 - `python -I projects/006_delve/tools/build_view.py` regenera `include/dl_view_data.h` y `src/dl_view_data.cpp`
   (grosor de pared, jambas, variantes de muro, fondos por paridad, cerradura provisional en `tools/test_textures/`).
-- Rendimiento medido con gbarun (4389 ticks = 1 f): vista máx. 0,78 f, minimapa máx. 0,22 f (incremental), redibujado
-  total máx. 0,82 f; zoom de paso 0,76 f por imagen compuesta (se compone en fotogramas alternos); generación de planta
-  0,37 s (pantalla `DESCENDING...` con el marco mientras tanto).
+- Rendimiento medido con gbarun (4389 ticks = 1 f), G-31: vista en reposo máx. 0,89 f (media 0,76), vista +
+  minimapa máx. 0,99 f, pose intermedia de movimiento máx. 0,85 f. Tabla y método en `ESPEC_VISTA.md`.
+- Movimiento suave (G-31): 5 poses reales de cámara por paso, paso lateral y giro, 12 f por movimiento a 30 fps;
+  `smooth_moves` en `include/dl_fx.h` (apagado: los trucos de zoom y deslizamiento). Las poses las genera
+  `python -I projects/006_delve/tools/build_view.py` (~25 s) en `src/dl_view_motion.bin` (~14 MB).
 - Efectos con interruptor: `include/dl_fx.h` (llama, estandarte, halo, oscurecido de adornos, zoom de paso, giro,
   balanceo de cabeza).
