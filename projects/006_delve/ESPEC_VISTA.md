@@ -17,13 +17,20 @@ tres. El diseño del juego va en `DISENO.md`.
 
 ## Geometría de la vista (clásica, por casillas)
 - Rejilla de casillas cuadradas; el jugador está en el centro de su casilla mirando a N, E, S u O; giros de 90°.
-- Se ven **4 profundidades**: d = 0 (la casilla del jugador: sólo paredes laterales), 1, 2 y 3, y hasta 2 casillas
-  a cada lado en cada profundidad.
-- Perspectiva: punto de fuga en el centro de la vista (88, 60). El ancho de una cara frontal a profundidad d es
-  `176 / (d + 0,5) · 0,5` redondeado a par (d=1 → 58·… lo fija el motor en `include/dl_view_geometry.h`, que es la
-  **fuente de verdad** de los rectángulos de cada pieza).
-- Piezas: cara frontal (d, x), cara lateral izquierda y derecha (d, x), suelo y techo por franjas. Más oscuro a más
-  profundidad (atenuación de distancia aplicada por la herramienta).
+- **Paredes en los lados de las casillas** (modelo v2): cada pieza es la cara de una arista vista desde la casilla
+  del jugador. Se ven **5 filas** (d = 0, la casilla del jugador, a d = 4) y **3 casillas a cada lado** (x = −3..+3).
+- Cámara (motor, 2026-11-23, tras la prueba del usuario): ojo a media altura de pared, 0,7 casillas por detrás del
+  centro de su casilla; **horizonte en y = 48** (40 % de la vista: mira un poco hacia abajo, más suelo que techo);
+  focal 96 px por casilla (campo de visión más ancho). Cara frontal de la fila d en z = d + 1,2 casillas: anchos
+  80 / 44 / 30 / 22 / 18 px (d = 0..4) redondeados a par; las caras laterales son trapecios a columnas de 2 px.
+- Atenuación hacia **negro** con la distancia (exp(−0,42·(z − 1))): el fondo se pierde en oscuridad; más allá de
+  z = 5,2 todo es negro. Los números exactos y las funciones están en `include/dl_view_geometry.h` (fuente de verdad);
+  `tools/build_view.py` los lee de ahí.
+- Objetos y monstruos de pie a 0,3 casillas del borde cercano de su casilla: escala 1,0 / 0,565 / 0,394 / 0,302
+  (d = 1..4).
+- Pendiente (relevo G-25): grosor de pared (~1/8 de casilla, cantos y jambas) y decoraciones de pared como sprites
+  (`deco_*_front/left/right`) con parpadeo de luz; mientras, antorcha/estandarte/cadenas/palanca siguen dentro de la
+  textura del muro.
 
 ## Flujo de arte (editable por el usuario)
 1. El artista dibuja **texturas planas** en `art/*.aseprite` (indexado, paleta común del entorno de hasta 64 colores):

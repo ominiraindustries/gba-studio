@@ -56,13 +56,13 @@ UI_FRAME = os.path.join(GFX, "ui_frame.bmp")
 # minimap colours (palette 240..247; ui_frame uses 192-209): floor, wall, player, door, bars, stairs, lever, dark
 MAP_COLORS = [(64, 58, 50), (206, 194, 160), (250, 226, 90), (176, 112, 52), (184, 184, 196), (90, 200, 230),
               (240, 200, 60), (14, 12, 18)]
-LATERALS = [-5, -3, -1, 1, 3, 5]
+LATERALS = [-7, -5, -3, -1, 1, 3, 5, 7]
 # ----------------------------------------------------------------------------------------------- geometry
 def parse_geometry():
     with open(GEO_H, encoding="utf-8") as f:
         text = f.read()
     g = {m.group(1): int(m.group(2)) for m in re.finditer(r"constexpr int (\w+) = (-?\d+);", text)}
-    for k in ("view_w", "view_h", "vp_x", "vp_y", "proj_num", "eye_back_z10", "fog_z10"):
+    for k in ("view_w", "view_h", "vp_x", "vp_y", "proj_num", "eye_back_z10", "fog_z10", "depths", "max_lateral"):
         if k not in g:
             sys.exit("build_view: %s missing in %s" % (k, GEO_H))
     return g
@@ -249,7 +249,7 @@ def frame(tex, k):
 # ----------------------------------------------------------------------------------------------- projection
 def shade(z):
     """Distance attenuation (z in cells)."""
-    return np.clip(1.0 - (z - 1.2) * 0.24, 0.18, 1.0)
+    return np.clip(np.exp(-0.42 * (z - 1.0)), 0.0, 1.0)     # fades toward black: the far end is lost in the dark
 
 
 def sample(tex, u, v):
@@ -434,11 +434,11 @@ def main():
     for si, (name, stem, k) in enumerate(SETS):
         t = tex(stem, k)
         for d in range(geo.depths):
-            for x in range(-2, 3):
+            for x in range(-geo.max_lateral, geo.max_lateral + 1):
                 r = project_front(geo, t, d, x)
                 if r:
                     pieces.append(r)
-                    index.append((si, 0, d, x + 2))
+                    index.append((si, 0, d, x + geo.max_lateral))
             for li, l in enumerate(LATERALS):
                 r = project_lateral(geo, t, d, l)
                 if r:
@@ -483,14 +483,15 @@ def main():
         f, n = ptab.get(key, (0, 0))
         return "{%d,%d}" % (f, n)
 
-    lines.append("    const piece front[set_count][depths][5] = {")
+    ncols = 2 * geo.max_lateral + 1
+    lines.append("    const piece front[set_count][depths][cols] = {")
     for si in range(nsets):
-        lines.append("        {" + ",".join("{" + ",".join(pref((si, 0, d, s)) for s in range(5)) + "}"
+        lines.append("        {" + ",".join("{" + ",".join(pref((si, 0, d, s)) for s in range(ncols)) + "}"
                                             for d in range(geo.depths)) + "},")
     lines.append("    };\n")
-    lines.append("    const piece lateral[set_count][depths][6] = {")
+    lines.append("    const piece lateral[set_count][depths][lines] = {")
     for si in range(nsets):
-        lines.append("        {" + ",".join("{" + ",".join(pref((si, 1, d, s)) for s in range(6)) + "}"
+        lines.append("        {" + ",".join("{" + ",".join(pref((si, 1, d, s)) for s in range(len(LATERALS))) + "}"
                                             for d in range(geo.depths)) + "},")
     lines.append("    };\n")
     lines.append("    const piece background = %s;\n" % pref((-1, 2, 0, 0)))
@@ -517,11 +518,13 @@ def main():
         hl.append("        set_%s," % name)
     hl += ["        set_count", "    };", "",
            "    constexpr int depths = %d;" % geo.depths,
+           "    constexpr int cols = %d;      // x = -%d..%d" % (2 * geo.max_lateral + 1, geo.max_lateral, geo.max_lateral),
+           "    constexpr int lines = %d;     // lateral lines X = (2 * i - %d) / 2" % (len(LATERALS), len(LATERALS) - 1),
            "    constexpr int ui_first_color = 192;",
            "    constexpr int palette_used = %d;    // environment colours actually used (1..)" % (len(pal) - 1),
            "", "    extern const uint16_t pixels[];", "    extern const span spans[];",
-           "    extern const piece front[set_count][depths][5];      // [set][d][x + 2]",
-           "    extern const piece lateral[set_count][depths][6];    // [set][d][line]: X = -2.5,-1.5,-0.5,0.5,1.5,2.5",
+           "    extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]",
+           "    extern const piece lateral[set_count][depths][lines]; // [set][d][line]",
            "    extern const piece background;", "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
     with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(hl) + "\n")

@@ -118,11 +118,12 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
         }
     }
 
-    vis.cell[0][2] = int16_t(cell);
+    static_assert(rows == vd::depths && cols == vd::cols);
+    vis.cell[0][half] = int16_t(cell);
 
     for(int d = 0; d < rows; ++d)
     {
-        static constexpr int order[cols] = { 0, -1, 1, -2, 2 };
+        static constexpr int order[cols] = { 0, -1, 1, -2, 2, -3, 3 };
 
         for(int k = 0; k < cols; ++k)
         {
@@ -144,19 +145,19 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
 
             if(d > 0)
             {
-                int behind = vis.cell[d - 1][x + 2];
+                int behind = vis.cell[d - 1][x + half];
                 v = behind >= 0 && sight_passes(lv, es, edge_index(behind, dir));
             }
 
             if(! v && x != 0)
             {
-                int inner = vis.cell[d][x + 2 + (x < 0 ? 1 : -1)];
+                int inner = vis.cell[d][x + half + (x < 0 ? 1 : -1)];
                 v = inner >= 0 && sight_passes(lv, es, edge_index(inner, x < 0 ? left : right));
             }
 
             if(v)
             {
-                vis.cell[d][x + 2] = int16_t(c);
+                vis.cell[d][x + half] = int16_t(c);
             }
         }
     }
@@ -165,12 +166,12 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
 
     for(int d = rows - 1; d >= 0; --d)
     {
-        static constexpr int far_order[cols] = { -2, 2, -1, 1, 0 };
+        static constexpr int far_order[cols] = { -3, 3, -2, 2, -1, 1, 0 };
 
         for(int k = 0; k < cols; ++k)
         {
             int x = far_order[k];
-            int c = vis.cell[d][x + 2];
+            int c = vis.cell[d][x + half];
 
             if(c >= 0)
             {
@@ -178,18 +179,18 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
 
                 if(set >= 0)
                 {
-                    blit_piece(page, vd::front[set][d][x + 2]);
+                    blit_piece(page, vd::front[set][d][x + half]);
                 }
             }
         }
 
         // lateral faces, outer lines first: line l = 2x - 1 (left edge of x <= 0) or 2x + 1 (right edge of x >= 0)
-        static constexpr int lat_x[6] = { -2, 2, -1, 1, 0, 0 };
-        static constexpr int lat_l[6] = { -5, 5, -3, 3, -1, 1 };
+        static constexpr int lat_x[vd::lines] = { -3, 3, -2, 2, -1, 1, 0, 0 };
+        static constexpr int lat_l[vd::lines] = { -7, 7, -5, 5, -3, 3, -1, 1 };
 
-        for(int k = 0; k < 6; ++k)
+        for(int k = 0; k < vd::lines; ++k)
         {
-            int c = vis.cell[d][lat_x[k] + 2];
+            int c = vis.cell[d][lat_x[k] + half];
 
             if(c >= 0)
             {
@@ -198,7 +199,7 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
 
                 if(set >= 0)
                 {
-                    blit_piece(page, vd::lateral[set][d][(l + 5) >> 1]);
+                    blit_piece(page, vd::lateral[set][d][(l + vd::lines - 1) >> 1]);
                 }
             }
         }
@@ -222,6 +223,16 @@ void draw_minimap(uint16_t* page, int px, int py, const level& lv, const edge_st
 
     int ox = (cell & (W - 1)) - 7;
     int oy = (cell >> 5) - 7;
+    int levers[max_hooks];
+    int nlevers = 0;
+
+    for(int i = 0; i < lv.nhooks; ++i)
+    {
+        if(lv.hooks[i].type == H_LEVER)
+        {
+            levers[nlevers++] = lv.hooks[i].lever_edge;
+        }
+    }
 
     for(int j = 0; j < 15; ++j)
     {
@@ -276,7 +287,13 @@ void draw_minimap(uint16_t* page, int px, int py, const level& lv, const edge_st
                     alt = c_floor;
                 }
 
-                uint8_t mid = (k == K_WALL && idx >= 0 && lever_of_edge(lv, idx) >= 0) ? c_lever : alt;
+                uint8_t mid = alt;
+
+                for(int li = 0; li < nlevers; ++li)
+                {
+                    mid = levers[li] == idx ? c_lever : mid;
+                }
+
                 int step = (d & 1) ? stride : 1;
                 uint8_t* q = p + (d == 1 ? 4 : 0) + (d == 2 ? 4 * stride : 0);
                 q[0] = col;

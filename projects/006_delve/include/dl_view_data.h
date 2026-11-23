@@ -41,14 +41,16 @@ namespace dl::view_data
         set_count
     };
 
-    constexpr int depths = 4;
+    constexpr int depths = 5;
+    constexpr int cols = 7;      // x = -3..3
+    constexpr int lines = 8;     // lateral lines X = (2 * i - 7) / 2
     constexpr int ui_first_color = 192;
-    constexpr int palette_used = 191;    // environment colours actually used (1..)
+    constexpr int palette_used = 190;    // environment colours actually used (1..)
 
     extern const uint16_t pixels[];
     extern const span spans[];
-    extern const piece front[set_count][depths][5];      // [set][d][x + 2]
-    extern const piece lateral[set_count][depths][6];    // [set][d][line]: X = -2.5,-1.5,-0.5,0.5,1.5,2.5
+    extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]
+    extern const piece lateral[set_count][depths][lines]; // [set][d][line]
     extern const piece background;
     extern const bn::color palette_colors[256];
 }

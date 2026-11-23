@@ -47,6 +47,7 @@ volatile int test_redraw_ticks;       // last redraw, timer ticks (ticks_per_fra
 volatile int test_redraw_max_ticks;
 volatile int test_view_ticks;          // view only (no minimap)
 volatile int test_view_ticks_sum;
+volatile int test_view_max_ticks;
 volatile int test_map_ticks_sum;
 volatile int test_boot_frames;         // frames spent generating floor 1 (approx.)
 volatile int test_ticks_per_frame;
@@ -485,7 +486,9 @@ namespace
 
             int e = gs.ent_of_cell[nb];
 
-            if(e >= 0 && (lv.ents[e].type == E_MONSTER || furn_blocking(lv.ents[e])))
+            // PROVISIONAL until combat exists (next block): monsters do not block, or a corridor rat would wall
+            // the floor off for good.
+            if(e >= 0 && furn_blocking(lv.ents[e]))
             {
                 bump();
                 return;
@@ -553,6 +556,7 @@ namespace
             uint16_t* page = _painter.page().data();
             dl::view::draw(page, gs.lv, gs.es, _cell, _dir, gs.vis);
             test_view_ticks = timer.elapsed_ticks();
+            test_view_max_ticks = test_view_ticks > test_view_max_ticks ? test_view_ticks : test_view_max_ticks;
             dl::view::draw_minimap(page, 178, 58, gs.lv, gs.es, gs.seen, _cell, _dir);
             int ticks = timer.elapsed_ticks();
             test_map_ticks_sum = test_map_ticks_sum + (ticks - test_view_ticks);
@@ -643,7 +647,7 @@ namespace
                         continue;
                     }
 
-                    int x = xi - 2;
+                    int x = xi - dl::view::half;
                     bn::fixed scale = bn::fixed(geo::object_scale_num()) / geo::object_z10(d);
                     int vx = geo::object_x(d, x);
 

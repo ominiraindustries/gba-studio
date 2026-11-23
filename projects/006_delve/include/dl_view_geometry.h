@@ -2,10 +2,10 @@
 //
 // Walls live on cell EDGES (the generator ports dungeon_model.py v2: walls per side), so every piece is the face of
 // one edge seen from the player's cell:
-//   * front face (d, x): the FAR edge of the visible cell at depth d (0 = player's cell .. 3) and lateral offset x
-//     (-2..+2). It is a rectangle.
-//   * lateral face (d, l): the side edge of row d on the line X = l / 2 cells (l = -5, -3, -1, 1, 3, 5 half cells:
-//     -2.5 .. +2.5). It is a trapezoid, kept at 2-px column granularity so every span starts on an even pixel.
+//   * front face (d, x): the FAR edge of the visible cell at depth d (0 = player's cell .. 4) and lateral offset x
+//     (-3..+3). It is a rectangle.
+//   * lateral face (d, l): the side edge of row d on the line X = l / 2 cells (l = -7 .. 7 odd half cells:
+//     -3.5 .. +3.5). It is a trapezoid, kept at 2-px column granularity so every span starts on an even pixel.
 //   * floor and ceiling: one static strip image (rows below / above the horizon) composed by tools/build_view.py.
 //
 // Camera: eye at mid-height of the walls, pulled back eye_back_z10 / 10 cells from the cell centre so the side walls
@@ -24,12 +24,12 @@ namespace dl::geo
     constexpr int view_w = 176;
     constexpr int view_h = 120;
     constexpr int vp_x = 88;                // vanishing point
-    constexpr int vp_y = 60;
-    constexpr int proj_num = 576;           // focal length 115.2 px per cell = proj_num / 5
+    constexpr int vp_y = 48;                // horizon at 40 % of the view: camera looking slightly down
+    constexpr int proj_num = 480;           // focal length 96 px per cell = proj_num / 5 (wider FOV)
     constexpr int eye_back_z10 = 7;         // eye 0.7 cells behind the cell centre
-    constexpr int depths = 4;               // rows d = 0..3
-    constexpr int max_lateral = 2;          // cells x = -2..+2
-    constexpr int fog_z10 = 42;             // nothing is drawn farther than the far edge of row 3 (z = 4.2)
+    constexpr int depths = 5;               // rows d = 0..4
+    constexpr int max_lateral = 3;          // cells x = -3..+3
+    constexpr int fog_z10 = 52;             // nothing is drawn farther than the far edge of row 4 (z = 5.2): black
     constexpr int object_z10_offset = 3;    // objects stand 0.3 cells past the near edge of their cell
     constexpr int monster_size = 64;        // affine sprite base sizes (ESPEC_VISTA.md)
     constexpr int object_size = 32;
@@ -81,7 +81,7 @@ namespace dl::geo
                      clamp(vp_x + offset(2 * x + 1, z), 0, view_w), clamp(vp_y + half_h, 0, view_h) };
     }
 
-    // Lateral face of row d on the line X = l / 2 (l odd, -5..5): horizontal extent clipped to the view (the
+    // Lateral face of row d on the line X = l / 2 (l odd, -7..7): horizontal extent clipped to the view (the
     // vertical extent changes per column; build_view.py computes it with the same formula). Empty when off screen.
     [[nodiscard]] constexpr rect lateral_rect(int d, int l)
     {
@@ -94,7 +94,7 @@ namespace dl::geo
     }
 
     // Affine sprite of an object standing in cell (d, x), d = 1..3. Scale is 1.0 at d = 1 (spec: ~1.0 / 0.55 / 0.35;
-    // here 1.0 / 0.565 / 0.394). Positions are view pixels: centre x and the floor line (feet) y.
+    // here 1.0 / 0.565 / 0.394 / 0.302). Positions are view pixels: centre x and the floor line (feet) y.
     [[nodiscard]] constexpr int object_z10(int d)
     {
         return near_z10(d) + object_z10_offset;
@@ -116,9 +116,9 @@ namespace dl::geo
         return vp_y + offset(1, object_z10(d));
     }
 
-    static_assert(front_rect(0, 0).x1 - front_rect(0, 0).x0 == 96);
-    static_assert(front_rect(3, 0).x1 - front_rect(3, 0).x0 == 28);
-    static_assert(lateral_rect(0, 1).x0 == 136 && lateral_rect(0, 1).x1 == view_w);
+    static_assert(front_rect(0, 0).x1 - front_rect(0, 0).x0 == 80);
+    static_assert(front_rect(4, 0).x1 - front_rect(4, 0).x0 == 20);
+    static_assert(lateral_rect(0, 1).x0 == 128 && lateral_rect(0, 1).x1 == view_w);
 }
 
 #endif

@@ -10,8 +10,9 @@
 
 namespace dl::view
 {
-    constexpr int rows = 4;     // d = 0..3
-    constexpr int cols = 5;     // x = -2..2
+    constexpr int rows = 5;     // d = 0..4 (dl_view_geometry.h depths)
+    constexpr int cols = 7;     // x = -3..3
+    constexpr int half = cols / 2;
 
     // runtime state of the edges the player changes (doors opened, locks unlocked, levers pulled)
     struct edge_state

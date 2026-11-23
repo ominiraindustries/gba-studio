@@ -40,3 +40,22 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
 | Texto | `bn::sprite_text_generator` + `common::variable_8x8_sprite_font` | sí |
 | Efecto de sonido | `bn::sound_items` (Maxmod) | sí |
 | Entrada | `bn::keypad` | sí |
+
+## Vista y generador (G-25)
+
+- **Piezas de la vista**: tras exportar el arte (`art/export/tex_*.bmp`, ver `art/LÉEME.md`), regenera las piezas y
+  recompila:
+
+      python -I projects/006_delve/tools/build_view.py
+      make -C projects/006_delve -j8
+
+  Lee la geometría de `include/dl_view_geometry.h` y las texturas de `art/export/` (sólo lectura; si falta la carpeta
+  usa `tools/test_textures/`), y escribe `include/dl_view_data.h` + `src/dl_view_data.cpp` (generados, no editar).
+  Los colores 192–255 salen de la paleta de `graphics/ui_frame.bmp` (240–247: colores del minimapa).
+- **Generador**: `src/dl_gen.cpp` es el port bit a bit de la v2 (`Desktop/SNES/tools/scripts/dungeon_model.py`);
+  `src/dl_gen_hooks.cpp` añade los ganchos de juego (DISENO §6b). Comprobación (compila para PC con g++):
+
+      python -I projects/006_delve/tools/gen_metrics.py --fidelity 50 3 --seeds 1000 --levels 3 --ascii 3
+
+  `--fidelity`: CRC idéntico a la v2 de Python; `--seeds`: métricas, reglas duras y solucionador (0 sin solución).
+- **Controles de prueba**: B coloca un monstruo de prueba 3 casillas delante (provisional, B será "objeto rápido").
