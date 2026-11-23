@@ -105,7 +105,9 @@ namespace dl
 
         if(p.hp > 0 && p.hp * 2 < p.hp_max && p.potions > 0)
         {
-            hint(HINT_LOW_HP, "LOW HP! B: DRINK POTION");
+            // G-42.1 (b): B only drinks when the belt has the potion selected
+            hint(HINT_LOW_HP, cd.m.belt[cd.m.belt_sel] == belt_potion ? "LOW HP! B: DRINK POTION"
+                                                                      : "LOW HP! SELECT: POTION");
         }
     }
 
