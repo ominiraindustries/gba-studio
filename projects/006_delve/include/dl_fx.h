@@ -13,6 +13,9 @@ namespace dl::fx
         bool torch_glow = true;         // blended halo behind every wall torch (deco_torch_glow)
         bool deco_depth_fade = true;    // wall decorations darken with distance like the walls
         bool lateral_squeeze = true;    // lateral decorations: horizontal scale follows the real foreshortening
+        bool step_zoom = true;          // a step zooms the old view 1.0 -> 1.12 in 5 f (back: the new one 1.12 -> 1.0)
+        bool turn_slide = true;         // a turn slides the old view out and the new one in, 6 f
+        bool head_bob = true;           // 1-2 px dip during a step (USER DECIDES: on for the first test ROM)
     };
 
     inline switches enabled;

@@ -27,6 +27,9 @@ namespace dl::view_data
     enum set_id : int
     {
         set_wall,
+        set_wall_b,
+        set_wall_c,
+        set_wall_d,
         set_wall_skulls,
         set_wall_crack,
         set_wall_dart,
@@ -40,7 +43,7 @@ namespace dl::view_data
     };
 
     // opaque sets hide whatever is behind them (wall decorations behind them are not shown)
-    constexpr bool set_opaque[set_count] = { true, true, true, true, true, true, false, false, false, true };
+    constexpr bool set_opaque[set_count] = { true, true, true, true, true, true, true, true, true, false, false, false, true };
     constexpr int cap_lines = 6;  // free wall end side faces on lines -5, -3, -1, 1, 3, 5
     constexpr int depths = 5;
     constexpr int cols = 7;      // x = -3..3
@@ -53,7 +56,8 @@ namespace dl::view_data
     extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]
     extern const piece lateral[set_count][depths][lines]; // [set][d][line]
     extern const piece cap[depths][cap_lines];       // [d][cap line]
-    extern const piece background;
+    extern const piece background[2];               // [player cell parity]
+    constexpr int wall_variants = 4;               // set_wall .. set_wall + 3
     extern const bn::color palette_colors[256];
 }
 

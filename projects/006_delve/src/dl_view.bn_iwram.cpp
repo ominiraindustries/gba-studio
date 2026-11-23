@@ -99,7 +99,15 @@ namespace
                 vd::set_wall
             };
             int decor = floor_tables[lv.floor_table].decor_of_var[var];
-            return set_of_decor[decor < DECOR_COUNT ? decor : 0];
+            int set = set_of_decor[decor < DECOR_COUNT ? decor : 0];
+
+            if(set == vd::set_wall)
+            {
+                // one of the wall variants, fixed per edge: walls keep their look and every step shifts them
+                set += int((unsigned(idx) * 2654435761u) >> 30);
+            }
+
+            return set;
         }
 
         case K_SECRET:
@@ -255,7 +263,7 @@ void draw(uint16_t* page, const level& lv, const edge_state& es, int cell, int d
         owner[c] = 0;
     }
 
-    blit_piece(page, vd::background);
+    blit_piece(page, vd::background[((cell & (W - 1)) + (cell >> 5)) & 1]);
 
     for(int d = rows - 1; d >= 0; --d)
     {

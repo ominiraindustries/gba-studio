@@ -37,6 +37,7 @@
 #include "dl_deco_items.h"
 #include "dl_fx.h"
 #include "dl_gen.h"
+#include "dl_transition.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
 #include "dl_view_geometry.h"
@@ -59,6 +60,8 @@ volatile int test_map_update_max_ticks;   // seen marks + key recompute part
 volatile int test_gen_ticks;           // last floor generation, timer ticks
 volatile int test_gen_max_ticks;
 volatile int test_visible_decos;
+volatile int test_transition_frames;
+volatile int test_compose_max_ticks;
 volatile int test_lever_frame;         // frame of the last lever sprite shown (0 up, 1 down)
 volatile int test_ticks_per_frame;
 volatile int test_visible_objects;
@@ -196,7 +199,15 @@ namespace
             ++_frame;
             handle_input();
             update_spikes();
-            update_objects();
+            if(_trans)
+            {
+                step_transition();
+            }
+            else
+            {
+                update_objects();
+            }
+
             update_effects();
             update_shake();
 
@@ -205,7 +216,7 @@ namespace
                 _message_sprites.clear();
             }
 
-            if(_dirty)
+            if(_dirty && ! _trans)
             {
                 redraw();
             }
@@ -229,7 +240,14 @@ namespace
             uint8_t kind;
             uint8_t view;
             bool glow;
+            bn::fixed x, y;     // resting position (transitions move it)
         };
+
+        // step / turn transition (dl_transition.h): 0 none, 1 forward, 2 back, 3 turn left, 4 turn right
+        int _trans = 0;
+        int _trans_t = 0;
+        bn::vector<bn::fixed, dl::view::max_decos> _deco_mat_hs;
+        bn::vector<bn::fixed, dl::view::max_decos> _deco_mat_vs;
 
         bn::vector<bn::sprite_ptr, 24> _deco_sprites;
         bn::vector<deco_sprite, 24> _deco_info;
@@ -416,9 +434,10 @@ namespace
 
             if(cmd == 3 || cmd == 4)
             {
+                const uint16_t* old_page = dl::view::front_page(_painter.page().data());
                 _dir = (_dir + (cmd == 3 ? 3 : 1)) & 3;
                 _cooldown = turn_cooldown;
-                _dirty = true;
+                start_turn(old_page, cmd == 4);
                 return;
             }
 
@@ -556,7 +575,24 @@ namespace
 
             _cell = nb;
             test_moves = test_moves + 1;
-            _dirty = true;
+
+            if(forward)
+            {
+                // the old view zooms toward the vanishing point, then the new one is drawn
+                dl::view::snapshot(dl::view::front_page(_painter.page().data()), 0);
+                _trans = 1;
+                _trans_t = 0;
+            }
+            else if(d == ((_dir + 2) & 3))
+            {
+                // back: the new view (drawn next frame) starts zoomed in and settles
+                _trans = 2;
+                _trans_t = -1;
+            }
+            else
+            {
+                _dirty = true;
+            }
 
             if(e >= 0 && lv.ents[e].type == E_KEY)
             {
@@ -609,7 +645,7 @@ namespace
         }
 
         // ---- redraw
-        void redraw()
+        void redraw(bool flip = true)
         {
             _dirty = false;
             bn::timer timer;
@@ -631,12 +667,21 @@ namespace
             int map_update_ticks = timer.elapsed_ticks() - test_view_ticks;
             test_map_update_max_ticks = map_update_ticks > test_map_update_max_ticks ? map_update_ticks : test_map_update_max_ticks;
             dl::view::draw_minimap(page, _page, 178, 58, _cell, _dir);
-            _page ^= 1;
+
+            if(flip)
+            {
+                _page ^= 1;
+            }
+
             int ticks = timer.elapsed_ticks();
             test_map_ticks_sum = test_map_ticks_sum + (ticks - test_view_ticks);
             test_map_max_ticks = ticks - test_view_ticks > test_map_max_ticks ? ticks - test_view_ticks : test_map_max_ticks;
             test_view_ticks_sum = test_view_ticks_sum + test_view_ticks;
-            _painter.flip_page_later();
+            if(flip)
+            {
+                _painter.flip_page_later();
+            }
+
             test_redraw_ticks = ticks;
             test_redraw_max_ticks = ticks > test_redraw_max_ticks ? ticks : test_redraw_max_ticks;
             test_redraws = test_redraws + 1;
@@ -804,6 +849,8 @@ namespace
             _deco_info.clear();
             _deco_mats.clear();
             _deco_mat_keys.clear();
+            _deco_mat_hs.clear();
+            _deco_mat_vs.clear();
         }
 
         int deco_frame(int kind) const
@@ -836,6 +883,8 @@ namespace
             m.set_vertical_scale(vs);
             _deco_mats.push_back(bn::move(m));
             _deco_mat_keys.push_back(key);
+            _deco_mat_hs.push_back(hs);
+            _deco_mat_vs.push_back(vs);
             return _deco_mats.back();
         }
 
@@ -892,22 +941,165 @@ namespace
                 }
 
                 _deco_sprites.push_back(bn::move(s));
-                _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), false });
+                _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), false, sx, sy });
 
                 if(p.kind == dl::view::DECO_TORCH && dl::fx::enabled.torch_glow)
                 {
-                    bn::sprite_ptr g = deco::torch_glow.create_sprite(sx + (deco::glow_x[view] - 16) * hs,
-                                                                     sy + (deco::glow_y - 32) * vs);
+                    bn::fixed gx = sx + (deco::glow_x[view] - 16) * hs;
+                    bn::fixed gy = sy + (deco::glow_y - 32) * vs;
+                    bn::sprite_ptr g = deco::torch_glow.create_sprite(gx, gy);
                     g.set_affine_mat(mat);
                     g.set_bg_priority(0);
                     g.set_z_order(4 * p.d + 3);     // behind its torch (no blending between sprites)
                     g.set_blending_enabled(true);
                     _deco_sprites.push_back(bn::move(g));
-                    _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true });
+                    _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true, gx, gy });
                 }
             }
 
             test_visible_decos = _deco_info.size();
+        }
+
+        // ---- step / turn transitions (the logic moved already; only the picture catches up)
+        static constexpr int zoom_frames = 6;          // composed on odd frames only: 3 images at 30 Hz
+                                                        // (measured: a zoom compose takes ~0.77 f)
+        static constexpr int turn_frames = 6;
+        static constexpr int zoom_max_q8 = 287;         // 1.12
+
+        void start_turn(const uint16_t* old_page, bool right)
+        {
+            dl::view::snapshot(old_page, 0);           // the new view is drawn next frame (no lag frame)
+            _trans = right ? 4 : 3;
+            _trans_t = -1;
+        }
+
+        void show_world_sprites(bool visible)
+        {
+            for(bn::sprite_ptr& s : _deco_sprites)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _object_sprites)
+            {
+                s.set_visible(visible);
+            }
+        }
+
+        // sprites follow the zoom of the bitmap: p' = vp + (p - vp) * k + (0, dy)
+        void transform_world_sprites(bn::fixed k, int dy)
+        {
+            constexpr int vpx = dl::geo::vp_x - 120;
+            constexpr int vpy = dl::geo::vp_y - 80;
+
+            for(int i = 0, n = _deco_sprites.size(); i < n; ++i)
+            {
+                const deco_sprite& d = _deco_info[i];
+                _deco_sprites[i].set_position(vpx + (d.x - vpx) * k, vpy + (d.y - vpy) * k + dy);
+            }
+
+            for(int i = 0, n = _deco_mats.size(); i < n; ++i)
+            {
+                _deco_mats[i].set_horizontal_scale(bn::min(_deco_mat_hs[i] * k, bn::fixed(2)));
+                _deco_mats[i].set_vertical_scale(bn::min(_deco_mat_vs[i] * k, bn::fixed(2)));
+            }
+
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                const object_sprite& o = _objects[i];
+                bn::sprite_ptr& s = _object_sprites[i];
+                s.set_position(vpx + (o.to_x - vpx) * k, vpy + (o.to_y - vpy) * k + dy);
+                s.set_scale(bn::min(o.to_s * k, bn::fixed(2)));
+            }
+        }
+
+        void step_transition()
+        {
+            int t = ++_trans_t;
+            uint16_t* page = _painter.page().data();
+            bool done;
+
+            if(t == 0)
+            {
+                // back / turn: draw the new view into the hidden page and keep it as a snapshot
+                redraw(false);
+                dl::view::snapshot(page, _trans == 2 ? 0 : 1);
+
+                if(_trans != 2)
+                {
+                    show_world_sprites(false);
+                }
+
+                return;
+            }
+
+            if(_trans <= 2)
+            {
+                // forward: 1.0 -> 1.12 on the old view; back: 1.12 -> 1.0 on the new one. Head bob 1-2 px down.
+                static constexpr int bob[zoom_frames + 1] = { 0, 1, 1, 2, 2, 0, 0 };
+
+                if(! (t & 1))
+                {
+                    if(t >= zoom_frames)
+                    {
+                        if(_trans == 1)
+                        {
+                            _dirty = true;  // the new view is drawn this frame
+                        }
+                        else
+                        {
+                            transform_world_sprites(1, 0);
+                        }
+
+                        _trans = 0;
+                    }
+
+                    return;                 // hold the composed image one more frame
+                }
+
+                int k = t + 1;              // 2, 4, 6
+                int scale = _trans == 1 ? 256 + (zoom_max_q8 - 256) * k / zoom_frames :
+                        zoom_max_q8 - (zoom_max_q8 - 256) * k / zoom_frames;
+                int dy = dl::fx::enabled.head_bob ? bob[t] : 0;
+
+                if(! dl::fx::enabled.step_zoom)
+                {
+                    scale = 256;
+                }
+
+                bn::timer ct;
+                dl::view::compose_zoom(page, 0, scale, dy);
+                int ticks = ct.elapsed_ticks();
+                test_compose_max_ticks = ticks > test_compose_max_ticks ? ticks : test_compose_max_ticks;
+                transform_world_sprites(bn::fixed(scale) / 256, dy);
+                done = false;               // ends on the next even frame
+            }
+            else
+            {
+                int offset = (dl::geo::view_w * t / turn_frames) & ~1;
+                dl::view::compose_slide(page, 0, 1, dl::fx::enabled.turn_slide ? offset : dl::geo::view_w, _trans == 4);
+                done = t >= turn_frames || ! dl::fx::enabled.turn_slide;
+            }
+
+            dl::view::draw_minimap(page, _page, 178, 58, _cell, _dir);
+            _painter.flip_page_later();
+            _page ^= 1;
+            test_transition_frames = test_transition_frames + 1;
+
+            if(done)
+            {
+                if(_trans == 1)
+                {
+                    _dirty = true;          // the new view is drawn next frame
+                }
+                else
+                {
+                    transform_world_sprites(1, 0);
+                    show_world_sprites(true);
+                }
+
+                _trans = 0;
+            }
         }
 
         // one place for the per-frame effects (dl_fx.h switches); G-27 hangs its effects here

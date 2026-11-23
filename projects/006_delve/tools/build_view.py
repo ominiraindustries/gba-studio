@@ -36,6 +36,9 @@ SCREEN_W = 240
 # Wall decorations (torch, banner, chains, lever) are sprites placed by the game (dl_deco_items.h), not textures.
 SETS = [
     ("wall", "tex_wall_stone", 0, None, True),
+    ("wall_b", "tex_wall_stone#1", 0, None, True),      # variants picked per edge (hash): see WALL_VARIANTS
+    ("wall_c", "tex_wall_stone#2", 0, None, True),
+    ("wall_d", "tex_wall_stone#3", 0, None, True),
     ("wall_skulls", "tex_wall_skulls", 0, None, True),
     ("wall_crack", "tex_wall_crack", 0, None, True),
     ("wall_dart", "tex_wall_dart", 0, None, True),
@@ -56,6 +59,9 @@ OPENINGS = {
     "bars": ("tex_bars", "rect", 0.5),
     "stairs": ("tex_stairs_down", "columns", 1.0),
 }
+# Wall variants "stem#k": the artist's tex_wall_stone_v<k>.bmp when it exists, else procedural from the base
+# (PROVISIONAL until drawn by hand): 1 = mirrored, 2 = courses shifted 21 texels, 3 = shifted 37 and mirrored.
+WALL_VARIANTS = {1: (0, True), 2: (21, False), 3: (37, True)}
 CAP_LINES = [-5, -3, -1, 1, 3, 5]     # free wall ends: side face of the front wall of (d, x) on line l
 JAMB_SHADE, SOFFIT_SHADE, SILL_SHADE, CONTENT_SHADE = 0.62, 0.48, 0.75, 0.9
 ART_EXPORT = os.path.join(PROJ, "art", "export")
@@ -497,7 +503,9 @@ def make_locked_placeholder():
     save_rgba(os.path.join(TEST_TEX, "tex_door_locked.png"), np.clip(a, 0, 255))
 
 
-def project_floor_ceiling(geo, floor, ceil):
+def project_floor_ceiling(geo, floor, ceil, parity):
+    """Floor and ceiling; the tile of relative cell (d, x) is mirrored when (d + x + parity) is odd: a world
+    checkerboard, so every step changes the picture (parity = (cell x + cell y) & 1 of the player)."""
     W, H = geo.view_w, geo.view_h
     img = np.zeros((H, W, 4), float)
     img[..., 3] = 255
@@ -512,6 +520,8 @@ def project_floor_ceiling(geo, floor, ceil):
         X = sx * z / geo.F
         u = np.mod(X + 0.5, 1.0)
         vv = np.mod(z - zn0, 1.0)
+        flip = (np.floor(X + 0.5).astype(int) + int(np.floor(z - zn0)) + parity) & 1
+        u = np.where(flip == 1, 1.0 - 1e-6 - u, u)
         tex = floor if dy > 0 else ceil
         row = sample(tex, u, np.full_like(u, vv)).astype(float)
         row[:, :3] *= shade(z) * (1.0 if dy > 0 else 0.85)
@@ -603,7 +613,17 @@ def main():
 
     def tex(stem, k):
         if stem not in texcache:
-            texcache[stem], used[stem] = load_texture(stem)
+            base, _sep, var = stem.partition("#")
+            art_var = os.path.join(ART_EXPORT, "%s_v%s.bmp" % (base, var))
+            if var and os.path.exists(art_var):
+                texcache[stem], used[stem] = load_texture("%s_v%s" % (base, var))
+            elif var:
+                t, used[stem] = load_texture(base)
+                shift, mirror = WALL_VARIANTS[int(var)]
+                t = np.roll(t[:TS], shift, axis=1)
+                texcache[stem] = t[:, ::-1].copy() if mirror else t
+            else:
+                texcache[stem], used[stem] = load_texture(stem)
         return frame(texcache[stem], k)
 
     cap = cap_texture(tex("tex_wall_stone", 0))
@@ -645,9 +665,9 @@ def main():
             if r:
                 pieces.append(r)
                 index.append((-1, 3, d, ci))
-    bg = project_floor_ceiling(geo, tex("tex_floor", 0), tex("tex_ceiling", 0))
-    pieces.append(bg)
-    index.append((-1, 2, 0, 0))
+    for parity in (0, 1):
+        pieces.append(project_floor_ceiling(geo, tex("tex_floor", 0), tex("tex_ceiling", 0), parity))
+        index.append((-1, 2, 0, parity))
     pal, idxs = quantize(pieces)
 
     # emit
@@ -698,7 +718,7 @@ def main():
     lines.append("        " + ",".join("{" + ",".join(pref((-1, 3, d, c)) for c in range(len(CAP_LINES))) + "}"
                                      for d in range(geo.depths)) + ",")
     lines.append("    };\n")
-    lines.append("    const piece background = %s;\n" % pref((-1, 2, 0, 0)))
+    lines.append("    const piece background[2] = { %s, %s };\n" % (pref((-1, 2, 0, 0)), pref((-1, 2, 0, 1))))
     full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
     ui = Image.open(UI_FRAME).getpalette() if os.path.exists(UI_FRAME) else [0] * 768
     ui += [0] * (768 - len(ui))
@@ -735,7 +755,8 @@ def main():
            "    extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]",
            "    extern const piece lateral[set_count][depths][lines]; // [set][d][line]",
            "    extern const piece cap[depths][cap_lines];       // [d][cap line]",
-           "    extern const piece background;", "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
+           "    extern const piece background[2];               // [player cell parity]",
+           "    constexpr int wall_variants = 4;               // set_wall .. set_wall + 3", "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
     with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(hl) + "\n")
     print("build_view: %d pieces, %d spans, %d KB pixels, %d environment colours, textures: %s" % (
