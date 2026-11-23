@@ -281,6 +281,7 @@ namespace
             {
                 dl::themes::apply_for_floor(_bg.palette(), _floor);
                 test_theme = dl::themes::current();
+                create_deco_palettes();
                 _dirty = true;
             }
             bn::timer combat_timer;
@@ -384,7 +385,7 @@ namespace
         bn::vector<bn::sprite_affine_mat_ptr, dl::view::max_decos> _deco_mats;
         bn::vector<int, dl::view::max_decos> _deco_mat_keys;
         bn::vector<bn::sprite_palette_ptr, 3> _glow_palettes;     // torch glow light [d = 0 / 1 / >= 2]
-        bn::vector<bn::sprite_palette_ptr, 4> _deco_palettes;     // [palette A / B][band d = 1 / d >= 2]
+        bn::vector<bn::sprite_palette_ptr, 6> _deco_palettes;     // [palette A / B][band d = 0 / 1 / >= 2] (theme)
         int _flame_frame = 0;
         int _flame_timer = 0;
         int _wave_frame = 0;
@@ -412,6 +413,7 @@ namespace
             test_floor = floor;
             dl::themes::apply_for_floor(_bg.palette(), floor);     // G-37: theme per floor
             test_theme = dl::themes::current();
+            create_deco_palettes();
             bn::timer gen_timer;
             test_floor_seed = generate_floor(floor_seed(floor), floor, gs.lv);
             test_gen_ticks = gen_timer.elapsed_ticks();
@@ -1089,16 +1091,16 @@ namespace
         // ---- wall decorations (sprites on their wall face; the bitmap never contains them)
         void create_deco_palettes()
         {
-            static bn::color colors[2][2][16];
-            static constexpr int band_x100[2] = { 60, 36 };     // ~ wall attenuation at d = 1 and d >= 2
+            // G-37: colours of the current theme (dl_themes.h); called again after a theme change
+            static bn::color colors[2][3][16];
+            static constexpr int band_x100[3] = { 100, 60, 36 };   // ~ wall attenuation at d = 0, 1 and >= 2
+            bool update = ! _deco_palettes.empty();
 
             for(int p = 0; p < 2; ++p)
             {
-                const bn::sprite_item& base =
-                        p ? bn::sprite_items::deco_banner_front : bn::sprite_items::deco_torch_front;
-                bn::span<const bn::color> src = base.palette_item().colors_ref();
+                const bn::color* src = dl::themes::deco_colors(p);
 
-                for(int b = 0; b < 2; ++b)
+                for(int b = 0; b < 3; ++b)
                 {
                     for(int i = 0; i < 16; ++i)
                     {
@@ -1107,8 +1109,17 @@ namespace
                         colors[p][b][i] = i ? bn::color(c.red() * f / 100, c.green() * f / 100, c.blue() * f / 100) : c;
                     }
 
-                    _deco_palettes.push_back(bn::sprite_palette_item(
-                            bn::span<const bn::color>(colors[p][b], 16), bn::bpp_mode::BPP_4).create_palette());
+                    bn::span<const bn::color> span(colors[p][b], 16);
+
+                    if(update)
+                    {
+                        _deco_palettes[p * 3 + b].set_colors(span);
+                    }
+                    else
+                    {
+                        _deco_palettes.push_back(
+                                bn::sprite_palette_item(span, bn::bpp_mode::BPP_4).create_palette());
+                    }
                 }
             }
 
@@ -1123,11 +1134,20 @@ namespace
                 for(int i = 0; i < 16; ++i)
                 {
                     int f = i < 8 ? ramp_x100[i] * band_glow_x100[b] : 0;   // x 10000
-                    glow_colors[b][i] = bn::color(31 * f / 10000, 22 * f / 10000, 11 * f / 10000);
+                    const uint8_t* rgb = dl::themes::glow_rgb();
+                    glow_colors[b][i] = bn::color(rgb[0] * f / 10000, rgb[1] * f / 10000, rgb[2] * f / 10000);
                 }
 
-                _glow_palettes.push_back(bn::sprite_palette_item(
-                        bn::span<const bn::color>(glow_colors[b], 16), bn::bpp_mode::BPP_4).create_palette());
+                bn::span<const bn::color> span(glow_colors[b], 16);
+
+                if(update)
+                {
+                    _glow_palettes[b].set_colors(span);
+                }
+                else
+                {
+                    _glow_palettes.push_back(bn::sprite_palette_item(span, bn::bpp_mode::BPP_4).create_palette());
+                }
             }
         }
 
@@ -1217,10 +1237,9 @@ namespace
                 s.set_bg_priority(0);
                 s.set_z_order(4 * band + 2);
 
-                if(dl::fx::enabled.deco_depth_fade && band >= 1)
-                {
-                    s.set_palette(_deco_palettes[(a.palette_b ? 2 : 0) + (band >= 2 ? 1 : 0)]);
-                }
+                // theme colours at every band (G-37); faded with the depth when deco_depth_fade
+                s.set_palette(_deco_palettes[(a.palette_b ? 3 : 0) +
+                        (dl::fx::enabled.deco_depth_fade ? (band >= 2 ? 2 : band) : 0)]);
 
                 if(p.kind == dl::view::DECO_LEVER_UP || p.kind == dl::view::DECO_LEVER_DOWN)
                 {

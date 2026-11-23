@@ -314,6 +314,26 @@ La v2 tira pocos muebles (banda 0: 60 % de 1–3); la tabla del juego fija la ca
 | 2 | P2, dardo, cadenas/calaveras/nicho/estandarte, grieta en SECRET, caja, estatua, mesa, cofre, charco; tablas por planta 1–3 | bot de 50 semillas sin softlock con rejas como pared |
 | 3 | P3, P4 (caja empujable), P5, runa, foso, palanca con tiempo | según tareas nuevas |
 
+## 6c. Temas de mazmorra por planta (G-37)
+
+Cada planta usa un **tema** (juego de texturas + paleta; arte en `art/themes/<tema>/`, ver su `README.md`). Tabla en
+`include/dl_themes.h` (`floor_order`), una planta por tema para que la demo enseñe variedad pronto (R3: algo nuevo en
+cada planta); a partir de la 7.ª se repite el último:
+
+| Planta | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|---|---|---|---|---|---|---|
+| Tema | cloaca (`sewer`, tema 0) | mina entibada | cripta de huesos | caverna helada | templo de raíces | sala de espejos | forja de lava |
+
+- `flesh_warren` es el tema **secreto/raro**: construido pero sin planta asignada (`secret_theme`) hasta que el diseño
+  decida cuándo sale. Un nombre que falte en la ROM cae al tema 0.
+- El cambio se hace en la pantalla `DESCENDING...` (paleta 1–191 + banco de píxeles; los colores 192–255 del panel no
+  cambian). Depuración: menú FX (SELECT+L) → `THEME` fuerza un tema (BY FLOOR = la tabla); o compilar con
+  `USERFLAGS=-DDL_FORCE_THEME=<n>`.
+- **Provisional (design-question G-37.1)**: para que quepan 8 temas en 32 MB, las poses intermedias del movimiento
+  (los ~10 fotogramas de cada paso/giro) se dibujan a **media resolución en ambos ejes** (bloques de 2×2 px); la
+  vista en reposo sigue a resolución completa. Con resolución completa sólo caben 3 temas
+  (`build_view.py --motion-res full`).
+
 ## 7. Muerte y progreso
 - **Reintento de la planta, no permadeath** (R10: fallar cuesta poco). Al morir: `YOU DIED` y en < 5 s vuelves al
   inicio de la misma planta (misma semilla) con el estado guardado al bajar a ella. Opción `NEW RUN` en la misma

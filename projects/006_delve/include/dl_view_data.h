@@ -37,9 +37,17 @@ namespace dl::view_data
     // opaque sets hide whatever is behind them (wall decorations behind them are not shown)
     constexpr bool set_opaque[set_count] = { true, true, true, true, true, true, true, true, true, false, false, false, true };
     constexpr int ui_first_color = 192;
-    constexpr int palette_used = 116;    // environment colours actually used (1..)
+    constexpr int palette_used = 191;    // environment colours actually used (1..), largest theme
     constexpr int wall_variants = 4;               // set_wall .. set_wall + 3
-    extern const bn::color palette_colors[256];
+
+    // dungeon themes (G-37): theme 0 = art/export, then art/themes/<name>/export by name
+    constexpr int theme_count = 8;
+    extern const char* const theme_names[theme_count];
+    extern const bn::color theme_palette_colors[theme_count][256];
+    extern const bn::color* const palette_colors;     // theme 0
+    // wall decoration sprite palettes per theme: [A torch / chains / lever, B banner][16]; torch glow colour
+    extern const bn::color theme_deco_colors[theme_count][2][16];
+    extern const uint8_t theme_glow_rgb[theme_count][3];
 }
 
 #endif

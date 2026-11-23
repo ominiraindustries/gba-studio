@@ -169,7 +169,7 @@ namespace
 
     }
 
-    BN_CODE_IWRAM void draw_items(uint16_t* page)
+    BN_CODE_IWRAM void draw_items(uint16_t* page, bool quarter)
     {
         const uint16_t* pixels = mvd::pixels();
         int drawn = 0;
@@ -180,7 +180,15 @@ namespace
 
             if(it.u1 > it.u0)
             {
-                blit_spans_clip(page, pixels, it.spans, it.count, it.u0, it.u1);
+                if(quarter)
+                {
+                    blit_spans_clip_quarter(page, reinterpret_cast<const uint8_t*>(pixels), it.spans, it.count,
+                                            it.u0, it.u1);
+                }
+                else
+                {
+                    blit_spans_clip(page, pixels, it.spans, it.count, it.u0, it.u1);
+                }
                 ++drawn;
             }
         }
@@ -487,7 +495,9 @@ namespace
 
     BN_CODE_IWRAM void draw_pose(uint16_t* page, int kind, int k, visibility& vis)
     {
-        const mvd::pose& p = mvd::poses[pose_index(kind, k)];
+        int pi = pose_index(kind, k);
+        const mvd::pose& p = mvd::poses[pi];
+        bool quarter = mvd::motion_quarter && pi != mvd::rest_pose;    // G-37: motion poses at quarter resolution
         const mvd::piece* pieces = mvd::pieces();
         const vd::span* spans = mvd::spans();
         const mvd::slot* slots = mvd::slots + p.first_slot;
@@ -592,10 +602,18 @@ namespace
             }
 
             const mvd::piece& bg = pieces[p.bg + base_dir_now * 2 + base_parity];
-            blit_background(page, mvd::pixels() + spans[bg.first].off, cover, geo::vp_y);
+            if(quarter)
+            {
+                blit_background_quarter(page, reinterpret_cast<const uint8_t*>(mvd::pixels()) + spans[bg.first].off,
+                                        cover, geo::vp_y);
+            }
+            else
+            {
+                blit_background(page, mvd::pixels() + spans[bg.first].off, cover, geo::vp_y);
+            }
         }
 
-        draw_items(page);
+        draw_items(page, quarter);
 
         // decorations whose face is what is seen around their anchor (centre of the face)
         vis.ndecos = 0;

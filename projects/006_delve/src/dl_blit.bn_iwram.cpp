@@ -40,6 +40,38 @@ namespace
     }
 }
 
+namespace
+{
+    // n2 halfwords on two page rows (dst, dst + 120) from n2 bytes: each byte fills a 2-px column (G-37 quarter)
+    inline void double_run(uint16_t* dst, const uint8_t* src, int n2)
+    {
+        uint16_t* dst2 = dst + 120;
+
+        for(; n2 >= 2; n2 -= 2)
+        {
+            unsigned a = src[0];
+            unsigned b = src[1];
+            a |= a << 8;
+            b |= b << 8;
+            dst[0] = uint16_t(a);
+            dst[1] = uint16_t(b);
+            dst2[0] = uint16_t(a);
+            dst2[1] = uint16_t(b);
+            src += 2;
+            dst += 2;
+            dst2 += 2;
+        }
+
+        if(n2)
+        {
+            unsigned a = src[0];
+            a |= a << 8;
+            *dst = uint16_t(a);
+            *dst2 = uint16_t(a);
+        }
+    }
+}
+
 int blit_stat_spans;
 int blit_stat_halfwords;
 
@@ -97,6 +129,72 @@ void blit_background(uint16_t* page, const uint16_t* image, const uint8_t* cover
             }
 
             copy_run(dst + a * 4, src + a * 4, (s - a) * 4);
+        }
+    }
+}
+}
+
+namespace dl::view
+{
+void blit_spans_clip_quarter(uint16_t* page, const uint8_t* pixels, const dl::view_data::span* s, int count, int u0,
+                             int u1)
+{
+    blit_stat_spans += count;
+    for(const dl::view_data::span* end = s + count; s != end; ++s)
+    {
+        int a = s->x2;
+        int b = a + s->n2;
+        int skip = 0;
+
+        if(a < u0)
+        {
+            skip = u0 - a;
+            a = u0;
+        }
+
+        if(b > u1)
+        {
+            b = u1;
+        }
+
+        if(a < b)
+        {
+            double_run(page + s->y * 240 + a, pixels + s->off + skip, b - a);
+            blit_stat_halfwords += 2 * (b - a);
+        }
+    }
+}
+
+void blit_background_quarter(uint16_t* page, const uint8_t* image, const uint8_t* cover, int vp_y)
+{
+    for(int y = 0; y < 120; ++y)
+    {
+        int dist = 2 * y + 1 - 2 * vp_y;
+        dist = dist < 0 ? -dist : dist;
+        const uint8_t* src = image + (y >> 1) * 88;
+        uint16_t* dst = page + y * 120;
+        int s = 0;
+
+        while(s < background_strips)
+        {
+            if(2 * cover[s] > dist)
+            {
+                ++s;
+                continue;
+            }
+
+            int a = s;
+
+            while(s < background_strips && 2 * cover[s] <= dist)
+            {
+                ++s;
+            }
+
+            for(int x = a * 4, xe = s * 4; x < xe; ++x)
+            {
+                unsigned v = src[x];
+                dst[x] = uint16_t(v | (v << 8));
+            }
         }
     }
 }

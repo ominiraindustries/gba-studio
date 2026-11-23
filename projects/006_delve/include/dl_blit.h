@@ -17,6 +17,12 @@ namespace dl::view
     constexpr int background_strips = 22;
     BN_CODE_IWRAM void blit_background(uint16_t* page, const uint16_t* image, const uint8_t* cover, int vp_y);
 
+    // Quarter-resolution versions for the motion poses (G-37): span y = half row (page rows 2y, 2y + 1), one byte
+    // per 2-px column at pixels[off]; floor / ceiling image 60 half rows x 88 bytes.
+    BN_CODE_IWRAM void blit_spans_clip_quarter(uint16_t* page, const uint8_t* pixels, const dl::view_data::span* s,
+                                               int count, int u0, int u1);
+    BN_CODE_IWRAM void blit_background_quarter(uint16_t* page, const uint8_t* image, const uint8_t* cover, int vp_y);
+
     // profiler counters (spans visited, halfwords copied), reset by the caller
     extern int blit_stat_spans;
     extern int blit_stat_halfwords;

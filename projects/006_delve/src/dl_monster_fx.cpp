@@ -12,6 +12,8 @@
 #include "bn_string.h"
 
 #include "dl_fx.h"
+#include "dl_themes.h"
+#include "dl_view_data.h"
 
 namespace dl
 {
@@ -428,16 +430,17 @@ namespace dl
 
     namespace
     {
-        constexpr int menu_items = 8;
+        constexpr int menu_items = 9;
 
         const char* const item_names[menu_items] = {
-            "FADE", "TORCH TINT", "BRIGHT EYES", "APPEAR FLASH", "ATTACK FLASH", "HALO", "BREATHE", "TEST ATTACK"
+            "FADE", "TORCH TINT", "BRIGHT EYES", "APPEAR FLASH", "ATTACK FLASH", "HALO", "BREATHE", "THEME",
+            "TEST ATTACK"
         };
 
         // measured costs (G-34 README); PAL = one sprite palette per monster (shared by every palette effect)
         const char* const item_costs[menu_items] = {
             "1 PALETTE/MONSTER", "1 PALETTE/MONSTER", "1 PALETTE/MONSTER", "PALETTE FADE", "PALETTE FADE",
-            "+1 SPRITE +1 MATRIX", "0.1 % CPU", "A: PULSE NOW"
+            "+1 SPRITE +1 MATRIX", "0.1 % CPU", "DEBUG: FORCE A THEME", "A: PULSE NOW"
         };
 
         const char* value_text(int item)
@@ -460,6 +463,25 @@ namespace dl
                 return fx.monster_halo == 0 ? "OFF" : fx.monster_halo == 1 ? "DARK" : "GLOW";
             case 6:
                 return fx.monster_breathe ? "ON" : "OFF";
+            case 7:
+            {
+                static bn::string<24> name;
+                name.clear();
+
+                if(dl::themes::forced() < 0)
+                {
+                    name.append("BY FLOOR");
+                }
+                else
+                {
+                    for(const char* c = dl::view_data::theme_names[dl::themes::forced()]; *c && ! name.full(); ++c)
+                    {
+                        name.push_back(*c >= 'a' && *c <= 'z' ? char(*c - 'a' + 'A') : *c == '_' ? ' ' : *c);
+                    }
+                }
+
+                return name.c_str();
+            }
             default:
                 return "";
             }
@@ -491,6 +513,9 @@ namespace dl
                 break;
             case 6:
                 fx.monster_breathe = ! fx.monster_breathe;
+                break;
+            case 7:
+                dl::themes::cycle_forced(delta);
                 break;
             default:
                 break;

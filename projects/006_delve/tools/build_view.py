@@ -15,6 +15,7 @@ alpha 0 or magenta (255, 0, 255) as transparent. This tool never touches art/.
 
 Run from the repo root:   python -I projects/006_delve/tools/build_view.py
 """
+import glob
 import os
 import re
 import sys
@@ -241,10 +242,15 @@ def make_test_textures():
             save_rgba(p, np.clip(arr, 0, 255))
 
 
+THEME_EXPORT = None     # export dir of the theme being loaded (None = theme 0, art/export)
+
+
 def load_texture(stem):
-    """RGBA int array (h, 64, 4). Artist export first (graphics/<stem>.bmp), then the test texture."""
-    for p in (os.path.join(ART_EXPORT, stem + ".bmp"), os.path.join(GFX, stem + ".bmp"),
-              os.path.join(TEST_TEX, stem + ".png")):
+    """RGBA int array (h, 64, 4). The theme's export first, then the artist export of theme 0 (art/export,
+    graphics/<stem>.bmp), then the test texture."""
+    first = [os.path.join(THEME_EXPORT, stem + ".bmp")] if THEME_EXPORT else []
+    for p in first + [os.path.join(ART_EXPORT, stem + ".bmp"), os.path.join(GFX, stem + ".bmp"),
+                      os.path.join(TEST_TEX, stem + ".png")]:
         if os.path.exists(p):
             im = Image.open(p)
             if im.mode == "P":
@@ -325,12 +331,17 @@ def thick(geo):
     return geo.t
 
 
-def make_locked_placeholder():
+def make_locked_placeholder(door=None):
     """PROVISIONAL tex_door_locked until the artist draws it: tex_door with an iron band and a big iron padlock
-    (iron = the Iron Key colour). Written to tools/test_textures/, never to art/."""
-    if os.path.exists(os.path.join(ART_EXPORT, "tex_door_locked.bmp")) or             os.path.exists(os.path.join(GFX, "tex_door_locked.bmp")):
+    (iron = the Iron Key colour). Written to tools/test_textures/, never to art/. With `door` (a theme's tex_door,
+    G-37) the image is returned instead of written."""
+    theme_door = door is not None
+    if theme_door:
+        pass
+    elif os.path.exists(os.path.join(ART_EXPORT, "tex_door_locked.bmp")) or             os.path.exists(os.path.join(GFX, "tex_door_locked.bmp")):
         return
-    door, _p = load_texture("tex_door")
+    else:
+        door, _p = load_texture("tex_door")
     a = door[:TS].copy()
     yy, xx = np.mgrid[0:TS, 0:TS]
     light, mid, dark = (176, 184, 200), (112, 118, 134), (34, 36, 44)
@@ -349,6 +360,8 @@ def make_locked_placeholder():
     a[body & (yy == 37), :3] = light
     a[(xx >= 34) & (xx < 37) & (yy >= 40) & (yy < 45), :3] = dark
     a[..., 3] = 255
+    if theme_door:
+        return a
     os.makedirs(TEST_TEX, exist_ok=True)
     save_rgba(os.path.join(TEST_TEX, "tex_door_locked.png"), np.clip(a, 0, 255))
 
@@ -724,66 +737,158 @@ def spans_fast(x0, y0, idx, alpha):
     return [(y0 + r, (x0 >> 1) + s, e - s, hw[r, s:e]) for (r, s), (_r2, e) in zip(st, en)]
 
 
-def build_motion(geo, sets_tex, stone, cap, floor, ceil, lut):
-    """Renders every motion pose and writes dl_view_motion_data.h / .cpp, the blob .bin and its .s wrapper."""
+def paste(master, other):
+    """other piece (x0, y0, rgba) resampled into the frame of the master piece (theme 0): rgba of the master's size."""
+    mx, my, mimg = master
+    out = np.zeros_like(mimg)
+    if other is None:
+        return out
+    ox, oy, oimg = other
+    x0, y0 = max(mx, ox), max(my, oy)
+    x1, y1 = min(mx + mimg.shape[1], ox + oimg.shape[1]), min(my + mimg.shape[0], oy + oimg.shape[0])
+    if x1 > x0 and y1 > y0:
+        out[y0 - my:y1 - my, x0 - mx:x1 - mx] = oimg[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    return out
+
+
+def quarter_spans(x0, y0, idx, alpha):
+    """Quarter-resolution spans (G-37 motion poses): 2x2-px blocks aligned to even page rows and 2-px columns; a
+    block takes its first opaque pixel (row-major) and is on when any pixel is. -> [(half row, x2, n2, bytes)]."""
+    h, w = idx.shape
+    top, bot, right = y0 & 1, (y0 + h) & 1, w & 1
+    idx = np.pad(idx, ((top, bot), (0, right)))
+    alpha = np.pad(alpha, ((top, bot), (0, right)))
+    H, W = idx.shape[0] // 2, idx.shape[1] // 2
+    a4 = alpha.reshape(H, 2, W, 2).transpose(0, 2, 1, 3).reshape(H, W, 4)
+    p4 = idx.reshape(H, 2, W, 2).transpose(0, 2, 1, 3).reshape(H, W, 4)
+    on = a4.any(2)
+    val = np.take_along_axis(p4, a4.argmax(2)[..., None], 2)[..., 0].astype(np.uint8)
+    pad = np.zeros((H, W + 2), np.int8)
+    pad[:, 1:-1] = on
+    dd = np.diff(pad, axis=1)
+    st = np.argwhere(dd == 1)
+    en = np.argwhere(dd == -1)
+    Y0 = (y0 - top) >> 1
+    return [(Y0 + r, (x0 >> 1) + s, e - s, val[r, s:e]) for (r, s), (_r2, e) in zip(st, en)]
+
+
+def build_motion(geo, themes, luts, quarter_motion):
+    """Renders every motion pose for every theme and writes dl_view_motion_data.h / .cpp, the shared geometry blob
+    (pieces + spans, src/dl_view_motion.bin), one pixel bank per theme (src/dl_view_theme_<k>.bin, same layout:
+    a span's offset is valid in every bank) and the .s wrapper. Pieces, spans and the transparency come from
+    theme 0; the other themes only change the pixel values (G-37). -> (geometry bytes, bank bytes)."""
     poses = motion_poses(geo) + [("rest", Pose(geo, 0.0, 0.0, 0.0))]
-    pix = []            # list of uint16 arrays
+    nt = len(themes)
+    pix = [[] for _ in range(nt)]   # per theme: list of uint16 arrays (same lengths in every theme)
     npix = 0
     spans = []          # (y, x2, n2, off)
     pieces = []         # (first, count, c0, c1)
     slot_rows = []
     pose_rows = []
+    dedup = {}          # (parity, contents in every theme) -> offset
+    stats = dict(alpha_lost=0, dedup=0)
 
-    def emit(r):
+    def put(k, arr):
+        pix[k].append(arr)
+
+    def pad_to(mod4):
         nonlocal npix
+        while npix % 4 != mod4:
+            for k in range(nt):
+                put(k, np.zeros(1, np.uint8))
+            npix += 1
+
+    def emit(rs, share=True, quarter=False):
+        """One piece for every theme. Full resolution: spans of 2-px pairs (halfwords, offset in halfwords with the
+        page's word parity). quarter (motion poses, G-37): 2x2-px blocks, one byte per 2-px column on two page
+        rows, span y = half row, offset in bytes."""
+        nonlocal npix
+        r = rs[0]
         if r is None:
             pieces.append((0, 0, 0, 0))
             return
         x0, y0, img = r
-        c = to555(img[..., :3])
-        idx = lut[c[..., 0] * 1024 + c[..., 1] * 32 + c[..., 2]]
+        alpha = img[..., 3] > 0
+        idxs = []
+        for k in range(nt):
+            im = img if k == 0 else paste(r, rs[k])
+            if k:
+                stats["alpha_lost"] += int((alpha & ~(im[..., 3] > 0)).sum())
+            c = to555(im[..., :3])
+            idxs.append(luts[k][c[..., 0] * 1024 + c[..., 1] * 32 + c[..., 2]])
+        cut = quarter_spans if quarter else spans_fast
+        runs = [cut(x0, y0, idxs[k], alpha) for k in range(nt)]
         first = len(spans)
-        for (y, x2, n2, hw) in spans_fast(x0, y0, idx, img[..., 3] > 0):
-            if (npix & 1) != (x2 & 1):
-                pix.append(np.zeros(1, np.uint16))
-                npix += 1
-            spans.append((y, x2, n2, npix))
-            pix.append(hw)
-            npix += len(hw)
+        for j, (y, x2, n2, d0) in enumerate(runs[0]):
+            ds = [runs[k][j][3].view(np.uint8) if not quarter else runs[k][j][3] for k in range(nt)]
+            key = None
+            if share:
+                key = (quarter, x2 & 1, b"".join(d.tobytes() for d in ds))
+                off = dedup.get(key)
+                if off is not None:
+                    spans.append((y, x2, n2, off))
+                    stats["dedup"] += len(ds[0])
+                    continue
+            if not quarter:
+                pad_to(2 * (x2 & 1))
+            off = npix if quarter else npix // 2
+            spans.append((y, x2, n2, off))
+            if key is not None:
+                dedup[key] = off
+            for k in range(nt):
+                put(k, ds[k])
+            npix += len(ds[0])
         pieces.append((first, len(spans) - first, x0 >> 1, (x0 + img.shape[1] + 1) >> 1))
 
     for pi, (kind, pose) in enumerate(poses):
-        order, bgs = build_pose(geo, pose, sets_tex, stone, cap, floor, ceil)
+        q = quarter_motion and kind != "rest"
+        built = [build_pose(geo, pose, T["sets_tex"], T["stone"], T["cap"], T["floor"], T["ceil"]) for T in themes]
+        order, bgs = built[0]
         first_slot = len(slot_rows)
-        for c in order:
+        for si, c in enumerate(order):
             slot_rows.append((c["d"], c["x"], c["kind"], c["axis_id"], int(round(c["px"] * U)),
                               int(round(c["pz"] * U)), len(pieces)))
-            for r in c["pieces"]:
-                emit(r)
+            for pj, r in enumerate(c["pieces"]):
+                emit([r] + [built[k][0][si]["pieces"][pj] for k in range(1, nt)], quarter=q)
         bg0 = len(pieces)
-        for r in bgs:
-            emit(r)
+        for bj, r in enumerate(bgs):
+            # contiguous image: 120 rows x 88 halfwords (quarter: 60 half rows x 88 bytes)
+            emit([r] + [built[k][1][bj] for k in range(1, nt)], share=False, quarter=q)
         pose_rows.append((first_slot, len(order), int(round(pose.ex * U)), int(round(pose.ez * U)),
                           int(round(np.cos(pose.yaw) * 16384)), int(round(np.sin(pose.yaw) * 16384)), bg0))
         print("build_view: pose %s %d: %d slots" % (kind, pi % MOTION_FRAMES + 1, len(order)), flush=True)
-    if npix & 1:
-        pix.append(np.zeros(1, np.uint16))
-        npix += 1
+    pad_to(0)
     pa = np.array(pieces, dtype=[("first", "<u4"), ("count", "<u2"), ("c0", "u1"), ("c1", "u1")])
     sa = np.array(spans, dtype=[("y", "u1"), ("x2", "u1"), ("n2", "<u2"), ("off", "<u4")])
-    px = np.concatenate(pix).astype("<u2")
-    blob = pa.tobytes() + sa.tobytes() + px.tobytes()
+    blob = pa.tobytes() + sa.tobytes()
     with open(MOTION_BIN, "wb") as f:
         f.write(blob)
     import hashlib
-    digest = hashlib.sha1(blob).hexdigest()[:16]
+    digest = hashlib.sha1(blob)
+    for old in glob.glob(os.path.join(PROJ, "src", "dl_view_theme_*.bin")):
+        os.remove(old)
+    bank_bytes = 0
+    for k in range(nt):
+        bank = np.concatenate(pix[k]).astype(np.uint8).tobytes()
+        bank_bytes = len(bank)
+        digest.update(bank)
+        with open(THEME_BIN % k, "wb") as f:
+            f.write(bank)
+    sl = ["@ GENERATED by tools/build_view.py (G-31 motion poses, G-37 themes). Do not edit. blobs %s, geometry %d "
+          "bytes, %d theme banks of %d bytes" % (digest.hexdigest()[:16], len(blob), nt, bank_bytes),
+          "    .section .rodata", "    .align 2", "    .global dl_view_motion_blob", "dl_view_motion_blob:",
+          "    .incbin \"../src/dl_view_motion.bin\""]
+    for k in range(nt):
+        sl += ["    .align 2", "    .global dl_view_theme_%d" % k, "dl_view_theme_%d:" % k,
+               "    .incbin \"../src/dl_view_theme_%d.bin\"" % k]
     with open(MOTION_S, "w", encoding="utf-8", newline="\n") as f:
-        f.write("@ GENERATED by tools/build_view.py (G-31 motion poses). Do not edit. blob %s, %d bytes\n"
-                "    .section .rodata\n    .align 2\n    .global dl_view_motion_blob\n"
-                "dl_view_motion_blob:\n    .incbin \"../src/dl_view_motion.bin\"\n" % (digest, len(blob)))
-    hl = ["// GENERATED by tools/build_view.py (G-31 motion poses). Do not edit.", "#ifndef DL_VIEW_MOTION_DATA_H",
-          "#define DL_VIEW_MOTION_DATA_H", "", "#include <stdint.h>", "", '#include "dl_view_data.h"', "",
-          "extern \"C\" const uint8_t dl_view_motion_blob[];", "", "namespace dl::view_motion_data", "{",
+        f.write("\n".join(sl) + "\n")
+    hl = ["// GENERATED by tools/build_view.py (G-31 motion poses, G-37 themes). Do not edit.",
+          "#ifndef DL_VIEW_MOTION_DATA_H", "#define DL_VIEW_MOTION_DATA_H", "", "#include <stdint.h>", "",
+          '#include "dl_view_data.h"', "",
+          "extern \"C\" const uint8_t dl_view_motion_blob[];"] + [
+          "extern \"C\" const uint8_t dl_view_theme_%d[];" % k for k in range(nt)] + [
+          "", "namespace dl::view_motion_data", "{",
           "    constexpr int motion_frames = %d;    // intermediate poses per move kind" % MOTION_FRAMES,
           "    constexpr int kinds = %d;            // step, strafe, turn (right)" % len(MOTION_KINDS),
           "    constexpr int pitch_u = %d;          // cell pitch in u (dl_view_geometry.h)" % int(round(geo.P * U)),
@@ -804,30 +909,42 @@ def build_motion(geo, sets_tex, stone, cap, floor, ceil, lut):
           "        int16_t ez_u;", "        int16_t cos_q14;", "        int16_t sin_q14;", "        uint32_t bg;",
           "    };", "",
           "    constexpr uint32_t spans_offset = %d;     // bytes into dl_view_motion_blob" % pa.nbytes,
-          "    constexpr uint32_t pixels_offset = %d;" % (pa.nbytes + sa.nbytes),
+          "    constexpr uint32_t theme_bank_bytes = %d;  // pixel bank of one theme (dl_view_theme_<k>)" % bank_bytes,
+          "    // motion poses at quarter resolution (G-37 ROM budget): their spans are 2x2-px blocks, y = half row,",
+          "    // one byte per 2-px column at byte offset off; floor / ceiling 60 half rows x 88 bytes",
+          "    constexpr bool motion_quarter = %s;" % ("true" if quarter_motion else "false"),
           "", "    extern const slot slots[%d];" % len(slot_rows),
           "    constexpr int rest_pose = kinds * motion_frames;    // the resting view",
           "    extern const pose poses[kinds * motion_frames + 1];  // [kind * motion_frames + k - 1], rest_pose", "",
+          "    // pixel bank of every theme (same layout) and the one in use (dl::themes::apply)",
+          "    extern const uint16_t* const theme_pixels[dl::view_data::theme_count];",
+          "    extern const uint16_t* current_pixels;", "",
           "    inline const piece* pieces()", "    {",
           "        return reinterpret_cast<const piece*>(dl_view_motion_blob);", "    }", "",
           "    inline const dl::view_data::span* spans()", "    {",
           "        return reinterpret_cast<const dl::view_data::span*>(dl_view_motion_blob + spans_offset);", "    }", "",
-          "    inline const uint16_t* pixels()", "    {",
-          "        return reinterpret_cast<const uint16_t*>(dl_view_motion_blob + pixels_offset);", "    }", "}", "",
+          "    inline const uint16_t* pixels()", "    {", "        return current_pixels;", "    }", "}", "",
           "#endif"]
     with open(MOTION_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(hl) + "\n")
-    cl = ["// GENERATED by tools/build_view.py (G-31 motion poses). Do not edit.", '#include "dl_view_motion_data.h"',
-          "", "namespace dl::view_motion_data", "{", "    const slot slots[%d] = {" % len(slot_rows)]
+    cl = ["// GENERATED by tools/build_view.py (G-31 motion poses, G-37 themes). Do not edit.",
+          '#include "dl_view_motion_data.h"', "", "namespace dl::view_motion_data", "{",
+          "    const slot slots[%d] = {" % len(slot_rows)]
     for i in range(0, len(slot_rows), 6):
         cl.append("        " + "".join("{%d,%d,%d,%d,%d,%d,%d}," % s for s in slot_rows[i:i + 6]))
     cl += ["    };", "", "    const pose poses[kinds * motion_frames + 1] = {"]
     cl += ["        {%d,%d,%d,%d,%d,%d,%d}," % p for p in pose_rows]
-    cl += ["    };", "}"]
+    cl += ["    };", "", "    const uint16_t* const theme_pixels[dl::view_data::theme_count] = {"]
+    cl += ["        reinterpret_cast<const uint16_t*>(dl_view_theme_%d)," % k for k in range(nt)]
+    cl += ["    };", "", "    const uint16_t* current_pixels = reinterpret_cast<const uint16_t*>(dl_view_theme_0);",
+           "}"]
     with open(MOTION_CPP, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(cl) + "\n")
-    print("build_view: motion %d poses, %d slots, %d pieces, %d spans, %d KB blob" % (
-        len(poses), len(slot_rows), len(pieces), len(spans), len(blob) // 1024))
+    print("build_view: motion %d poses, %d slots, %d pieces, %d spans, geometry %d KB, %d theme banks of %d KB "
+          "(span dedup saved %d KB per bank), transparency differing from theme 0: %d px" % (
+              len(poses), len(slot_rows), len(pieces), len(spans), len(blob) // 1024, nt, bank_bytes // 1024,
+              stats["dedup"] * 2 // 1024, stats["alpha_lost"]))
+    return len(blob), bank_bytes
 
 
 # ----------------------------------------------------------------------------------------------- quantize + emit
@@ -885,25 +1002,55 @@ def palette_lut(pal_arr):
     return lut
 
 
-def main():
-    geo = Geo(parse_geometry())
-    if not os.path.isdir(ART_EXPORT):
-        make_test_textures()
-    make_locked_placeholder()
+THEMES_DIR = os.path.join(PROJ, "art", "themes")
+THEME_BIN = os.path.join(PROJ, "src", "dl_view_theme_%d.bin")
+# measured (G-37): geometry 3.15 MB + 8.91 MB per theme at full resolution -> 3 themes fit
+FULL_RES_MAX_THEMES = 3
+ROM_VIEW_BUDGET = 30 * 1024 * 1024     # view data (geometry + theme banks); the rest of the ROM is < 1 MB (G-37)
+
+
+def discover_themes(extra, skip_art):
+    """[(name, export dir or None)]: theme 0 = art/export ("sewer"), then art/themes/<name>/export in name order,
+    then the --theme NAME=DIR extras."""
+    themes = [("sewer", None)]
+    if not skip_art and os.path.isdir(THEMES_DIR):
+        for name in sorted(os.listdir(THEMES_DIR)):
+            d = os.path.join(THEMES_DIR, name, "export")
+            if os.path.isdir(d) and glob.glob(os.path.join(d, "tex_*.bmp")):
+                themes.append((name, d))
+    for spec in extra:
+        name, _sep, d = spec.partition("=")
+        if not os.path.isdir(d):
+            sys.exit("build_view: --theme %s: no such directory" % spec)
+        themes.append((name, d))
+    return themes
+
+
+def load_theme(name, export_dir):
+    """Textures of one theme -> dict(sets_tex, stone, cap, floor, ceil, used). A file missing from the theme's export
+    falls back to theme 0 (reported); the opening masks always come from theme 0 (shared geometry)."""
+    global THEME_EXPORT
+    THEME_EXPORT = export_dir
     used = {}
     texcache = {}
+
+    def own(stem):
+        return export_dir is None or os.path.exists(os.path.join(export_dir, stem + ".bmp"))
 
     def tex(stem, k):
         if stem not in texcache:
             base, _sep, var = stem.partition("#")
-            art_var = os.path.join(ART_EXPORT, "%s_v%s.bmp" % (base, var))
-            if var and os.path.exists(art_var):
+            art_var = [os.path.join(export_dir or ART_EXPORT, "%s_v%s.bmp" % (base, var))]
+            if var and any(os.path.exists(p) for p in art_var):
                 texcache[stem], used[stem] = load_texture("%s_v%s" % (base, var))
             elif var:
                 t, used[stem] = load_texture(base)
                 shift, mirror = WALL_VARIANTS[int(var)]
                 t = np.roll(t[:TS], shift, axis=1)
                 texcache[stem] = t[:, ::-1].copy() if mirror else t
+            elif stem == "tex_door_locked" and export_dir and not own(stem):
+                texcache[stem] = make_locked_placeholder(tex("tex_door", 0))   # PROVISIONAL, from the theme's door
+                used[stem] = "placeholder from %s" % used["tex_door"]
             else:
                 texcache[stem], used[stem] = load_texture(stem)
         return frame(texcache[stem], k)
@@ -912,7 +1059,7 @@ def main():
     stone = tex("tex_wall_stone", 0)
     floor, ceil = tex("tex_floor", 0), tex("tex_ceiling", 0)
     sets_tex = []
-    for (name, stem, k, opening, _opaque) in SETS:
+    for (_name, stem, k, opening, _opaque) in SETS:
         t = tex(stem, k)
         if opening:
             mask = build_mask(opening, t)
@@ -921,26 +1068,101 @@ def main():
             sets_tex.append((face_t, mask, OPENINGS[opening][2], t))
         else:
             sets_tex.append((t, None, None, t))
+    THEME_EXPORT = None
+    if export_dir:
+        borrowed = sorted(s for s, p in used.items() if isinstance(p, str) and os.path.dirname(p) != export_dir
+                          and not p.startswith("placeholder"))
+        if borrowed:
+            print("build_view: theme %s borrows from theme 0: %s" % (name, ", ".join(borrowed)))
+    return dict(name=name, sets_tex=sets_tex, stone=stone, cap=cap, floor=floor, ceil=ceil, used=used)
 
-    # palette from the resting view (every set at every slot + all floor / ceiling images)
-    order, bgs = build_pose(geo, Pose(geo, 0.0, 0.0, 0.0), sets_tex, stone, cap, floor, ceil)
-    rest_pieces = [r for c in order for r in c["pieces"] if r is not None] + list(bgs)
-    pal, _idxs = quantize(rest_pieces)
-    build_motion(geo, sets_tex, stone, cap, floor, ceil, palette_lut(pal))
 
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="DELVE view pieces builder")
+    ap.add_argument("--theme", action="append", default=[], metavar="NAME=DIR",
+                    help="extra theme from an export dir (tests); art/themes/*/export are found by themselves")
+    ap.add_argument("--no-art-themes", action="store_true", help="ignore art/themes (theme 0 + --theme only)")
+    ap.add_argument("--motion-res", choices=("auto", "full", "quarter"), default="auto",
+                    help="motion poses resolution; auto = full while the themes fit (%d), else quarter" %
+                    FULL_RES_MAX_THEMES)
+    ap.add_argument("--max-themes", type=int, default=0, help="keep only the first N themes")
+    args = ap.parse_args()
+    geo = Geo(parse_geometry())
+    if not os.path.isdir(ART_EXPORT):
+        make_test_textures()
+    make_locked_placeholder()
+    found = discover_themes(args.theme, args.no_art_themes)
+    if args.max_themes:
+        found = found[:args.max_themes]
+    themes = [load_theme(n, d) for n, d in found]
+    print("build_view: %d themes: %s" % (len(themes), ", ".join(n for n, _d in found)))
+
+    # palette of each theme from its resting view (every set at every slot + all floor / ceiling images)
+    pals, luts = [], []
+    for T in themes:
+        order, bgs = build_pose(geo, Pose(geo, 0.0, 0.0, 0.0), T["sets_tex"], T["stone"], T["cap"], T["floor"],
+                                T["ceil"])
+        rest_pieces = [r for c in order for r in c["pieces"] if r is not None] + list(bgs)
+        pal, _idxs = quantize(rest_pieces)
+        pals.append(pal)
+        luts.append(palette_lut(pal))
+    quarter = args.motion_res == "quarter" or (args.motion_res == "auto" and len(themes) > FULL_RES_MAX_THEMES)
+    print("build_view: motion poses at %s resolution" % ("quarter" if quarter else "full"))
+    geo_bytes, bank_bytes = build_motion(geo, themes, luts, quarter)
+    total = geo_bytes + bank_bytes * len(themes)
+    print("build_view: ROM view data %.2f MB (geometry %.2f + %d x %.2f), budget %.2f MB" % (
+        total / 1048576, geo_bytes / 1048576, len(themes), bank_bytes / 1048576, ROM_VIEW_BUDGET / 1048576))
+
+    used_all = sorted({p for T in themes for p in T["used"].values() if not p.startswith("placeholder")})
     lines = ["// GENERATED by tools/build_view.py from %s. Do not edit." % ", ".join(
-        os.path.relpath(p, PROJ).replace("\\", "/") for p in sorted(set(used.values()))),
+        os.path.relpath(p, PROJ).replace("\\", "/") for p in used_all if p.startswith(PROJ)),
         '#include "dl_view_data.h"\n', "namespace dl::view_data\n{"]
-    full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
     ui = Image.open(UI_FRAME).getpalette() if os.path.exists(UI_FRAME) else [0] * 768
     ui += [0] * (768 - len(ui))
-    full += [(ui[i * 3] >> 3, ui[i * 3 + 1] >> 3, ui[i * 3 + 2] >> 3) for i in range(192, 256)]
-    for k, c in enumerate(MAP_COLORS):          # engine minimap colours in the free UI slots 240..
-        full[240 + k] = tuple(v >> 3 for v in c)
-    lines.append("    const bn::color palette_colors[256] = {")
-    for i in range(0, 256, 8):
-        lines.append("        " + "".join("bn::color(%d,%d,%d)," % c for c in full[i:i + 8]))
-    lines.append("    };\n}")
+    lines.append("    const bn::color theme_palette_colors[theme_count][256] = {")
+    for ti, pal in enumerate(pals):
+        full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
+        full += [(ui[i * 3] >> 3, ui[i * 3 + 1] >> 3, ui[i * 3 + 2] >> 3) for i in range(192, 256)]
+        for k, c in enumerate(MAP_COLORS):          # engine minimap colours in the free UI slots 240..
+            full[240 + k] = tuple(v >> 3 for v in c)
+        lines.append("        {   // %d %s" % (ti, themes[ti]["name"]))
+        for i in range(0, 256, 8):
+            lines.append("            " + "".join("bn::color(%d,%d,%d)," % c for c in full[i:i + 8]))
+        lines.append("        },")
+    lines.append("    };\n")
+    lines.append("    const bn::color* const palette_colors = theme_palette_colors[0];\n")
+    # wall decoration palettes (art/themes/<name>/deco_palette.json: A torch / chains / lever, B banner, G glow);
+    # theme 0 and themes without the file use the sprites' own palettes (graphics/deco_*_front.bmp)
+    def bmp_pal(stem):
+        p = Image.open(os.path.join(GFX, stem + ".bmp")).getpalette()[:48]
+        return [tuple(v >> 3 for v in p[i * 3:i * 3 + 3]) for i in range(16)]
+
+    base_deco = [bmp_pal("deco_torch_front"), bmp_pal("deco_banner_front")]
+    lines.append("    const bn::color theme_deco_colors[theme_count][2][16] = {")
+    glows = []
+    for T, (_n, d) in zip(themes, found):
+        jp = os.path.join(os.path.dirname(d), "deco_palette.json") if d else None
+        deco, glow = base_deco, (31, 22, 11)
+        if jp and os.path.exists(jp):
+            import json
+            with open(jp, encoding="utf-8") as f:
+                js = json.load(f)
+            hexc = lambda h: tuple(int(h[k:k + 2], 16) >> 3 for k in (1, 3, 5))
+            deco = [[hexc(h) for h in js[k][:16]] for k in ("A", "B")]
+            g = max((hexc(h) for h in js["G"][1:8]), key=sum)
+            glow = tuple(v * 31 // max(1, max(g)) for v in g)
+        glows.append(glow)
+        lines.append("        {   // %s" % T["name"])
+        for pal in deco:
+            lines.append("            { %s }," % "".join("bn::color(%d,%d,%d)," % c for c in pal))
+        lines.append("        },")
+    lines.append("    };\n")
+    lines.append("    const uint8_t theme_glow_rgb[theme_count][3] = { %s };\n" % ", ".join(
+        "{%d,%d,%d}" % g for g in glows))
+    lines.append("    const char* const theme_names[theme_count] = { %s };" % ", ".join(
+        '"%s"' % T["name"] for T in themes))
+    lines.append("}")
     with open(OUT_CPP, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -956,13 +1178,25 @@ def main():
            "    constexpr bool set_opaque[set_count] = { %s };" % ", ".join(
                "true" if q else "false" for _n, _s, _k, _o, q in SETS),
            "    constexpr int ui_first_color = 192;",
-           "    constexpr int palette_used = %d;    // environment colours actually used (1..)" % (len(pal) - 1),
+           "    constexpr int palette_used = %d;    // environment colours actually used (1..), largest theme" % (
+               max(len(p) for p in pals) - 1),
            "    constexpr int wall_variants = 4;               // set_wall .. set_wall + 3",
-           "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
+           "",
+           "    // dungeon themes (G-37): theme 0 = art/export, then art/themes/<name>/export by name",
+           "    constexpr int theme_count = %d;" % len(themes),
+           "    extern const char* const theme_names[theme_count];",
+           "    extern const bn::color theme_palette_colors[theme_count][256];",
+           "    extern const bn::color* const palette_colors;     // theme 0",
+           "    // wall decoration sprite palettes per theme: [A torch / chains / lever, B banner][16]; torch glow colour",
+           "    extern const bn::color theme_deco_colors[theme_count][2][16];",
+           "    extern const uint8_t theme_glow_rgb[theme_count][3];", "}", "", "#endif"]
     with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(hl) + "\n")
-    print("build_view: %d environment colours, textures: %s" % (len(pal) - 1, ", ".join(
-        sorted(os.path.relpath(p, PROJ).replace("\\", "/") for p in used.values()))))
+    for T, pal in zip(themes, pals):
+        print("build_view: theme %s: %d environment colours" % (T["name"], len(pal) - 1))
+    if total > ROM_VIEW_BUDGET:
+        sys.exit("build_view: ROM budget exceeded (%.2f MB > %.2f MB): use --max-themes" % (
+            total / 1048576, ROM_VIEW_BUDGET / 1048576))
 
 
 if __name__ == "__main__":
