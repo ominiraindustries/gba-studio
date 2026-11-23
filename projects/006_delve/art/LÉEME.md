@@ -34,13 +34,24 @@ Sin ruido de 1 px: manchas de 3×2 o más y líneas limpias, para que no "hierva
 
 ## Paleta de la interfaz (`ui_frame`, índices 192–255)
 
-Usados 192–209: piedra oscura 192–197, hierro 198–203, latón 204–207, placas hundidas 208–209. El índice 0 es el
-hueco transparente de la vista (0,0,176,120).
+HUD opción A de `../HUD.md` (G-32), dibujado por `_seed/delve_ui.py`. Usados 192–223: piedra oscura 192–197, hierro
+198–203, latón 204–207, placas hundidas 208–209, vida (rojo) 210–214, recarga 215–216 (el relleno es el latón),
+hoja de acero 217–218, cuero 219–221, vidrio 222–223. **240–247 son del minimapa del motor**: no se usan aquí. El
+índice 0 es el hueco transparente de la vista (0,0,176,120). El juego copia los colores 192–239 y 248–255 de este
+fichero a la paleta al arrancar (`src/dl_hud.cpp`): editar un color aquí y exportar basta.
 
-Huecos del `ui_frame` (para el motor):
-- Panel: placa de estado (179..236, 3..54); pozo del minimapa 60×60 exacto (178..237, 58..117).
-- Franja: pozo del arma (3..56, 125..140); ranura de recarga 52×8 (60..111, 128..135) para la barra de 48×4 en
-  (62,130); placa de mensajes 230×12 (5..234, 144..155) para 28 caracteres de la fuente 8×8.
+Cajas del `ui_frame` (x0, y0, x1, y1 inclusive; el código las usa, si se mueven hay que tocar `src/dl_hud.cpp`):
+- Panel: brújula y planta (178, 2, 237, 27), con los puntos de la cinta en y = 9; pozo del minimapa (178, 30, 237, 91),
+  el motor dibuja 60×60 en (178, 31); llaves (178, 94, 237, 117), icono de llave 16×16 en (181, 97) (el juego lo tapa
+  sin llaves).
+- Franja: arma (2, 122, 39, 157) con la espada 32×28 en (4, 124) y la ranura de recarga (4, 152, 37, 156); vida y
+  objeto (42, 122, 237, 145) con la ranura de vida (60, 127, 155, 134) y la poción en (200, 126); mensajes
+  (42, 147, 237, 158), 28 caracteres de la fuente 8×8 desde (46, 149).
+- Todo el texto (`E · S · W`, `FLOOR 1`, `HP`, `24/30`, `x3`, `B`, `x1`, mensajes) lo pone el juego con sprites de
+  la fuente de Butano: no se dibuja texto en el `.aseprite`.
+
+`ui_arrow` (sprite 8×16, 16 colores, 0 transparente): flecha de daño que apunta a la izquierda; el juego la voltea
+para el borde derecho.
 
 ## Texturas 64×64 (`art/export/*.bmp`, 8 bpp)
 
