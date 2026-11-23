@@ -45,10 +45,16 @@ Tramado ordenado de 1 px de fuerza baja (0,6) entre tonos vecinos de la misma ra
 
 ## Paleta de la interfaz (`ui_frame`, índices 192–255)
 
-HUD opción A de `../HUD.md` (G-32), dibujado por `_seed/delve_ui.py`, restilizado en G-33: hierro forjado oscuro con
-remaches y cardenillo, sobre ladrillo de cloaca. Usados 192–223: piedra oscura 192–197, hierro 198–203, cardenillo
-204–207 (remaches, guarda de la espada, llave, relleno de recarga; el código lo llama `brass`), placas hundidas
-208–209, vida (rojo) 210–214, recarga 215–216, hoja de acero 217–218, cuero 219–221, vidrio 222–223. **240–247 son
+HUD opción A de `../HUD.md` (G-32), restilizado en G-38 ("mazmorrero puro"): rebajes tallados en piedra oscura
+fría con el borde picado (arriba/izquierda a la luz, abajo/derecha en sombra), escuadras y flejes de hierro
+ennegrecido con clavos, óxido, una calavera de hueso en la placa de llaves, un fémur con calavera sobre la franja y
+otra pequeña en la junta arma/mensajes; espada vieja mellada con guarda de hierro y puño de cuero gastado.
+Semilla: `ui_seed_dungeon.py` (`--apply` rehace `ui_frame`/`ui_arrow.aseprite` y exporta; sólo si no los has
+editado; semillas en `ui_seed_out/`). El HUD anterior (G-33, hierro con cardenillo) es `_seed/delve_ui.py`.
+Índices: piedra 192–197, hierro 198–203, hueso 204–207 y 224–227 (205–207 = relleno de recarga y brillo del marco
+del arma; el código los llama `brass`), placas 208–209 (209 = `plate`, fondo plano de la zona de la llave), vida
+(rojo sangre apagado) 210–214, recarga vacía/brillo 215–216, hoja 217–218, cuero 219–222, vidrio 223 y 231, óxido
+228–230. **240–247 son
 del minimapa del motor**: no se usan aquí. El índice 0 es el hueco transparente de la vista (0,0,176,120). El juego
 copia los colores 192–239 y 248–255 de este fichero a la paleta al arrancar (`src/dl_hud.cpp`): editar un color aquí
 y exportar basta.
