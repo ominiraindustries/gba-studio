@@ -24,6 +24,7 @@ ASSETS = [  # name, frame height, tags, background layer, palette size
     ("prop_chest", 32, "closed:1-1:500;open:2-2:500", 0, 16),
     ("prop_plate", 32, "up:1-1:500;pressed:2-2:500", 0, 16), ("prop_pit", 32, "", 0, 16),
     ("ui_frame", 160, "", 0, 256),
+    ("ui_arrow", 16, "", 0, 16),
     ("tex_wall_torch", 64, "flame:1-2:150", 1, 64), ("tex_bars", 64, "", 0, 64), ("tex_arch", 64, "", 0, 64),
 ] + [(t, 64, "", 1, 64) for t in (
     "tex_wall_stone", "tex_door", "tex_door_open", "tex_floor", "tex_ceiling", "tex_stairs_down",

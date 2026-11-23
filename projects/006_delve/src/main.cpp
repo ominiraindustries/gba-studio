@@ -15,6 +15,8 @@
 #include "bn_sprite_palette_ptr.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
+#include "bn_sprite_tiles.h"
+#include "bn_sprites.h"
 #include "bn_string.h"
 #include "bn_timer.h"
 #include "bn_timers.h"
@@ -37,6 +39,7 @@
 #include "dl_deco_items.h"
 #include "dl_fx.h"
 #include "dl_gen.h"
+#include "dl_hud.h"
 #include "dl_transition.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
@@ -51,6 +54,13 @@ volatile int test_bumps;
 volatile int test_redraws;
 volatile int test_redraw_ticks;       // last redraw, timer ticks (ticks_per_frame() = 1 frame)
 volatile int test_redraw_max_ticks;
+volatile int test_hud_ticks;           // HUD update, timer ticks
+volatile int test_hud_max_ticks;
+volatile int test_sprite_tiles;        // sprite VRAM in use, 32-byte tiles (mode 4: 512 max)
+volatile int test_sprites;             // sprites in use (OAM: 128 max)
+volatile int test_sprite_tiles_free;
+volatile int test_hud_sprites;
+volatile int test_hud_tiles;
 volatile int test_view_ticks;          // view only (no minimap)
 volatile int test_view_ticks_sum;
 volatile int test_view_max_ticks;
@@ -178,7 +188,8 @@ namespace
             _palette(bn::span<const bn::color>(dl::view_data::palette_colors, 256), bn::bpp_mode::BPP_8),
             _bg(bn::palette_bitmap_bg_ptr::create(_palette)),
             _painter(_bg),
-            _text(common::variable_8x8_sprite_font)
+            _text(common::variable_8x8_sprite_font),
+            _hud(_bg)
         {
             test_ticks_per_frame = bn::timers::ticks_per_frame();
 
@@ -213,11 +224,6 @@ namespace
             update_effects();
             update_shake();
 
-            if(_message_timer && --_message_timer == 0)
-            {
-                _message_sprites.clear();
-            }
-
             if(_dirty && ! _trans)
             {
                 redraw();
@@ -225,6 +231,7 @@ namespace
 
             test_cell = _cell;
             test_dir = _dir;
+            update_hud();
         }
 
     private:
@@ -232,10 +239,10 @@ namespace
         bn::palette_bitmap_bg_ptr _bg;
         bn::palette_bitmap_bg_painter _painter;
         bn::sprite_text_generator _text;
+        dl::hud _hud;
+        int _hud_redraws = 0;
         bn::vector<bn::sprite_ptr, 16> _object_sprites;
         bn::vector<object_sprite, 16> _objects;
-        bn::vector<bn::sprite_ptr, 8> _status_sprites;
-        bn::vector<bn::sprite_ptr, 16> _message_sprites;
 
         struct deco_sprite
         {
@@ -270,17 +277,13 @@ namespace
         int _shake = 0;
         int _keys = 0;
         int _frame = 0;
-        int _message_timer = 0;
         int _spike_state = -1;
         bool _dirty = true;
         bool _redraw_objects = true;
 
         void message(const char* text)
         {
-            _message_sprites.clear();
-            _text.set_left_alignment();
-            _text.generate(-115, 70, text, _message_sprites);
-            _message_timer = 180;
+            _hud.message(text);
         }
 
         void load_floor(int floor)
@@ -320,9 +323,8 @@ namespace
             _objects.clear();
             _object_sprites.clear();
             clear_decos();
-            _status_sprites.clear();
-            _message_sprites.clear();
-            _message_timer = 0;
+            _hud.clear_message();
+            _hud.set_visible(false);
 
             for(int k = 0; k < 2; ++k)
             {
@@ -335,6 +337,8 @@ namespace
             _text.generate(dl::geo::view_w / 2 - 120, dl::geo::view_h / 2 - 80, "DESCENDING...", text);
             bn::core::update();
             load_floor(floor);
+            _hud.invalidate();
+            _hud.set_visible(true);
         }
 
         // ---- input and movement
@@ -669,7 +673,7 @@ namespace
             dl::view::minimap_update(gs.lv, gs.es, gs.seen);
             int map_update_ticks = timer.elapsed_ticks() - test_view_ticks;
             test_map_update_max_ticks = map_update_ticks > test_map_update_max_ticks ? map_update_ticks : test_map_update_max_ticks;
-            dl::view::draw_minimap(page, _page, 178, 58, _cell, _dir);
+            dl::view::draw_minimap(page, _page, dl::hud::minimap_x, dl::hud::minimap_y, _cell, _dir);
 
             if(flip)
             {
@@ -690,7 +694,6 @@ namespace
             test_redraws = test_redraws + 1;
             rebuild_objects();
             rebuild_decos();
-            update_status();
         }
 
         void mark_seen(int c)
@@ -710,22 +713,23 @@ namespace
             dl::view::minimap_touch(edge_b(idx));
         }
 
-        void update_status()
+        // HUD (dl_hud.h): stats the game owns today; hp / potions / reload are placeholders until combat
+        void update_hud()
         {
-            static constexpr const char* names[4] = { "N", "E", "S", "W" };
-            _status_sprites.clear();
-            _text.set_center_alignment();
-            _text.generate(88, -66, names[_dir], _status_sprites);
-            bn::string<16> f("FLOOR ");
-            f.append(bn::to_string<4>(_floor + 1));
-            _text.generate(88, -52, f, _status_sprites);
-
-            if(_keys)
-            {
-                bn::string<16> k("KEYS ");
-                k.append(bn::to_string<4>(_keys));
-                _text.generate(88, -38, k, _status_sprites);
-            }
+            _hud.state.keys = _keys;
+            _hud.state.floor = _floor;
+            _hud.state.dir = _dir;
+            _hud.update_placeholder_stats();
+            int redraws = test_redraws;
+            _hud.update(_painter, _trans || redraws != _hud_redraws);
+            _hud_redraws = redraws;
+            test_hud_ticks = _hud.last_ticks();
+            test_hud_max_ticks = _hud.max_ticks();
+            test_sprite_tiles = bn::sprite_tiles::used_tiles_count();
+            test_sprites = bn::sprites::used_items_count();
+            test_sprite_tiles_free = bn::sprite_tiles::available_tiles_count();
+            test_hud_sprites = _hud.sprites_count();
+            test_hud_tiles = _hud.sprite_tiles_count();
         }
 
         // objects in the visible cells (d >= 1): monsters interpolate from where they were drawn last time
@@ -1112,7 +1116,7 @@ namespace
                 done = t >= turn_frames || ! dl::fx::enabled.turn_slide;
             }
 
-            dl::view::draw_minimap(page, _page, 178, 58, _cell, _dir);
+            dl::view::draw_minimap(page, _page, dl::hud::minimap_x, dl::hud::minimap_y, _cell, _dir);
             _painter.flip_page_later();
             _page ^= 1;
             test_transition_frames = test_transition_frames + 1;
