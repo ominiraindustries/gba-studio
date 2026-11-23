@@ -27,6 +27,7 @@
 #include "common_variable_8x16_sprite_font.h"
 
 #include "poker_cards.h"
+#include "poker_tables_pushfold.h"
 
 // Mirrors of the game state for headless tests (gbarun.py --check test_x.32...).
 volatile int test_scene;
@@ -40,9 +41,9 @@ namespace
 {
     using namespace poker;
 
-    enum class scene { title, level_select, which_hand, results };
+    enum class scene { title, level_select, which_hand, push_fold, math_outs, math_pot_odds, results };
 
-    enum class level_kind { which_hand, kickers, push_sb, call_bb };
+    enum class level_kind { which_hand, kickers, push_sb, call_bb, math_outs, math_pot_odds };
 
     struct level_info
     {
@@ -54,12 +55,14 @@ namespace
         bool available;     // false until its tables exist
     };
 
-    constexpr int level_count = 4;
+    constexpr int level_count = 6;
     constexpr level_info levels[level_count] = {
         { "0-1", "WHICH HAND WINS?", level_kind::which_hand, 20, 17, true },
         { "0-2", "KICKERS AND TIES", level_kind::kickers, 20, 17, true },
-        { "1-1", "SB SHOVE OR FOLD 10BB", level_kind::push_sb, 20, 17, false },
-        { "1-2", "BB CALL OR FOLD 10BB", level_kind::call_bb, 20, 17, false },
+        { "1-1", "SB SHOVE OR FOLD 10BB", level_kind::push_sb, 20, 17, true },
+        { "1-2", "BB CALL OR FOLD 10BB", level_kind::call_bb, 20, 17, true },
+        { "MD-1", "OUTS AND THE RULE OF 4", level_kind::math_outs, 10, 8, true },
+        { "MD-2", "POT ODDS", level_kind::math_pot_odds, 10, 8, true },
     };
 
     // ---------------------------------------------------------------------------------------------------------
@@ -305,7 +308,22 @@ namespace
             {
                 if(levels[selected_level].available)
                 {
-                    return scene::which_hand;
+                    switch(levels[selected_level].kind)
+                    {
+
+                    case level_kind::math_outs:
+                        return scene::math_outs;
+
+                    case level_kind::math_pot_odds:
+                        return scene::math_pot_odds;
+
+                    case level_kind::push_sb:
+                    case level_kind::call_bb:
+                        return scene::push_fold;
+
+                    default:
+                        return scene::which_hand;
+                    }
                 }
 
                 info.clear();
@@ -392,7 +410,7 @@ namespace
             counter += bn::to_string<4>(hand + 1);
             counter += "/";
             counter += bn::to_string<4>(level.hands);
-            t.small.generate(116, -72, counter, sprites);
+            t.small.generate(116, -60, counter, sprites);
             t.small.set_center_alignment();
             t.small.generate(-77, 4, "LEFT", sprites);
             t.small.generate(77, 4, "RIGHT", sprites);
@@ -462,6 +480,643 @@ namespace
         last_result.correct = correct;
         last_result.hands = level.hands;
         last_result.stars = stars_for(level, correct);
+        return scene::results;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // Question widgets shared by the MATH DOJO levels.
+
+    void wait_for_a()
+    {
+        while(! bn::keypad::a_pressed())
+        {
+            wait_frame();
+        }
+
+        wait_frame();
+    }
+
+    // Up to 4 option buttons on the bottom row; returns the chosen index.
+    int ask_options(texts& t, const char* const* labels, int count)
+    {
+        bn::vector<bn::sprite_ptr, 24> sprites;
+        int spacing = 240 / count;
+        int xs[4] = {};
+
+        for(int i = 0; i < count; ++i)
+        {
+            xs[i] = -120 + spacing / 2 + i * spacing;
+            t.small.generate(xs[i], 66, labels[i], sprites);
+        }
+
+        bn::sprite_ptr cursor = bn::sprite_items::gb_cursor.create_sprite(xs[0], 66);
+        int choice = 0;
+
+        while(true)
+        {
+            if(bn::keypad::left_pressed() && choice > 0)
+            {
+                --choice;
+            }
+            else if(bn::keypad::right_pressed() && choice < count - 1)
+            {
+                ++choice;
+            }
+
+            cursor.set_position(xs[choice], 66);
+
+            if(bn::keypad::a_pressed())
+            {
+                break;
+            }
+
+            wait_frame();
+        }
+
+        wait_frame();
+        return choice;
+    }
+
+    // Number picker: up/down +-1, left/right +-10, A confirms.
+    int ask_number(texts& t, const char* suffix, int start, int low, int high)
+    {
+        bn::vector<bn::sprite_ptr, 8> value_sprites;
+        bn::vector<bn::sprite_ptr, 16> help;
+        t.small.generate(0, 72, "UP/DOWN 1   LEFT/RIGHT 10   A: OK", help);
+        int value = start;
+        int shown = -1;
+
+        while(true)
+        {
+            if(bn::keypad::up_pressed())
+            {
+                ++value;
+            }
+            else if(bn::keypad::down_pressed())
+            {
+                --value;
+            }
+            else if(bn::keypad::right_pressed())
+            {
+                value += 10;
+            }
+            else if(bn::keypad::left_pressed())
+            {
+                value -= 10;
+            }
+
+            value = value < low ? low : (value > high ? high : value);
+
+            if(value != shown)
+            {
+                shown = value;
+                value_sprites.clear();
+                bn::string<16> text("< ");
+                text += bn::to_string<6>(value);
+                text += suffix;
+                text += " >";
+                t.big.generate(0, 54, text, value_sprites);
+            }
+
+            if(bn::keypad::a_pressed())
+            {
+                break;
+            }
+
+            wait_frame();
+        }
+
+        wait_frame();
+        return value;
+    }
+
+    void draw_header(texts& t, bn::ivector<bn::sprite_ptr>& sprites, const level_info& level, int question)
+    {
+        t.small.set_left_alignment();
+        t.small.generate(-116, -72, bn::string<48>(level.code) + "  " + level.name, sprites);
+        t.small.set_right_alignment();
+        bn::string<16> counter("Q ");
+        counter += bn::to_string<4>(question + 1);
+        counter += "/";
+        counter += bn::to_string<4>(level.hands);
+        t.small.generate(116, -60, counter, sprites);
+        t.small.set_center_alignment();
+    }
+
+    void show_verdict(texts& t, bn::ivector<bn::sprite_ptr>& sprites, bool ok)
+    {
+        t.big.set_palette_item(ok ? gold_palette : ink_palettes[1]);
+        t.big.generate(0, 30, ok ? "CORRECT!" : "NOT QUITE", sprites);
+        t.big.set_palette_item(common::variable_8x16_sprite_font.item().palette_item());
+    }
+
+    drill_result finish(const level_info& level, int correct)
+    {
+        drill_result r;
+        r.level = selected_level;
+        r.correct = correct;
+        r.hands = level.hands;
+        r.stars = stars_for(level, correct);
+        return r;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // MD-1: count outs on the flop, then estimate the equity to the river (rule of 4 accepted).
+
+    enum draw_kind { draw_flush, draw_oesd, draw_gutshot, draw_combo, draw_gutshot_flush, draw_kind_count };
+    constexpr const char* draw_names[draw_kind_count] = {
+        "FLUSH DRAW", "OPEN-ENDED STRAIGHT DRAW", "GUTSHOT", "FLUSH + STRAIGHT DRAW", "FLUSH DRAW + GUTSHOT",
+    };
+    constexpr int draw_outs[draw_kind_count] = { 9, 8, 4, 15, 12 };
+
+    // Turn cards that give a straight or better (hole cards always take part: the board has only 4 cards).
+    int count_outs(const card* five)
+    {
+        bool used[52] = {};
+
+        for(int i = 0; i < 5; ++i)
+        {
+            used[five[i].id()] = true;
+        }
+
+        card six[6];
+
+        for(int i = 0; i < 5; ++i)
+        {
+            six[i] = five[i];
+        }
+
+        int outs = 0;
+
+        for(int id = 0; id < 52; ++id)
+        {
+            if(! used[id])
+            {
+                six[5] = card::from_id(id);
+                outs += category_of(evaluate(six, 6)) >= straight;
+            }
+        }
+
+        return outs;
+    }
+
+    // Builds hero (0-1) + flop (2-4) for a draw template; ranks are distinct, suits as the template needs.
+    void build_draw(draw_kind kind, card* five)
+    {
+        int s = random.get_unbiased_int(4);
+        int other = (s + 1 + random.get_unbiased_int(3)) % 4;
+        int ranks[5];
+
+        if(kind == draw_flush)
+        {
+            int pool[13];
+
+            for(int i = 0; i < 13; ++i)
+            {
+                pool[i] = i;
+            }
+
+            for(int i = 0; i < 5; ++i)
+            {
+                int j = i + random.get_unbiased_int(13 - i);
+                int tmp = pool[i];
+                pool[i] = pool[j];
+                pool[j] = tmp;
+                ranks[i] = pool[i];
+            }
+        }
+        else
+        {
+            bool gut = kind == draw_gutshot || kind == draw_gutshot_flush;
+            int r = gut ? random.get_unbiased_int(9) : 1 + random.get_unbiased_int(8);
+            ranks[0] = r;
+            ranks[1] = r + 1;
+            ranks[2] = gut ? r + 3 : r + 2;
+            ranks[3] = gut ? r + 4 : r + 3;
+
+            // A far card that does not touch the run.
+            do
+            {
+                ranks[4] = random.get_unbiased_int(13);
+            }
+            while(ranks[4] >= r - 2 && ranks[4] <= r + 6);
+        }
+
+        bool flush = kind == draw_flush || kind == draw_combo || kind == draw_gutshot_flush;
+
+        for(int i = 0; i < 5; ++i)
+        {
+            int suit;
+
+            if(flush)
+            {
+                suit = i == 3 ? other : s;   // hero 2 + two flop cards of the suit, one off-suit flop card
+            }
+            else
+            {
+                suit = (s + i) % 4;          // rainbow-ish: never four of a suit
+            }
+
+            five[i] = card{ ranks[i], suit };
+        }
+    }
+
+    scene math_outs_scene(texts& t)
+    {
+        const level_info& level = levels[selected_level];
+        card_view flop_views[3];
+        card_view hero_views[2];
+        bn::vector<bn::sprite_ptr, 48> sprites;
+        int correct = 0;
+
+        for(int q = 0; q < level.hands; ++q)
+        {
+            draw_kind kind = draw_kind(random.get_unbiased_int(draw_kind_count));
+            card five[5];
+
+            for(int attempt = 0; attempt < 50; ++attempt)
+            {
+                build_draw(kind, five);
+
+                if(category_of(evaluate(five, 5)) < straight && count_outs(five) == draw_outs[kind])
+                {
+                    break;
+                }
+            }
+
+            int outs = count_outs(five);
+            int exact = 100 - ((47 - outs) * (46 - outs) * 100 + (47 * 46) / 2) / (47 * 46);
+            test_answer = outs;
+            test_hand = q;
+
+            for(int i = 0; i < 3; ++i)
+            {
+                flop_views[i].show(t, five[2 + i], -28 + i * 28, -36);
+            }
+
+            hero_views[0].show(t, five[0], -14, 8);
+            hero_views[1].show(t, five[1], 14, 8);
+
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            t.small.generate(0, -58, "FLOP", sprites);
+            t.small.generate(0, 30, "OUTS TO A STRAIGHT OR BETTER?", sprites);
+
+            // Options: the right count and three others from the usual draw sizes.
+            constexpr int sizes[5] = { 4, 8, 9, 12, 15 };
+            int option_values[4];
+            int n = 0;
+            int skip = random.get_unbiased_int(4);
+
+            for(int i = 0, k = 0; i < 5 && n < 4; ++i)
+            {
+                if(sizes[i] == outs)
+                {
+                    option_values[n++] = sizes[i];
+                }
+                else if(k++ != skip)
+                {
+                    option_values[n++] = sizes[i];
+                }
+            }
+
+            bn::string<4> labels_storage[4];
+            const char* labels[4];
+
+            for(int i = 0; i < 4; ++i)
+            {
+                labels_storage[i] = bn::to_string<4>(option_values[i]);
+                labels[i] = labels_storage[i].c_str();
+            }
+
+            bool outs_ok = option_values[ask_options(t, labels, 4)] == outs;
+
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            t.small.generate(0, 30, "CHANCE TO HIT BY THE RIVER? (%)", sprites);
+            int answer = ask_number(t, "%", 20, 0, 100);
+            int diff = answer > exact ? answer - exact : exact - answer;
+            bool equity_ok = diff <= 4 || answer == outs * 4;
+
+            bool ok = outs_ok && equity_ok;
+            correct += ok;
+            test_correct = correct;
+            bn::sound_items::blip.play();
+
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            show_verdict(t, sprites, ok);
+            bn::string<48> line(bn::to_string<4>(outs));
+            line += " OUTS: ";
+            line += draw_names[kind];
+            t.small.generate(0, 48, line, sprites);
+            line = "EXACT ";
+            line += bn::to_string<4>(exact);
+            line += "%   RULE OF 4: ";
+            line += bn::to_string<4>(outs);
+            line += " x 4 = ";
+            line += bn::to_string<4>(outs * 4);
+            line += "%";
+            t.small.generate(0, 60, line, sprites);
+            t.small.generate(0, 72, "A: NEXT", sprites);
+            wait_for_a();
+        }
+
+        last_result = finish(level, correct);
+        return scene::results;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // MD-2: pot odds. Equity needed = bet / (pot + 2 * bet); then call or fold with a given equity.
+
+    scene math_pot_odds_scene(texts& t)
+    {
+        const level_info& level = levels[selected_level];
+        bn::vector<bn::sprite_ptr, 48> sprites;
+        constexpr int bet_percents[7] = { 25, 33, 50, 66, 75, 100, 150 };
+        int correct = 0;
+
+        for(int q = 0; q < level.hands; ++q)
+        {
+            int pot = 4 + random.get_unbiased_int(27);
+            int percent = bet_percents[random.get_unbiased_int(7)];
+            int bet = (pot * percent + 50) / 100;
+            bet = bet < 1 ? 1 : bet;
+            percent = (bet * 100 + pot / 2) / pot;   // show the real size after rounding the bet
+            int total = pot + 2 * bet;
+            int need = (bet * 100 + total / 2) / total;
+            test_answer = need;
+            test_hand = q;
+
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            bn::string<48> line("POT ");
+            line += bn::to_string<4>(pot);
+            line += " BB";
+            t.big.generate(0, -40, line, sprites);
+            line = "VILLAIN BETS ";
+            line += bn::to_string<4>(bet);
+            line += " BB (";
+            line += bn::to_string<4>(percent);
+            line += "% POT)";
+            t.small.generate(0, -18, line, sprites);
+            t.small.generate(0, 30, "EQUITY YOU NEED TO CALL? (%)", sprites);
+
+            bool need_ok;
+
+            if(q < 4)
+            {
+                // Scaffolding: first questions with options, the rest with the number picker.
+                int option_values[4];
+                int offsets[4] = { -10, -5, 5, 10 };
+                int right = random.get_unbiased_int(4);
+
+                // Three distractors around the answer, then sorted so the buttons read low to high.
+                for(int i = 0, k = 0; i < 4; ++i)
+                {
+                    option_values[i] = i == right ? need : need + offsets[k++];
+                }
+
+                for(int i = 1; i < 4; ++i)
+                {
+                    for(int j = i; j > 0 && option_values[j - 1] > option_values[j]; --j)
+                    {
+                        int tmp = option_values[j];
+                        option_values[j] = option_values[j - 1];
+                        option_values[j - 1] = tmp;
+                    }
+                }
+
+                bn::string<6> storage[4];
+                const char* labels[4];
+
+                for(int i = 0; i < 4; ++i)
+                {
+                    storage[i] = bn::to_string<4>(option_values[i]);
+                    storage[i] += "%";
+                    labels[i] = storage[i].c_str();
+                }
+
+                need_ok = option_values[ask_options(t, labels, 4)] == need;
+            }
+            else
+            {
+                int answer = ask_number(t, "%", 30, 0, 100);
+                int diff = answer > need ? answer - need : need - answer;
+                need_ok = diff <= 2;
+            }
+
+            // Call or fold with a given equity near the threshold (EDGE spots later in the level).
+            int gap = q < 5 ? 6 + random.get_unbiased_int(6) : 2 + random.get_unbiased_int(3);
+            int equity = random.get_bool() ? need + gap : need - gap;
+            equity = equity < 1 ? 1 : equity;
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            t.big.generate(0, -40, line, sprites);
+            line = "YOUR EQUITY: ";
+            line += bn::to_string<4>(equity);
+            line += "%";
+            t.big.generate(0, 0, line, sprites);
+            t.small.generate(0, 30, "CALL OR FOLD?", sprites);
+            constexpr const char* call_fold[2] = { "FOLD", "CALL" };
+            bool call = ask_options(t, call_fold, 2) == 1;
+            bool decision_ok = call == (equity >= need);
+
+            bool ok = need_ok && decision_ok;
+            correct += ok;
+            test_correct = correct;
+            bn::sound_items::blip.play();
+
+            sprites.clear();
+            draw_header(t, sprites, level, q);
+            show_verdict(t, sprites, ok);
+            line = "NEED = ";
+            line += bn::to_string<4>(bet);
+            line += " / (";
+            line += bn::to_string<4>(pot);
+            line += " + ";
+            line += bn::to_string<4>(bet);
+            line += " + ";
+            line += bn::to_string<4>(bet);
+            line += ") = ";
+            line += bn::to_string<4>(need);
+            line += "%";
+            t.small.generate(0, 48, line, sprites);
+            line = equity >= need ? "EQUITY ABOVE NEED: CALL" : "EQUITY BELOW NEED: FOLD";
+            t.small.generate(0, 60, line, sprites);
+            t.small.generate(0, 72, "A: NEXT", sprites);
+            wait_for_a();
+        }
+
+        last_result = finish(level, correct);
+        return scene::results;
+    }
+
+    // ---------------------------------------------------------------------------------------------------------
+    // World 1: heads-up push/fold against the exact Nash tables (source E).
+
+    // "+0.35" style text from hundredths of a big blind.
+    bn::string<12> bb_text(int centi, bool sign)
+    {
+        bn::string<12> text;
+        int a = centi < 0 ? -centi : centi;
+
+        if(centi < 0)
+        {
+            text += '-';
+        }
+        else if(sign)
+        {
+            text += '+';
+        }
+
+        text += bn::to_string<6>(a / 100);
+        text += '.';
+        int frac = a % 100;
+
+        if(frac < 10)
+        {
+            text += '0';
+        }
+
+        text += bn::to_string<4>(frac);
+        return text;
+    }
+
+    // Difficulty bucket of a hand by |EV difference| (DISENO.md section 2): 0 CLEAR, 1 MEDIUM, 2 EDGE.
+    constexpr int ev_bucket(int centi)
+    {
+        int a = centi < 0 ? -centi : centi;
+        return a >= 100 ? 0 : (a >= 25 ? 1 : 2);
+    }
+
+    constexpr int pushfold_close_centi = 5;   // |EV| under 0.05 bb or a mixed strategy: both actions are fine
+
+    scene push_fold_scene(texts& t)
+    {
+        const level_info& level = levels[selected_level];
+        bool sb = level.kind == level_kind::push_sb;
+        constexpr int stack_bb = 10;
+        constexpr int variant = 0;
+        int stack_row = pushfold_stack_index(stack_bb * 2);
+
+        card_view hero_views[2];
+        card_view villain_views[2];
+        bn::vector<bn::sprite_ptr, 48> sprites;
+        bn::vector<bn::sprite_ptr, 32> feedback;
+        int correct = 0;
+        int total_loss = 0;
+
+        for(int hand = 0; hand < level.hands; ++hand)
+        {
+            // Scaffolding: hands 1-5 CLEAR, 6-14 MEDIUM, 15-20 EDGE.
+            int wanted = hand < 5 ? 0 : (hand < 14 ? 1 : 2);
+            card a;
+            card b;
+            int cls = 0;
+            int ev = 0;
+            int freq = 0;
+
+            for(int attempt = 0; attempt < 200; ++attempt)
+            {
+                deck d;
+                d.shuffle(random);
+                a = d.draw();
+                b = d.draw();
+                cls = hand_class(a, b);
+                ev = sb ? sb_push_ev[variant][stack_row][cls] : bb_call_ev[variant][stack_row][cls];
+                freq = sb ? sb_push_freq[variant][stack_row][cls] : bb_call_freq[variant][stack_row][cls];
+
+                if(ev_bucket(ev) == wanted)
+                {
+                    break;
+                }
+            }
+
+            bool close = (ev < pushfold_close_centi && ev > -pushfold_close_centi) || (freq > 12 && freq < 243);
+            test_answer = ev > 0 ? 1 : 0;
+            test_hand = hand;
+
+            villain_views[0].show_back(-14, -44);
+            villain_views[1].show_back(14, -44);
+            hero_views[0].show(t, a, -14, 18);
+            hero_views[1].show(t, b, 14, 18);
+
+            sprites.clear();
+            t.small.set_left_alignment();
+            t.small.generate(-116, -72, bn::string<48>(level.code) + "  " + level.name, sprites);
+            t.small.set_right_alignment();
+            bn::string<16> counter("HAND ");
+            counter += bn::to_string<4>(hand + 1);
+            counter += "/";
+            counter += bn::to_string<4>(level.hands);
+            t.small.generate(116, -60, counter, sprites);
+            t.small.set_center_alignment();
+
+            bn::string<32> villain_line(sb ? "BB  10 BB" : "SB  ALL-IN 10 BB");
+            bn::string<32> hero_line(sb ? "YOU (SB)  10 BB" : "YOU (BB)  10 BB");
+            t.small.generate(64, -44, villain_line, sprites);
+            t.small.generate(-70, 18, hero_line, sprites);
+            t.small.generate(64, -12, sb ? "POT 1.5 BB" : "POT 11 BB", sprites);
+            t.small.generate(70, 18, class_names[cls], sprites);
+
+            constexpr const char* push_labels[2] = { "FOLD", "ALL-IN" };
+            constexpr const char* call_labels[2] = { "FOLD", "CALL" };
+            bool aggressive = ask_options(t, sb ? push_labels : call_labels, 2) == 1;
+
+            bool right_action = ev > 0;
+            bool ok = aggressive == right_action || close;
+            int loss = aggressive == right_action ? 0 : (ev < 0 ? -ev : ev);
+            correct += ok;
+            total_loss += close ? 0 : loss;
+            test_correct = correct;
+            bn::sound_items::blip.play();
+
+            // Feedback: verdict, EV of the aggressive action against folding, the equilibrium frequency.
+            sprites.clear();
+            t.small.set_left_alignment();
+            t.small.generate(-116, -72, bn::string<48>(level.code) + "  " + level.name, sprites);
+            t.small.set_center_alignment();
+            t.small.generate(64, -44, villain_line, sprites);
+            t.small.generate(-70, 18, hero_line, sprites);
+            t.small.generate(70, 18, class_names[cls], sprites);
+            feedback.clear();
+
+            const char* verdict = close ? "CLOSE: BOTH OK" : (ok ? "CORRECT!" : "MISTAKE");
+            t.big.set_palette_item(ok ? gold_palette : ink_palettes[1]);
+            t.big.generate(0, -12, verdict, feedback);
+            t.big.set_palette_item(common::variable_8x16_sprite_font.item().palette_item());
+
+            bn::string<48> line(sb ? "ALL-IN EV vs FOLD: " : "CALL EV vs FOLD: ");
+            line += bb_text(ev, true);
+            line += " BB";
+            t.small.generate(0, 44, line, feedback);
+            line = "NASH: ";
+            line += sb ? "SHOVE " : "CALL ";
+            line += bn::to_string<4>((freq * 100 + 127) / 255);
+            line += "%";
+
+            if(! ok)
+            {
+                line += "   YOU LOSE ";
+                line += bb_text(loss, false);
+                line += " BB";
+            }
+
+            t.small.generate(0, 56, line, feedback);
+            t.small.generate(0, 70, "A: NEXT", feedback);
+            wait_for_a();
+            feedback.clear();
+        }
+
+        // Pass needs 17/20 and an average loss under 0.10 bb per hand (DISENO.md section 2).
+        last_result = finish(level, correct);
+
+        if(total_loss > 10 * level.hands)
+        {
+            last_result.stars = 0;
+        }
+
         return scene::results;
     }
 
@@ -537,6 +1192,18 @@ int main()
 
         case scene::which_hand:
             current = which_hand_scene(t);
+            break;
+
+        case scene::push_fold:
+            current = push_fold_scene(t);
+            break;
+
+        case scene::math_outs:
+            current = math_outs_scene(t);
+            break;
+
+        case scene::math_pot_odds:
+            current = math_pot_odds_scene(t);
             break;
 
         case scene::results:
