@@ -33,6 +33,10 @@ namespace dl::geo
     constexpr int object_z10_offset = 3;    // objects stand 0.3 cells past the near edge of their cell
     constexpr int monster_size = 64;        // affine sprite base sizes (ESPEC_VISTA.md)
     constexpr int object_size = 32;
+    constexpr int wall_thick_64 = 8;        // wall slab thickness in texels of a 64-texel cell (1/8 cell): free wall
+                                            // ends show their side face, openings show jambs and a recessed leaf
+    constexpr int deco_ref_z10 = 15;        // wall decoration sprites: 1 sprite px = 1 texel at z = 1.5 (= proj_num / 320)
+    constexpr int deco_max_scale_x100 = 200; // lateral decorations at d = 0 would need > 2x (double-size limit)
 
     // near / far edge of row d, in tenths of a cell
     [[nodiscard]] constexpr int near_z10(int d)
@@ -114,6 +118,29 @@ namespace dl::geo
     [[nodiscard]] constexpr int object_feet_y(int d)
     {
         return vp_y + offset(1, object_z10(d));
+    }
+
+    // Wall decoration sprites (art/LÉEME.md "deco_*"): sprite row v = texture row v, scale = face height / 64 =
+    // deco_ref_z10 / z10. Front decorations sit on the face centre at the far edge of their cell; lateral ones on
+    // the middle of their lateral face (u = 32), line l (odd half cells).
+    [[nodiscard]] constexpr int deco_front_z10(int d)
+    {
+        return far_z10(d);
+    }
+
+    [[nodiscard]] constexpr int deco_lateral_z10(int d)
+    {
+        return near_z10(d) + 5;
+    }
+
+    [[nodiscard]] constexpr int deco_front_x(int d, int x)
+    {
+        return vp_x + offset(2 * x, deco_front_z10(d));
+    }
+
+    [[nodiscard]] constexpr int deco_lateral_x(int d, int l)
+    {
+        return vp_x + offset(l, deco_lateral_z10(d));
     }
 
     static_assert(front_rect(0, 0).x1 - front_rect(0, 0).x0 == 80);

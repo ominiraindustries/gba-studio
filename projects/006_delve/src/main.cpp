@@ -2,6 +2,7 @@
 // on change, grid movement (DISENO.md 1), minimap and compass, scaled monsters / props, P1 lever gate and spike plate.
 
 #include "bn_bg_palette_item.h"
+#include "bn_blending.h"
 #include "bn_color.h"
 #include "bn_core.h"
 #include "bn_fixed.h"
@@ -9,7 +10,9 @@
 #include "bn_palette_bitmap_bg_painter.h"
 #include "bn_palette_bitmap_bg_ptr.h"
 #include "bn_span.h"
+#include "bn_sprite_affine_mat_ptr.h"
 #include "bn_sprite_item.h"
+#include "bn_sprite_palette_ptr.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_string.h"
@@ -31,6 +34,8 @@
 
 #include "common_variable_8x8_sprite_font.h"
 
+#include "dl_deco_items.h"
+#include "dl_fx.h"
 #include "dl_gen.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
@@ -49,7 +54,12 @@ volatile int test_view_ticks;          // view only (no minimap)
 volatile int test_view_ticks_sum;
 volatile int test_view_max_ticks;
 volatile int test_map_ticks_sum;
-volatile int test_boot_frames;         // frames spent generating floor 1 (approx.)
+volatile int test_map_max_ticks;
+volatile int test_map_update_max_ticks;   // seen marks + key recompute part
+volatile int test_gen_ticks;           // last floor generation, timer ticks
+volatile int test_gen_max_ticks;
+volatile int test_visible_decos;
+volatile int test_lever_frame;         // frame of the last lever sprite shown (0 up, 1 down)
 volatile int test_ticks_per_frame;
 volatile int test_visible_objects;
 volatile int test_spike_hits;
@@ -175,7 +185,9 @@ namespace
                 _painter.flip_page_now();
             }
 
-            load_floor(0);
+            bn::blending::set_transparency_alpha(bn::fixed(dl::deco::glow_alpha_x100) / 100);
+            create_deco_palettes();
+            descend(0);
             message("UP: WALK   LEFT/RIGHT: TURN");
         }
 
@@ -185,6 +197,7 @@ namespace
             handle_input();
             update_spikes();
             update_objects();
+            update_effects();
             update_shake();
 
             if(_message_timer && --_message_timer == 0)
@@ -210,6 +223,24 @@ namespace
         bn::vector<object_sprite, 16> _objects;
         bn::vector<bn::sprite_ptr, 8> _status_sprites;
         bn::vector<bn::sprite_ptr, 16> _message_sprites;
+
+        struct deco_sprite
+        {
+            uint8_t kind;
+            uint8_t view;
+            bool glow;
+        };
+
+        bn::vector<bn::sprite_ptr, 24> _deco_sprites;
+        bn::vector<deco_sprite, 24> _deco_info;
+        bn::vector<bn::sprite_affine_mat_ptr, dl::view::max_decos> _deco_mats;
+        bn::vector<int, dl::view::max_decos> _deco_mat_keys;
+        bn::vector<bn::sprite_palette_ptr, 4> _deco_palettes;     // [palette A / B][band d = 1 / d >= 2]
+        int _flame_frame = 0;
+        int _flame_timer = 0;
+        int _wave_frame = 0;
+        int _wave_timer = 0;
+        int _page = 0;
         int _floor = 0;
         int _cell = 0;
         int _dir = 0;
@@ -235,7 +266,10 @@ namespace
         {
             _floor = floor;
             test_floor = floor;
+            bn::timer gen_timer;
             test_floor_seed = generate_floor(floor_seed(floor), floor, gs.lv);
+            test_gen_ticks = gen_timer.elapsed_ticks();
+            test_gen_max_ticks = test_gen_ticks > test_gen_max_ticks ? test_gen_ticks : test_gen_max_ticks;
 
             for(int i = 0; i < 2 * N; ++i)
             {
@@ -248,12 +282,38 @@ namespace
             }
 
             index_entities();
+            dl::view::minimap_reset(gs.lv, gs.es, gs.seen);
             _cell = gs.lv.entry;
             _dir = gs.lv.entry_dir;
             _keys = 0;
             _objects.clear();
             _object_sprites.clear();
+            clear_decos();
             _dirty = true;
+        }
+
+        // Floor generation blocks for a while (measured: test_gen_ticks): show the panel with a "DESCENDING..."
+        // line in the view instead of a frozen or black screen.
+        void descend(int floor)
+        {
+            _objects.clear();
+            _object_sprites.clear();
+            clear_decos();
+            _status_sprites.clear();
+            _message_sprites.clear();
+            _message_timer = 0;
+
+            for(int k = 0; k < 2; ++k)
+            {
+                _painter.blit(0, 0, bn::palette_bitmap_items::ui_frame.pixels_item());
+                _painter.flip_page_now();
+            }
+
+            bn::vector<bn::sprite_ptr, 16> text;
+            _text.set_center_alignment();
+            _text.generate(dl::geo::view_w / 2 - 120, dl::geo::view_h / 2 - 80, "DESCENDING...", text);
+            bn::core::update();
+            load_floor(floor);
         }
 
         // ---- input and movement
@@ -394,8 +454,8 @@ namespace
                 {
                     if(! gs.es.open[idx])
                     {
-                        gs.es.open[idx] = 1;
-                        gs.es.open[h.target] = 1;
+                        set_open(idx);
+                        set_open(h.target);
                         test_levers = test_levers + 1;
                         message("A GATE OPENED");
                         _dirty = true;
@@ -425,7 +485,7 @@ namespace
                 }
                 else
                 {
-                    gs.es.open[idx] = 1;    // walking against a closed door opens it (R14)
+                    set_open(idx);    // walking against a closed door opens it (R14)
                     _dirty = true;
                     return;
                 }
@@ -439,7 +499,7 @@ namespace
                 else if(_keys > 0)
                 {
                     --_keys;
-                    gs.es.open[idx] = 1;
+                    set_open(idx);
                     message("UNLOCKED");
                     _dirty = true;
                     return;
@@ -464,7 +524,7 @@ namespace
             case K_STAIRS:
                 if(forward)
                 {
-                    load_floor(_floor + 1);
+                    descend(_floor + 1);
                     bn::string<24> t("FLOOR ");
                     t.append(bn::to_string<4>(_floor + 1));
                     message(t.c_str());
@@ -557,31 +617,49 @@ namespace
             dl::view::draw(page, gs.lv, gs.es, _cell, _dir, gs.vis);
             test_view_ticks = timer.elapsed_ticks();
             test_view_max_ticks = test_view_ticks > test_view_max_ticks ? test_view_ticks : test_view_max_ticks;
-            dl::view::draw_minimap(page, 178, 58, gs.lv, gs.es, gs.seen, _cell, _dir);
-            int ticks = timer.elapsed_ticks();
-            test_map_ticks_sum = test_map_ticks_sum + (ticks - test_view_ticks);
-            test_view_ticks_sum = test_view_ticks_sum + test_view_ticks;
-            _painter.flip_page_later();
-            test_redraw_ticks = ticks;
-            test_redraw_max_ticks = ticks > test_redraw_max_ticks ? ticks : test_redraw_max_ticks;
-            test_redraws = test_redraws + 1;
 
             for(int d = 0; d < dl::view::rows; ++d)
             {
                 for(int x = 0; x < dl::view::cols; ++x)
                 {
-                    int c = gs.vis.cell[d][x];
-
-                    if(c >= 0)
-                    {
-                        gs.seen[c] = 1;
-                    }
+                    mark_seen(gs.vis.cell[d][x]);
                 }
             }
 
-            gs.seen[_cell] = 1;
+            mark_seen(_cell);
+            dl::view::minimap_update(gs.lv, gs.es, gs.seen);
+            int map_update_ticks = timer.elapsed_ticks() - test_view_ticks;
+            test_map_update_max_ticks = map_update_ticks > test_map_update_max_ticks ? map_update_ticks : test_map_update_max_ticks;
+            dl::view::draw_minimap(page, _page, 178, 58, _cell, _dir);
+            _page ^= 1;
+            int ticks = timer.elapsed_ticks();
+            test_map_ticks_sum = test_map_ticks_sum + (ticks - test_view_ticks);
+            test_map_max_ticks = ticks - test_view_ticks > test_map_max_ticks ? ticks - test_view_ticks : test_map_max_ticks;
+            test_view_ticks_sum = test_view_ticks_sum + test_view_ticks;
+            _painter.flip_page_later();
+            test_redraw_ticks = ticks;
+            test_redraw_max_ticks = ticks > test_redraw_max_ticks ? ticks : test_redraw_max_ticks;
+            test_redraws = test_redraws + 1;
             rebuild_objects();
+            rebuild_decos();
             update_status();
+        }
+
+        void mark_seen(int c)
+        {
+            if(c >= 0 && ! gs.seen[c])
+            {
+                gs.seen[c] = 1;
+                dl::view::minimap_touch(c);
+            }
+        }
+
+        // an edge changed state (door, lock, bars, lever): its minimap lines change
+        void set_open(int idx)
+        {
+            gs.es.open[idx] = 1;
+            dl::view::minimap_touch(edge_a(idx));
+            dl::view::minimap_touch(edge_b(idx));
         }
 
         void update_status()
@@ -678,6 +756,7 @@ namespace
                     bn::sprite_ptr s = item->create_sprite(o.from_x, o.from_y);
                     s.set_scale(o.from_s);
                     s.set_bg_priority(0);
+                    s.set_z_order(4 * d);       // in front of the wall decorations of its row (4 d + 2)
 
                     if(spikes)
                     {
@@ -690,6 +769,182 @@ namespace
             }
 
             test_visible_objects = _objects.size();
+        }
+
+        // ---- wall decorations (sprites on their wall face; the bitmap never contains them)
+        void create_deco_palettes()
+        {
+            static bn::color colors[2][2][16];
+            static constexpr int band_x100[2] = { 60, 36 };     // ~ wall attenuation at d = 1 and d >= 2
+
+            for(int p = 0; p < 2; ++p)
+            {
+                const bn::sprite_item& base =
+                        p ? bn::sprite_items::deco_banner_front : bn::sprite_items::deco_torch_front;
+                bn::span<const bn::color> src = base.palette_item().colors_ref();
+
+                for(int b = 0; b < 2; ++b)
+                {
+                    for(int i = 0; i < 16; ++i)
+                    {
+                        const bn::color& c = src[i];
+                        int f = (p == 0 && dl::deco::lit_index_a(i)) ? 100 : band_x100[b];
+                        colors[p][b][i] = i ? bn::color(c.red() * f / 100, c.green() * f / 100, c.blue() * f / 100) : c;
+                    }
+
+                    _deco_palettes.push_back(bn::sprite_palette_item(
+                            bn::span<const bn::color>(colors[p][b], 16), bn::bpp_mode::BPP_4).create_palette());
+                }
+            }
+        }
+
+        void clear_decos()
+        {
+            _deco_sprites.clear();
+            _deco_info.clear();
+            _deco_mats.clear();
+            _deco_mat_keys.clear();
+        }
+
+        int deco_frame(int kind) const
+        {
+            switch(kind)
+            {
+            case dl::view::DECO_TORCH:
+                return _flame_frame;
+            case dl::view::DECO_BANNER:
+                return _wave_frame;
+            case dl::view::DECO_LEVER_DOWN:
+                return 1;
+            default:
+                return 0;
+            }
+        }
+
+        const bn::sprite_affine_mat_ptr& deco_mat(int key, bn::fixed hs, bn::fixed vs)
+        {
+            for(int i = 0, n = _deco_mat_keys.size(); i < n; ++i)
+            {
+                if(_deco_mat_keys[i] == key)
+                {
+                    return _deco_mats[i];
+                }
+            }
+
+            bn::sprite_affine_mat_ptr m = bn::sprite_affine_mat_ptr::create();
+            m.set_horizontal_scale(hs);
+            m.set_vertical_scale(vs);
+            _deco_mats.push_back(bn::move(m));
+            _deco_mat_keys.push_back(key);
+            return _deco_mats.back();
+        }
+
+        void rebuild_decos()
+        {
+            namespace geo = dl::geo;
+            namespace deco = dl::deco;
+            clear_decos();
+
+            for(int i = 0; i < gs.vis.ndecos; ++i)
+            {
+                const dl::view::deco_place& p = gs.vis.decos[i];
+                const deco::art& a = deco::arts[p.kind];
+                int view = p.lateral ? (p.slot < 0 ? deco::VIEW_LEFT : deco::VIEW_RIGHT) : deco::VIEW_FRONT;
+                int z10 = p.lateral ? geo::deco_lateral_z10(p.d) : geo::deco_front_z10(p.d);
+                bn::fixed max_scale = bn::fixed(geo::deco_max_scale_x100) / 100;
+                bn::fixed vs = bn::min(bn::fixed(geo::deco_ref_z10) / z10, max_scale);
+                bn::fixed hs = vs;
+                int l = p.slot < 0 ? -p.slot : p.slot;
+
+                if(p.lateral && dl::fx::enabled.lateral_squeeze)
+                {
+                    // real foreshortening |X| / Z = 5 l / z10 against the 0.32 the art is drawn with
+                    bn::fixed k = bn::fixed(5 * 100 * l) / (deco::lateral_squeeze_x100 * z10);
+                    hs = bn::min(vs * bn::max(bn::min(k, bn::fixed(1.5)), bn::fixed(0.6)), max_scale);
+                }
+
+                int wall_x = p.lateral ? geo::deco_lateral_x(p.d, p.slot) : geo::deco_front_x(p.d, p.slot);
+                bn::fixed cx = wall_x - (a.anchor_x[view] - 16) * hs;
+                bn::fixed half_w = hs * 16;
+
+                if(cx - half_w < 0 || cx + half_w > geo::view_w || _deco_sprites.size() + 2 > _deco_sprites.max_size())
+                {
+                    continue;
+                }
+
+                int key = p.lateral ? 64 + p.d * 8 + l : p.d;
+                const bn::sprite_affine_mat_ptr& mat = deco_mat(key, hs, vs);
+                bn::fixed sx = cx - 120;
+                bn::fixed sy = geo::vp_y - 80;     // the anchor row cancels out: sprite centre = eye row
+                bn::sprite_ptr s = a.item[view]->create_sprite(sx, sy, deco_frame(p.kind));
+                s.set_affine_mat(mat);
+                s.set_bg_priority(0);
+                s.set_z_order(4 * p.d + 2);
+
+                if(dl::fx::enabled.deco_depth_fade && p.d >= 1)
+                {
+                    s.set_palette(_deco_palettes[(a.palette_b ? 2 : 0) + (p.d >= 2 ? 1 : 0)]);
+                }
+
+                if(p.kind == dl::view::DECO_LEVER_UP || p.kind == dl::view::DECO_LEVER_DOWN)
+                {
+                    test_lever_frame = deco_frame(p.kind);
+                }
+
+                _deco_sprites.push_back(bn::move(s));
+                _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), false });
+
+                if(p.kind == dl::view::DECO_TORCH && dl::fx::enabled.torch_glow)
+                {
+                    bn::sprite_ptr g = deco::torch_glow.create_sprite(sx + (deco::glow_x[view] - 16) * hs,
+                                                                     sy + (deco::glow_y - 32) * vs);
+                    g.set_affine_mat(mat);
+                    g.set_bg_priority(0);
+                    g.set_z_order(4 * p.d + 3);     // behind its torch (no blending between sprites)
+                    g.set_blending_enabled(true);
+                    _deco_sprites.push_back(bn::move(g));
+                    _deco_info.push_back(deco_sprite{ p.kind, uint8_t(view), true });
+                }
+            }
+
+            test_visible_decos = _deco_info.size();
+        }
+
+        // one place for the per-frame effects (dl_fx.h switches); G-27 hangs its effects here
+        void update_effects()
+        {
+            const dl::deco::art& torch = dl::deco::arts[dl::view::DECO_TORCH];
+            const dl::deco::art& banner = dl::deco::arts[dl::view::DECO_BANNER];
+            bool flame = dl::fx::enabled.torch_flicker && ++_flame_timer >= torch.frame_ticks[_flame_frame];
+            bool wave = dl::fx::enabled.banner_wave && ++_wave_timer >= banner.frame_ticks[_wave_frame];
+
+            if(flame)
+            {
+                _flame_timer = 0;
+                _flame_frame = (_flame_frame + 1) % torch.frames;
+            }
+
+            if(wave)
+            {
+                _wave_timer = 0;
+                _wave_frame = (_wave_frame + 1) % banner.frames;
+            }
+
+            if(! flame && ! wave)
+            {
+                return;
+            }
+
+            for(int i = 0, n = _deco_info.size(); i < n; ++i)
+            {
+                const deco_sprite& d = _deco_info[i];
+
+                if(! d.glow && ((flame && d.kind == dl::view::DECO_TORCH) || (wave && d.kind == dl::view::DECO_BANNER)))
+                {
+                    const bn::sprite_item* item = dl::deco::arts[d.kind].item[d.view];
+                    _deco_sprites[i].set_tiles(item->tiles_item(), deco_frame(d.kind));
+                }
+            }
         }
 
         void update_objects()

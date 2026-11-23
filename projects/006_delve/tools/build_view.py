@@ -32,25 +32,32 @@ TEST_TEX = os.path.join(HERE, "test_textures")
 TS = 64
 SCREEN_W = 240
 
-# piece sets: (enum name, texture file stem, frame index in a vertical strip)
+# piece sets: (enum name, texture file stem, frame index in a vertical strip, opening kind or None, opaque)
+# Wall decorations (torch, banner, chains, lever) are sprites placed by the game (dl_deco_items.h), not textures.
 SETS = [
-    ("wall", "tex_wall_stone", 0),
-    ("wall_torch", "tex_wall_torch", 0),
-    ("wall_banner", "tex_wall_banner", 0),
-    ("wall_chains", "tex_wall_chains", 0),
-    ("wall_skulls", "tex_wall_skulls", 0),
-    ("wall_crack", "tex_wall_crack", 0),
-    ("wall_dart", "tex_wall_dart", 0),
-    ("wall_lever_up", "tex_wall_lever_up", 0),
-    ("wall_lever_down", "tex_wall_lever_down", 0),
-    ("door_closed", "tex_door", 0),
-    ("door_open", "tex_door_open", 0),
-    ("arch", "tex_arch", 0),
-    ("bars", "tex_bars", 0),
-    ("stairs", "tex_stairs_down", 0),
+    ("wall", "tex_wall_stone", 0, None, True),
+    ("wall_skulls", "tex_wall_skulls", 0, None, True),
+    ("wall_crack", "tex_wall_crack", 0, None, True),
+    ("wall_dart", "tex_wall_dart", 0, None, True),
+    ("door_closed", "tex_door", 0, "door", True),
+    ("door_locked", "tex_door_locked", 0, "door", True),
+    ("door_open", "tex_door_open", 0, "door", False),
+    ("arch", "tex_arch", 0, "arch", False),
+    ("bars", "tex_bars", 0, "bars", False),
+    ("stairs", "tex_stairs_down", 0, "stairs", True),
 ]
 # indexed textures where index 0 is the see-through hole (art/LÉEME.md); in the rest index 0 is real black
-SEE_THROUGH = {"tex_bars", "tex_arch"}
+SEE_THROUGH = {"tex_bars", "tex_arch", "tex_door_open"}
+# Wall thickness (dl_view_geometry.h wall_thick_64): openings get jambs, a soffit and a recessed leaf / gate.
+# kind: (stem whose index 0 marks the opening, mode, recess of the content as a fraction of the thickness)
+OPENINGS = {
+    "door": ("tex_door_open", "door", 0.5),
+    "arch": ("tex_arch", "columns", None),
+    "bars": ("tex_bars", "rect", 0.5),
+    "stairs": ("tex_stairs_down", "columns", 1.0),
+}
+CAP_LINES = [-5, -3, -1, 1, 3, 5]     # free wall ends: side face of the front wall of (d, x) on line l
+JAMB_SHADE, SOFFIT_SHADE, SILL_SHADE, CONTENT_SHADE = 0.62, 0.48, 0.75, 0.9
 ART_EXPORT = os.path.join(PROJ, "art", "export")
 UI_FRAME = os.path.join(GFX, "ui_frame.bmp")
 # minimap colours (palette 240..247; ui_frame uses 192-209): floor, wall, player, door, bars, stairs, lever, dark
@@ -285,6 +292,7 @@ def project_lateral(geo, tex, d, l):
     X = l / 2.0
     W, H = geo.view_w, geo.view_h
     img = np.zeros((H, W, 4), float)
+    cov = np.zeros((H, W), bool)
     any_px = False
     for p in range(W // 2):
         cx = 2 * p + 1.0                      # pair centre
@@ -310,15 +318,183 @@ def project_lateral(geo, tex, d, l):
             col = sample(tex, np.full_like(v, u), v).astype(float)
             col[:, :3] *= shade(z)
             img[y0:y1, sx] = col
+            cov[y0:y1, sx] = True
             any_px = True
     if not any_px:
         return None
-    ys, xs = np.nonzero(img[..., 3] > 0)
+    ys, xs = np.nonzero(cov)
+    bx0, bx1 = xs.min() & ~1, (xs.max() + 2) & ~1
+    by0, by1 = ys.min(), ys.max() + 1
+    return bx0, by0, img[by0:by1, bx0:bx1], cov[by0:by1, bx0:bx1]
+
+
+def load_index(stem):
+    """Raw palette indices (h, 64) of an indexed texture, or None."""
+    for p in (os.path.join(ART_EXPORT, stem + ".bmp"), os.path.join(GFX, stem + ".bmp")):
+        if os.path.exists(p):
+            im = Image.open(p)
+            return np.array(im) if im.mode == "P" else None
+    return None
+
+
+def build_mask(kind, tex_stem_rgba):
+    """Opening mask (64x64 bool, True = hole in the wall slab) of an opening kind."""
+    stem, mode, _recess = OPENINGS[kind]
+    idx = load_index(stem)
+    hole = (idx[:TS] == 0) if idx is not None else (tex_stem_rgba[:TS, :, 3] == 0)
+    m = np.zeros((TS, TS), bool)
+    cols = np.nonzero(hole.any(0))[0]
+    if len(cols) == 0:
+        return m
+    if mode == "rect":
+        rows = np.nonzero(hole.any(1))[0]
+        m[rows.min():rows.max() + 1, cols.min():cols.max() + 1] = True
+        return m
+    bottom = None
+    if mode == "door":
+        # the leaf of the closed door reaches lower than the dark hole of the open one: open down to the last row
+        # where the closed door differs from the plain wall in the middle column (the threshold stays in front)
+        closed, stone = load_index("tex_door"), load_index("tex_wall_stone")
+        if closed is not None and stone is not None:
+            diff = np.nonzero(closed[:TS, TS // 2] != stone[:TS, TS // 2])[0]
+            bottom = int(diff.max()) if len(diff) else None
+    for c in range(cols.min(), cols.max() + 1):
+        r = np.nonzero(hole[:, c])[0]
+        if len(r):
+            m[r.min():(bottom if bottom is not None else r.max()) + 1, c] = True
+    return m
+
+
+def cap_texture(stone):
+    """Wall slab side faces: the stone texture turned 90 degrees (u = depth into the slab)."""
+    return np.rot90(stone[:TS]).copy()
+
+
+def thick(geo):
+    return geo.wall_thick_64 / float(TS)
+
+
+def ray_dirs(geo, sx, sy):
+    return (sx + 0.5 - geo.vp_x) / geo.F, -(sy + 0.5 - geo.vp_y) / geo.F
+
+
+def march_fill(geo, img, cov, x0, y0, face, tex, mask, recess, cap):
+    """Fills the hole pixels of a framed piece: jambs / soffit / sill of the slab and the recessed content.
+    face: ("z", Z, cell x) for a front face, ("x", X, zn, zf) for a lateral one."""
+    hole = cov & (img[..., 3] == 0)
+    ys, xs = np.nonzero(hole)
     if len(xs) == 0:
+        return
+    dx, dy = ray_dirs(geo, xs + x0, ys + y0)
+    T = thick(geo)
+    n = len(xs)
+    out = np.zeros((n, 4))
+    done = np.zeros(n, bool)
+    steps = 24
+    prev_iu = None
+    content_done = recess is None
+    for k in range(steps + 1):
+        q = k / steps
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if face[0] == "z":
+                s = np.full(n, face[1] + q * T)
+                u = dx * s - (face[2] - 0.5)
+            else:
+                L = face[1]
+                s = (L + np.sign(L) * q * T) / dx
+                u = (s - face[2]) if L < 0 else 1.0 - (s - face[2])
+        v = 0.5 - dy * s
+        bad = ~np.isfinite(s) | (s <= 0)
+        iu = np.floor(np.nan_to_num(u, nan=-1.0) * TS).astype(int)
+        iv = np.floor(np.nan_to_num(v, nan=-1.0) * TS).astype(int)
+        inb = (iu >= 0) & (iu < TS) & (iv >= 0) & (iv < TS) & ~bad
+        cu, cv = np.clip(iu, 0, TS - 1), np.clip(iv, 0, TS - 1)
+        solid = ~inb | ~mask[cv, cu]
+        if k == 0:
+            done |= solid          # entered through the wall face itself (or outside the face): leave it alone
+            prev_iu = cu
+            continue
+        hit = solid & ~done
+        if hit.any():
+            # which slab side was crossed: if the previous column at the current row is solid too, it was a row
+            # boundary (soffit above the eye, sill below), otherwise a column boundary (jamb)
+            pu = np.clip(prev_iu, 0, TS - 1)
+            horiz = ~mask[cv, pu] | ~inb
+            depth_t = np.clip((q * geo.wall_thick_64), 0, TS - 1).astype(int)
+            jamb_col = cap[cv, depth_t]
+            soff_col = cap[depth_t, cu]
+            col = np.where(horiz[:, None], soff_col[:, :3], jamb_col[:, :3]).astype(float)
+            fac = np.where(horiz, np.where(v < 0.5, SOFFIT_SHADE, SILL_SHADE), JAMB_SHADE)
+            col *= (fac * shade(np.clip(s, 0.01, 99)))[:, None]
+            out[hit, :3] = col[hit]
+            out[hit, 3] = 255
+            done |= hit
+        if not content_done and q >= recess - 1e-9:
+            content_done = True
+            texel = tex[cv, cu]
+            show = ~done & inb & (texel[:, 3] > 0)
+            col = texel[:, :3].astype(float) * (CONTENT_SHADE * shade(np.clip(s, 0.01, 99)))[:, None]
+            out[show, :3] = col[show]
+            out[show, 3] = 255
+            done |= show
+        prev_iu = cu
+    fill = out[:, 3] > 0
+    img[ys[fill], xs[fill]] = out[fill]
+
+
+def project_cap(geo, cap, d, l):
+    """Side face of a free wall end: line X = l/2 from the far edge of row d to the back of the slab."""
+    W, H = geo.view_w, geo.view_h
+    zf = geo.far(d) / 10.0
+    T = thick(geo)
+    X = l / 2.0
+    sy, sx = np.mgrid[0:H, 0:W]
+    dx, dy = ray_dirs(geo, sx, sy)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        s = X / dx
+    ok = np.isfinite(s) & (s >= zf) & (s <= zf + T)
+    Y = dy * np.nan_to_num(s)
+    ok &= (Y >= -0.5) & (Y < 0.5)
+    if not ok.any():
         return None
+    s = np.where(ok, s, zf)
+    q = np.clip(((s - zf) / T * geo.wall_thick_64).astype(int), 0, TS - 1)
+    v = np.clip(((0.5 - Y) * TS).astype(int), 0, TS - 1)
+    img = np.zeros((H, W, 4), float)
+    img[..., :3] = cap[v, q][..., :3] * (JAMB_SHADE * shade(s))[..., None]
+    img[..., 3] = np.where(ok, 255, 0)
+    ys, xs = np.nonzero(ok)
     bx0, bx1 = xs.min() & ~1, (xs.max() + 2) & ~1
     by0, by1 = ys.min(), ys.max() + 1
     return bx0, by0, img[by0:by1, bx0:bx1]
+
+
+def make_locked_placeholder():
+    """PROVISIONAL tex_door_locked until the artist draws it: tex_door with an iron band and a big iron padlock
+    (iron = the Iron Key colour). Written to tools/test_textures/, never to art/."""
+    if os.path.exists(os.path.join(ART_EXPORT, "tex_door_locked.bmp")) or             os.path.exists(os.path.join(GFX, "tex_door_locked.bmp")):
+        return
+    door, _p = load_texture("tex_door")
+    a = door[:TS].copy()
+    yy, xx = np.mgrid[0:TS, 0:TS]
+    light, mid, dark = (176, 184, 200), (112, 118, 134), (34, 36, 44)
+    band = (yy >= 30) & (yy < 35) & (xx >= 18) & (xx < 52)
+    a[band, :3] = mid
+    a[band & (yy == 30), :3] = light
+    a[band & (yy == 34), :3] = dark
+    for bx in (21, 48):
+        a[(yy >= 31) & (yy < 33) & (xx >= bx) & (xx < bx + 2), :3] = light
+    shackle = (((xx - 35) ** 2 + (yy - 37) ** 2) <= 36) & (((xx - 35) ** 2 + (yy - 37) ** 2) >= 12) & (yy < 38)
+    a[shackle, :3] = dark
+    a[shackle & (xx < 35), :3] = mid
+    body = (xx >= 29) & (xx < 42) & (yy >= 37) & (yy < 48)
+    a[body, :3] = mid
+    a[body & ((xx == 29) | (yy == 47) | (xx == 41)), :3] = dark
+    a[body & (yy == 37), :3] = light
+    a[(xx >= 34) & (xx < 37) & (yy >= 40) & (yy < 45), :3] = dark
+    a[..., 3] = 255
+    os.makedirs(TEST_TEX, exist_ok=True)
+    save_rgba(os.path.join(TEST_TEX, "tex_door_locked.png"), np.clip(a, 0, 255))
 
 
 def project_floor_ceiling(geo, floor, ceil):
@@ -421,6 +597,7 @@ def main():
     geo = Geo(parse_geometry())
     if not os.path.isdir(ART_EXPORT):
         make_test_textures()
+    make_locked_placeholder()
     used = {}
     texcache = {}
 
@@ -429,21 +606,45 @@ def main():
             texcache[stem], used[stem] = load_texture(stem)
         return frame(texcache[stem], k)
 
+    cap = cap_texture(tex("tex_wall_stone", 0))
     pieces = []          # (x0, y0, rgba)
-    index = []           # (set, kind, d, slot) per piece
-    for si, (name, stem, k) in enumerate(SETS):
+    index = []           # (set, kind, d, slot) per piece: kind 0 front, 1 lateral, 2 background, 3 cap
+    for si, (name, stem, k, opening, _opaque) in enumerate(SETS):
         t = tex(stem, k)
+        mask = None
+        recess = None
+        face_t = t
+        if opening:
+            mask = build_mask(opening, t)
+            face_t = t.copy()
+            face_t[:TS][mask, 3] = 0
+            recess = OPENINGS[opening][2]
         for d in range(geo.depths):
             for x in range(-geo.max_lateral, geo.max_lateral + 1):
-                r = project_front(geo, t, d, x)
+                r = project_front(geo, face_t, d, x)
                 if r:
+                    if mask is not None:
+                        x0, y0, img = r
+                        cov = np.ones(img.shape[:2], bool)
+                        march_fill(geo, img, cov, x0, y0, ("z", geo.far(d) / 10.0, x), t, mask, recess, cap)
                     pieces.append(r)
                     index.append((si, 0, d, x + geo.max_lateral))
             for li, l in enumerate(LATERALS):
-                r = project_lateral(geo, t, d, l)
+                r = project_lateral(geo, face_t, d, l)
                 if r:
-                    pieces.append(r)
-                    index.append((si, 1, d, li))
+                    x0, y0, img, cov = r
+                    if mask is not None:
+                        march_fill(geo, img, cov, x0, y0, ("x", l / 2.0, geo.near(d) / 10.0, geo.far(d) / 10.0),
+                                   t, mask, recess, cap)
+                    if (img[..., 3] > 0).any():
+                        pieces.append((x0, y0, img))
+                        index.append((si, 1, d, li))
+    for d in range(geo.depths - 1):          # row 4 caps lie in the fog
+        for ci, l in enumerate(CAP_LINES):
+            r = project_cap(geo, cap, d, l)
+            if r:
+                pieces.append(r)
+                index.append((-1, 3, d, ci))
     bg = project_floor_ceiling(geo, tex("tex_floor", 0), tex("tex_ceiling", 0))
     pieces.append(bg)
     index.append((-1, 2, 0, 0))
@@ -461,7 +662,7 @@ def main():
                 pix.append(0)
             spans.append((y, x2, n2, len(pix)))
             pix.extend(hw)
-        ptab[(si, kind, d, slot)] = (first, len(spans) - first)
+        ptab[(si, kind, d, slot)] = (first, len(spans) - first, x0 >> 1, (x0 + px.shape[1] + 1) >> 1)
     if len(pix) >= 1 << 22:
         sys.exit("build_view: too much pixel data")
     nsets = len(SETS)
@@ -480,8 +681,7 @@ def main():
     lines.append("    };\n")
 
     def pref(key):
-        f, n = ptab.get(key, (0, 0))
-        return "{%d,%d}" % (f, n)
+        return "{%d,%d,%d,%d}" % ptab.get(key, (0, 0, 0, 0))
 
     ncols = 2 * geo.max_lateral + 1
     lines.append("    const piece front[set_count][depths][cols] = {")
@@ -493,6 +693,10 @@ def main():
     for si in range(nsets):
         lines.append("        {" + ",".join("{" + ",".join(pref((si, 1, d, s)) for s in range(len(LATERALS))) + "}"
                                             for d in range(geo.depths)) + "},")
+    lines.append("    };\n")
+    lines.append("    const piece cap[depths][cap_lines] = {")
+    lines.append("        " + ",".join("{" + ",".join(pref((-1, 3, d, c)) for c in range(len(CAP_LINES))) + "}"
+                                     for d in range(geo.depths)) + ",")
     lines.append("    };\n")
     lines.append("    const piece background = %s;\n" % pref((-1, 2, 0, 0)))
     full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
@@ -513,10 +717,15 @@ def main():
           "    // a horizontal run of 2-px pairs: page row y, first pair x2 (pixel 2*x2), n2 pairs, data at pixels[off]",
           "    struct span", "    {", "        uint8_t y;", "        uint8_t x2;", "        uint16_t n2;",
           "        uint32_t off;", "    };", "", "    struct piece", "    {", "        uint16_t first;",
-          "        uint16_t count;", "    };", "", "    enum set_id : int", "    {"]
-    for name, _s, _k in SETS:
+          "        uint16_t count;", "        uint8_t c0;         // covered 2-px columns [c0, c1)", "        uint8_t c1;", "    };", "", "    enum set_id : int", "    {"]
+    for name, _s, _k, _o, _q in SETS:
         hl.append("        set_%s," % name)
     hl += ["        set_count", "    };", "",
+           "    // opaque sets hide whatever is behind them (wall decorations behind them are not shown)",
+           "    constexpr bool set_opaque[set_count] = { %s };" % ", ".join(
+               "true" if q else "false" for _n, _s, _k, _o, q in SETS),
+           "    constexpr int cap_lines = %d;  // free wall end side faces on lines %s" % (
+               len(CAP_LINES), ", ".join(str(v) for v in CAP_LINES)),
            "    constexpr int depths = %d;" % geo.depths,
            "    constexpr int cols = %d;      // x = -%d..%d" % (2 * geo.max_lateral + 1, geo.max_lateral, geo.max_lateral),
            "    constexpr int lines = %d;     // lateral lines X = (2 * i - %d) / 2" % (len(LATERALS), len(LATERALS) - 1),
@@ -525,6 +734,7 @@ def main():
            "", "    extern const uint16_t pixels[];", "    extern const span spans[];",
            "    extern const piece front[set_count][depths][cols];   // [set][d][x + max lateral]",
            "    extern const piece lateral[set_count][depths][lines]; // [set][d][line]",
+           "    extern const piece cap[depths][cap_lines];       // [d][cap line]",
            "    extern const piece background;", "    extern const bn::color palette_colors[256];", "}", "", "#endif"]
     with open(OUT_H, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(hl) + "\n")
