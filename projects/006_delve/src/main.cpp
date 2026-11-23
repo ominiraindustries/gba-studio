@@ -11,8 +11,10 @@
 #include "bn_palette_bitmap_bg_ptr.h"
 #include "bn_span.h"
 #include "bn_sprite_affine_mat_ptr.h"
+#include "bn_sprite_affine_mats.h"
 #include "bn_sprite_item.h"
 #include "bn_sprite_palette_ptr.h"
+#include "bn_sprite_palettes.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_sprite_tiles.h"
@@ -40,6 +42,7 @@
 #include "dl_fx.h"
 #include "dl_gen.h"
 #include "dl_hud.h"
+#include "dl_monster_fx.h"
 #include "dl_blit.h"
 #include "dl_transition.h"
 #include "dl_view.h"
@@ -87,6 +90,15 @@ volatile int test_visible_objects;
 volatile int test_spike_hits;
 volatile int test_levers;
 volatile unsigned test_floor_seed;
+volatile int test_mfx_ticks;           // G-34 monster FX per frame, timer ticks (last / max)
+volatile int test_mfx_max_ticks;
+volatile int test_mfx_heavy_max_ticks;  // ... on frames that also redrew or composed the view
+volatile int test_mfx_slots;           // monsters with their own FX palette
+volatile int test_sprite_palettes;     // sprite palettes in use (16 max)
+volatile int test_affine_mats;         // sprite affine matrices in use (32 max)
+volatile int test_cpu_x1000;           // bn::core::last_cpu_usage() x 1000
+volatile int test_fx_menu_open;
+volatile int test_cpu_max_x1000;
 
 namespace
 {
@@ -187,6 +199,7 @@ namespace
         int8_t x;
         bool monster;
         bool spikes;
+        int8_t band;    // depth band of the last placement (monster FX)
         bn::fixed from_x, from_y, from_s;
         bn::fixed to_x, to_y, to_s;
         int t;
@@ -221,7 +234,14 @@ namespace
         void update()
         {
             ++_frame;
-            handle_input();
+            int heavy_mark = test_redraws + test_motion_frames + test_transition_frames;
+
+            if(! _menu.update(_text, _mfx) && ! bn::keypad::select_held())
+            {
+                handle_input();
+            }
+
+            test_fx_menu_open = _menu.open();
             update_spikes();
             if(_trans)
             {
@@ -240,6 +260,7 @@ namespace
                 redraw();
             }
 
+            update_monster_fx(heavy_mark != test_redraws + test_motion_frames + test_transition_frames);
             test_cell = _cell;
             test_dir = _dir;
             update_hud();
@@ -251,6 +272,8 @@ namespace
         bn::palette_bitmap_bg_painter _painter;
         bn::sprite_text_generator _text;
         dl::hud _hud;
+        dl::monster_fx _mfx;
+        dl::fx_menu _menu;
         int _hud_redraws = 0;
         bn::vector<bn::sprite_ptr, 16> _object_sprites;
         bn::vector<object_sprite, 16> _objects;
@@ -326,6 +349,7 @@ namespace
             _keys = 0;
             _objects.clear();
             _object_sprites.clear();
+            _mfx.clear();
             clear_decos();
             _dirty = true;
         }
@@ -679,6 +703,7 @@ namespace
                 return;
             }
 
+            test_cpu_max_x1000 = 0;    // G-34 measure: the frames with the test monster only
             lv.ents[lv.nents] = entity{ E_MONSTER, uint8_t(target % W), uint8_t(target / W), 0, 0, 0 };
             gs.ent_of_cell[target] = int16_t(lv.nents);
             ++lv.nents;
@@ -846,7 +871,7 @@ namespace
                 return;
             }
 
-            object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
+            object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 1, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
             bn::sprite_ptr s = item->create_sprite(0, 0);
             s.set_bg_priority(0);
             s.set_visible(false);
@@ -906,6 +931,7 @@ namespace
                 o.from_x = o.to_x = sx;
                 o.from_y = o.to_y = sy;
                 o.from_s = o.to_s = scale;
+                o.band = int8_t(band);
 
                 for(int j = 0, m = old.size(); j < m; ++j)
                 {
@@ -968,6 +994,7 @@ namespace
                 o.from_x = o.to_x = sx;
                 o.from_y = o.to_y = sy;
                 o.from_s = o.to_s = scale;
+                o.band = int8_t(band);
                 o.t = monster_lerp_frames;
                 s.set_position(sx, sy);
                 s.set_scale(scale);
@@ -1369,6 +1396,41 @@ namespace
                     const bn::sprite_item* item = dl::deco::arts[d.kind].item[d.view];
                     _deco_sprites[i].set_tiles(item->tiles_item(), deco_frame(d.kind));
                 }
+            }
+        }
+
+        // G-34 monster readability (dl_monster_fx.h): palette, flashes, breathing and halo of every monster on
+        // screen; runs after the redraw so new sprites never show one frame with the plain palette
+        void update_monster_fx(bool heavy)
+        {
+            bn::timer timer;
+            _mfx.begin_frame(heavy);
+
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                const object_sprite& o = _objects[i];
+
+                if(o.monster)
+                {
+                    _mfx.apply(o.ent, *monster_item(o.ent), _object_sprites[i], o.band);
+                }
+            }
+
+            _mfx.end_frame();
+            test_mfx_ticks = timer.elapsed_ticks();
+            test_mfx_max_ticks = bn::max(int(test_mfx_max_ticks), int(test_mfx_ticks));
+
+            if(heavy)
+            {
+                test_mfx_heavy_max_ticks = bn::max(int(test_mfx_heavy_max_ticks), int(test_mfx_ticks));
+            }
+            test_mfx_slots = _mfx.slots_used();
+            test_sprite_palettes = (bn::sprite_palettes::used_colors_count() + 15) / 16;
+            test_affine_mats = bn::sprite_affine_mats::used_count();
+            test_cpu_x1000 = (bn::core::last_cpu_usage() * 1000).right_shift_integer();
+            if(_frame > 120)
+            {
+                test_cpu_max_x1000 = bn::max(int(test_cpu_max_x1000), int(test_cpu_x1000));
             }
         }
 
