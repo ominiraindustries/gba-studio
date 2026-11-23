@@ -135,7 +135,7 @@ mueve hacia el lado contrario del jugador (que en esos niveles empieza en x = 40
 - **3 PARIS · SIDE BY SIDE**: una 24 a la izquierda y una 16 a la derecha, ambas alejándose. La primera rotura suelta
   siempre **SHIELD**; el jugador lo coge sin peligro y aprende que lo protege una vez. Baja la carga (10 roturas).
 - **4 PARIS · TOWER**: 32 izquierda + 24 derecha, convergen hacia el centro. Objetos al azar (DOUBLE, SHIELD). Pico.
-- **5 LONDON · PIGEONS**: tres 16 bajas. A los 8 s de GO aparece la primera **PIGEON** (con aviso, ver §6) cuando
+- **5 LONDON · PIGEONS**: tres 16 bajas. A los 5 s de GO aparece la primera **PIGEON** (con aviso, ver §6) cuando
   quedan pocas bolas y nunca con DOUBLE recién perdido. Idea: sincronizar el disparo con el paso del pájaro. Descanso
   en roturas (9), giro en la amenaza.
 
@@ -245,3 +245,6 @@ Bloques siempre a ≥ 48 px del suelo (el jugador nunca queda encerrado; regla 9
 - Velocidades fraccionarias (1.5, 0.625 × factor) dan temblor de subpíxel: redondear sólo al dibujar.
 - Partición junto a pared, techo o bloque: las hijas deben nacer dentro de la zona libre (recolocar el centro).
 - 20 niveles y 10 fondos es mucho arte: greybox con un color de cielo por ciudad hasta que el usuario lo juegue.
+- 2026-11-23 (revisión del primer minuto, bloque 1): color por tamaño con cambio de paleta; paloma a los 300 f (5 s);
+  "TO BE CONTINUED" ignora botones 60 f; búfer de disparo de 6 f; "ST n" a la derecha del HUD. Pendiente para el
+  bloque 2: quedarse quieto en el centro supera los niveles 1–5 (medido con bot); recolocar bolas/jugador.

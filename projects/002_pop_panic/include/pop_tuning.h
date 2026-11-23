@@ -32,6 +32,8 @@ namespace pop
     constexpr bn::fixed harpoon_speed = 4;
     constexpr int harpoon_half_width = 3;   // 6 px hit width against the ball circle + 1 px
 
+    constexpr int fire_buffer_frames = 6;   // a press up to 6 f early still fires (rule 2)
+
     constexpr int start_lives = 3;
     constexpr int max_lives = 5;
     constexpr int stage_bonus = 500;        // x stage number
@@ -59,7 +61,7 @@ namespace pop
     // PIGEON: crosses high, cuts a harpoon whose rope it touches, dies to the harpoon tip.
     constexpr bn::fixed pigeon_speed = 1.25;
     constexpr int pigeon_warning_frames = 60;
-    constexpr int pigeon_first_delay = 480;  // frames after GO
+    constexpr int pigeon_first_delay = 300;  // frames after GO (5 s minimum, section 6)
     constexpr int pigeon_repeat_delay = 600;
     constexpr int pigeon_points = 300;
 

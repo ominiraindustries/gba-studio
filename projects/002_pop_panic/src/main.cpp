@@ -7,7 +7,9 @@
 #include "bn_random.h"
 #include "bn_regular_bg_ptr.h"
 #include "bn_sound_items.h"
+#include "bn_color.h"
 #include "bn_sprite_item.h"
+#include "bn_sprite_palette_item.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_string.h"
@@ -65,6 +67,30 @@ namespace
     const bn::sprite_item& pigeon_item = bn::sprite_items::pigeon;
     const bn::sprite_item& pop_fx_item = bn::sprite_items::pop_fx;
     const bn::sprite_item* item_items[2] = { &bn::sprite_items::item_double, &bn::sprite_items::item_shield };
+
+    // DISENO.md section 4: 32 red, 24 orange, 16 magenta, 8 yellow; outline #24081c.
+    constexpr bn::color rgb(int r, int g, int b)
+    {
+        return bn::color(r / 8, g / 8, b / 8);
+    }
+
+    constexpr bn::color ball_colors[size_count][16] = {
+        { rgb(0, 0, 0), rgb(255, 140, 140), rgb(235, 60, 60), rgb(190, 30, 40), rgb(130, 15, 30),
+          rgb(36, 8, 28), rgb(255, 255, 255) },
+        { rgb(0, 0, 0), rgb(255, 200, 120), rgb(250, 150, 40), rgb(210, 100, 20), rgb(150, 60, 10),
+          rgb(36, 8, 28), rgb(255, 255, 255) },
+        { rgb(0, 0, 0), rgb(255, 150, 240), rgb(225, 60, 200), rgb(170, 30, 150), rgb(110, 15, 100),
+          rgb(36, 8, 28), rgb(255, 255, 255) },
+        { rgb(0, 0, 0), rgb(255, 250, 170), rgb(250, 220, 50), rgb(215, 170, 20), rgb(160, 110, 10),
+          rgb(36, 8, 28), rgb(255, 255, 255) },
+    };
+
+    constexpr bn::sprite_palette_item ball_palettes[size_count] = {
+        bn::sprite_palette_item(ball_colors[0], bn::bpp_mode::BPP_4),
+        bn::sprite_palette_item(ball_colors[1], bn::bpp_mode::BPP_4),
+        bn::sprite_palette_item(ball_colors[2], bn::bpp_mode::BPP_4),
+        bn::sprite_palette_item(ball_colors[3], bn::bpp_mode::BPP_4),
+    };
 
     // Player frames: 0-1 idle, 2-5 walk, 6 shoot, 7 hurt, 8 death.
     constexpr int player_frame_idle = 0;
@@ -139,6 +165,7 @@ namespace
             size(s), x(bx), y(by), vx(bvx), vy(bvy),
             sprite(ball_items[s]->create_sprite(to_sprite_x(bx), to_sprite_y(by)))
         {
+            sprite.set_palette(ball_palettes[s]);
         }
 
         [[nodiscard]] bn::fixed radius() const
@@ -385,6 +412,7 @@ namespace
                     {
                         clear_stage_objects();
                         player_sprite.set_visible(false);
+                        timer = 60;
                         state = game_state::continued;
                     }
                     else
@@ -412,7 +440,11 @@ namespace
                 break;
 
             case game_state::continued:
-                if(bn::keypad::a_pressed() || bn::keypad::start_pressed())
+                if(timer > 0)
+                {
+                    --timer;
+                }
+                else if(bn::keypad::a_pressed() || bn::keypad::start_pressed())
                 {
                     state = game_state::title;
                 }
@@ -444,6 +476,7 @@ namespace
     private:
         unsigned random_ticks = 0;
         int card_elapsed = 0;
+        int fire_buffer = 0;
         int shoot_timer = 0;
         int walk_timer = 0;
         bool walking = false;
@@ -547,8 +580,19 @@ namespace
             // Fire: one harpoon, two with DOUBLE.
             int max_harpoons = weapon_double ? 2 : 1;
 
-            if(bn::keypad::a_pressed() && active_harpoons() < max_harpoons)
+            if(bn::keypad::a_pressed())
             {
+                fire_buffer = fire_buffer_frames;
+            }
+            else if(fire_buffer > 0)
+            {
+                --fire_buffer;
+            }
+
+            if(fire_buffer > 0 && active_harpoons() < max_harpoons)
+            {
+                fire_buffer = 0;
+
                 for(harpoon& h : harpoons)
                 {
                     if(! h.active)
@@ -1045,7 +1089,7 @@ int main()
                 text = "ST ";
                 text += bn::to_string<4>(g.stage + 1);
                 small_text.set_center_alignment();
-                small_text.generate(16, 76, text, hud_sprites);
+                small_text.generate(36, 76, text, hud_sprites);
 
                 bn::string<8> digits = bn::to_string<8>(g.score);
                 text.clear();
