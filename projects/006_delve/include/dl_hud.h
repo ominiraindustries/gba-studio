@@ -10,6 +10,8 @@
 #define DL_HUD_H
 
 #include "bn_palette_bitmap_bg_painter.h"
+#include "bn_bg_palette_ptr.h"
+#include "bn_color.h"
 #include "bn_palette_bitmap_bg_ptr.h"
 #include "bn_sprite_palette_ptr.h"
 #include "bn_sprite_ptr.h"
@@ -30,6 +32,17 @@ namespace dl
         int reload_max = 30;
         int floor = 0;          // 0-based
         int dir = 0;            // 0 N, 1 E, 2 S, 3 W
+        // G-40 magic (MAGIA_Y_TESOROS.md 5.2)
+        int mp = 0;
+        int mp_max = 10;
+        bool mp_on = false;     // a spell is known: before that the bar is empty and MP grey
+        int belt = 0;           // selected belt entry: 0 potion, 1 + spell_id, -1 empty
+        int belt_cost = 0;      // spell MP cost
+        bool belt_ok = true;    // enough MP (or a free scroll)
+        int belt_sel = 0;
+        int belt_mask = 1;      // bit per non-empty belt entry
+        bool casting = false;
+        int light = 0;          // Light frames left (status icon)
     };
 
     class hud
@@ -54,6 +67,9 @@ namespace dl
         // Hide / show every HUD sprite (e.g. the DESCENDING screen).
         void set_visible(bool visible);
 
+        // G-40 pause: the right panel (compass, floor, keys, status icons) is covered by the pause bitmap
+        void set_panel_visible(bool visible);
+
         // One line, up to 28 characters; frames <= 0 keeps it until the next message.
         void message(const char* text, int frames = 180);
         void clear_message();
@@ -73,6 +89,9 @@ namespace dl
         bn::sprite_text_generator _text;
         bn::sprite_palette_ptr _grey_palette;
         bn::sprite_palette_ptr _gold_palette;
+        bn::sprite_palette_ptr _white_palette;     // G-40: every HUD text palette is held from the start, so
+        bn::sprite_palette_ptr _red_palette;       // world sprites made first can never leave the HUD without one
+        bn::sprite_palette_ptr _blue_palette;
         bn::vector<bn::sprite_ptr, 4> _compass_sprites;     // [N, E, S, W]
         int _compass_dx[4] = {};
         bn::vector<bn::sprite_ptr, 2> _floor_sprites;
@@ -82,6 +101,19 @@ namespace dl
         bn::vector<bn::sprite_ptr, 2> _potion_sprites;
         bn::vector<bn::sprite_ptr, 8> _message_sprites;
         bn::vector<bn::sprite_ptr, 2> _arrow_sprites;
+        bn::vector<bn::sprite_ptr, 1> _mp_label_sprites;
+        bn::vector<bn::sprite_ptr, 2> _mp_sprites;
+        bn::vector<bn::sprite_ptr, 1> _belt_icon;
+        bn::vector<bn::sprite_ptr, 1> _status_icon;
+        bn::bg_palette_ptr _bg_palette;
+        bn::color _ring_color;
+        int _drawn_mp_w = -1;
+        int _mp_anim_w = 0;         // shown MP bar width (fills in ~30 f when the first spell is learned)
+        int _drawn_belt = -2;
+        int _drawn_dots = -1;
+        int _drawn_ring = -1;
+        int _drawn_label_on = -1;
+        bool _panel_visible = true;
         int _arrow_timer[2] = { 0, 0 };
 
         hud_state _shown;           // what the text sprites show

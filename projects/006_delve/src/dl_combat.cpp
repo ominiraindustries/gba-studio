@@ -62,6 +62,7 @@ namespace dl
         cd.p = player_stats();
         cd.p.potions = 1;       // PROVISIONAL (design doubt): DISENO starts with 1 bread; bread heals on pickup here
         cd.p.reload = weapon_table[0].reload_f;
+        cd.m = magic_state();
         _hints = 0;
     }
 
@@ -213,11 +214,42 @@ namespace dl
         cd.p.invuln = 0;
         cd.p.counter = 0;
         cd.p.busy = 0;
+        cd.m.cast_timer = 0;
+        cd.m.missile_cell = -1;
+        cd.m.missile_hit = 0;
+        cd.m.nchests = 0;
 
         for(int c = 0; c < N; ++c)
         {
             cd.mon_at[c] = -1;
         }
+
+#ifdef DL_DEBUG_TESTROOM
+        // G-40 fixed test room (main.cpp build_test_room): monsters stay where they were put
+        if(floor == 0)
+        {
+            for(int i = 0; i < lv.nents; ++i)
+            {
+                entity& e = lv.ents[i];
+                int c = e.y * W + e.x;
+
+                if(e.type == E_MONSTER && cd.nmons < max_monsters)
+                {
+                    int kind = e.b < MON_KIND_COUNT ? int(e.b) : int(MON_RAT);
+                    cd.mons[cd.nmons] = monster{ int16_t(i), int16_t(c), uint8_t(kind), MS_IDLE,
+                                                 int16_t(mon_table[kind].hp), 0, int16_t(mon_table[kind].move_f),
+                                                 0, -1, 0, 0, 0, 0 };
+                    cd.mon_at[c] = int16_t(cd.nmons);
+                    ++cd.nmons;
+                }
+            }
+
+            _setup_chests(true);
+            cd.dist_from = -1;
+            objects_dirty = true;
+            return;
+        }
+#endif
 
         _bfs(lv.entry, true, 250);
         int nearest = -1;
@@ -309,6 +341,8 @@ namespace dl
             lv.ents[near_bread].b = ITEM_POTION;
         }
 
+        _setup_chests(false);
+
         cd.dist_from = -1;
         objects_dirty = true;
     }
@@ -345,7 +379,7 @@ namespace dl
     }
 
     // ---- frame
-    void combat::update(int cell, int dir, bool a_pressed, bool b_pressed, bool think)
+    void combat::update(int cell, int dir, bool a_pressed, bool b_pressed, bool think, bool select_pressed)
     {
         bn::timer timer;
         player_stats& p = cd.p;
@@ -370,29 +404,7 @@ namespace dl
         p.counter = p.counter > 0 ? p.counter - 1 : 0;
         p.busy = p.busy > 0 ? p.busy - 1 : 0;
 
-        if(b_pressed && ! p.busy)
-        {
-            if(p.potions <= 0)
-            {
-                _hud.message("NO POTIONS", 90);
-            }
-            else if(p.hp >= p.hp_max)
-            {
-                _hud.message("HP IS FULL", 90);
-            }
-            else
-            {
-                int heal = bn::min(p.hp_max / 2, p.hp_max - p.hp);
-                p.hp += heal;
-                --p.potions;
-                p.busy = drink_frames;
-                bn::string<28> t("POTION: +");
-                t.append(bn::to_string<4>(heal));
-                t.append(" HP");
-                _hud.message(t.c_str(), 120);
-                sfx(1.3);
-            }
-        }
+        _magic_update(b_pressed, select_pressed);
 
         if(a_pressed)
         {
@@ -791,6 +803,12 @@ namespace dl
             }
 
             p.hp = p.hp_max;
+
+            if(cd.m.known)
+            {
+                cd.m.mp = mp_max();     // MAGIA 1.2: a level up refills the MP
+            }
+
             _post(EV_LEVEL_UP, -1, p.level);
             _hud.message("LEVEL UP!", 150);
             sfx(2.0, 0.7);
@@ -800,57 +818,13 @@ namespace dl
     // ---- items
     void combat::pickup(int ent)
     {
-        player_stats& p = cd.p;
         entity& e = _lv->ents[ent];
         int cell = e.y * W + e.x;
         int item = e.type == E_KEY ? int(ITEM_KEY) : int(e.b);
 
-        switch(item)
+        if(! _give(item))
         {
-        case ITEM_KEY:
-            ++p.keys;
-            _hud.message("IRON KEY", 120);
-            break;
-
-        case ITEM_BREAD:
-            p.hp = bn::min(p.hp_max, p.hp + 10);
-            _hud.message("BREAD: +10 HP", 120);
-            break;
-
-        case ITEM_POTION:
-            if(p.potions >= 9)
-            {
-                _hud.message("BAG FULL", 90);
-                return;
-            }
-
-            ++p.potions;
-
-            if(_hints & HINT_POTION)
-            {
-                _hud.message("HEALING POTION", 120);
-            }
-            else
-            {
-                hint(HINT_POTION, "POTION! B: DRINK IT");
-            }
-            break;
-
-        case ITEM_SWORD:
-            if(p.weapon == 0)
-            {
-                p.weapon = 1;
-                p.reload = 0;
-                _hud.message("SHORT SWORD! MORE DAMAGE", 150);
-            }
-            else
-            {
-                _hud.message("A SPARE SWORD. LEFT IT.", 90);
-            }
-            break;
-
-        default:
-            break;
+            return;
         }
 
         e.type = E_NONE;

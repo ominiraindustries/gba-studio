@@ -9,6 +9,8 @@
 
 #include "bn_palette_bitmap_items_ui_frame.h"
 #include "bn_sprite_items_ui_arrow.h"
+#include "bn_sprite_items_icon_spells.h"
+#include "bn_sprite_items_icon_status.h"
 
 #include "common_variable_8x8_sprite_font.h"
 
@@ -27,6 +29,11 @@ namespace dl
         constexpr int brass_dark = 205, brass = 206, brass_hi = 207;
         constexpr int red_empty = 210, red_dark = 211, red = 212, red_hi = 213, red_pale = 214;
         constexpr int gold_empty = 215, gold_glint = 216;
+        constexpr int mp_empty = 232, mp_dark = 233, mp_mid = 234, mp_hi = 235;    // G-40 (236 pale: unused)
+        constexpr int belt_ring = 237, belt_dark = 208, dot_dim = 217, dot_on = 218;
+        constexpr int mp_x0 = 61, mp_x1 = 154, mp_y0 = 138, mp_y1 = 142;
+        constexpr int belt_x0 = 200, belt_y0 = 126, belt_x1 = 215, belt_y1 = 141;
+        constexpr int dots_x0 = 202, dots_y0 = 142;
 
         constexpr int glow_frames = 6;
         constexpr int max_text_delay = 8;
@@ -49,6 +56,7 @@ namespace dl
         DL_TEXT_PALETTE(gold_colors, 27, 22, 12);
         DL_TEXT_PALETTE(grey_colors, 17, 18, 19);
         DL_TEXT_PALETTE(red_colors, 29, 11, 8);
+        DL_TEXT_PALETTE(blue_colors, 14, 21, 31);
 
 #undef DL_TEXT_PALETTE
 
@@ -56,6 +64,7 @@ namespace dl
         constexpr bn::sprite_palette_item gold_text(bn::span<const bn::color>(gold_colors, 16), bn::bpp_mode::BPP_4);
         constexpr bn::sprite_palette_item grey_text(bn::span<const bn::color>(grey_colors, 16), bn::bpp_mode::BPP_4);
         constexpr bn::sprite_palette_item red_text(bn::span<const bn::color>(red_colors, 16), bn::bpp_mode::BPP_4);
+        constexpr bn::sprite_palette_item blue_text(bn::span<const bn::color>(blue_colors, 16), bn::bpp_mode::BPP_4);
 
         // screen pixel (left / centre x, top y of the 8 px line) -> sprite_text_generator coordinates
         constexpr int tx(int x)
@@ -82,7 +91,12 @@ namespace dl
     hud::hud(bn::palette_bitmap_bg_ptr& bg) :
         _text(common::variable_8x8_sprite_font),
         _grey_palette(grey_text.create_palette()),
-        _gold_palette(gold_text.create_palette())
+        _gold_palette(gold_text.create_palette()),
+        _white_palette(white_text.create_palette()),
+        _red_palette(red_text.create_palette()),
+        _blue_palette(blue_text.create_palette()),
+        _bg_palette(bg.palette()),
+        _ring_color(bn::palette_bitmap_items::ui_frame.palette_item().colors_ref()[belt_ring])
     {
         // UI colours straight from ui_frame, so the HUD does not depend on the view palette being rebuilt.
         // 240..247 stay the engine minimap colours (tools/build_view.py).
@@ -113,6 +127,9 @@ namespace dl
         _drawn_hp_w = -1;
         _drawn_reload_w = -1;
         _drawn_keys = -1;
+        _drawn_mp_w = -1;
+        _drawn_belt = -2;
+        _drawn_dots = -1;
         _glow_drawn = false;
         _glow_timer = 0;
     }
@@ -135,10 +152,40 @@ namespace dl
         apply(_potion_sprites);
         apply(_message_sprites);
         apply(_arrow_sprites);
+        apply(_mp_label_sprites);
+        apply(_mp_sprites);
+        apply(_belt_icon);
+        set_panel_visible(_panel_visible);
 
         if(! _compass_sprites.empty())
         {
             _place_compass();       // keeps the letter behind you hidden
+        }
+    }
+
+    void hud::set_panel_visible(bool visible)
+    {
+        _panel_visible = visible;
+        bool v = visible && _visible;
+
+        for(bn::sprite_ptr& s : _floor_sprites)
+        {
+            s.set_visible(v);
+        }
+
+        for(bn::sprite_ptr& s : _key_sprites)
+        {
+            s.set_visible(v);
+        }
+
+        for(bn::sprite_ptr& s : _status_icon)
+        {
+            s.set_visible(v);
+        }
+
+        if(! _compass_sprites.empty())
+        {
+            _place_compass();
         }
     }
 
@@ -199,7 +246,7 @@ namespace dl
 
             s.set_x(tx(compass_x[slot]) + _compass_dx[letter] + offset);
             s.set_palette(slot == 1 ? _gold_palette : _grey_palette);
-            s.set_visible(_visible);
+            s.set_visible(_visible && _panel_visible);
         }
     }
 
@@ -242,6 +289,8 @@ namespace dl
             _text.set_palette_item(white_text);
             _text.set_center_alignment();
             _text.generate(tx(208), ty(17), f, _floor_sprites);
+            _shown.floor = state.floor;
+            return;
         }
 
         if(_hp_label_sprites.empty())
@@ -249,6 +298,7 @@ namespace dl
             _text.set_palette_item(red_text);
             _text.set_left_alignment();
             _text.generate(tx(46), ty(127), "HP", _hp_label_sprites);
+            return;
         }
 
         if(_hp_sprites.empty() || _shown.hp != state.hp || _shown.hp_max != state.hp_max)
@@ -260,6 +310,9 @@ namespace dl
             _text.set_palette_item(white_text);
             _text.set_left_alignment();
             _text.generate(tx(160), ty(127), h, _hp_sprites);
+            _shown.hp = state.hp;
+            _shown.hp_max = state.hp_max;
+            return;
         }
 
         if(_shown.keys != state.keys || (state.keys && _key_sprites.empty()))
@@ -274,20 +327,79 @@ namespace dl
                 _text.set_left_alignment();
                 _text.generate(tx(198), ty(101), k, _key_sprites);
             }
+
+            _shown.keys = state.keys;
+            set_panel_visible(_panel_visible);
+            return;
         }
 
-        if(_potion_sprites.empty() || _shown.potions != state.potions)
+        if(_mp_label_sprites.empty() || _drawn_label_on != int(state.mp_on))
         {
-            bn::string<8> p("x");
-            p.append(bn::to_string<4>(state.potions));
-            _potion_sprites.clear();
-            _text.set_palette_item(white_text);
+            _drawn_label_on = state.mp_on;
+            _mp_label_sprites.clear();
+            _text.set_palette_item(state.mp_on ? blue_text : grey_text);
             _text.set_left_alignment();
-            _text.generate(tx(218), ty(127), p, _potion_sprites);
+            _text.generate(tx(46), ty(137), "MP", _mp_label_sprites);
+
+            if(! state.mp_on)
+            {
+                _shown.mp_on = false;
+                _mp_sprites.clear();
+            }
+
+            return;
+        }
+
+        if(_shown.mp != state.mp || _shown.mp_max != state.mp_max || _shown.mp_on != state.mp_on ||
+           (state.mp_on && _mp_sprites.empty()))
+        {
+            _mp_sprites.clear();
+
+            if(state.mp_on)
+            {
+                bn::string<12> h = bn::to_string<4>(state.mp);
+                h.push_back('/');
+                h.append(bn::to_string<4>(state.mp_max));
+                _text.set_palette_item(white_text);
+                _text.set_left_alignment();
+                _text.generate(tx(160), ty(137), h, _mp_sprites);
+            }
+
+            _shown.mp = state.mp;
+            _shown.mp_max = state.mp_max;
+            _shown.mp_on = state.mp_on;
+            return;
+        }
+
+        if(_potion_sprites.empty() || _shown.potions != state.potions || _shown.belt != state.belt ||
+           _shown.belt_ok != state.belt_ok || _shown.belt_cost != state.belt_cost)
+        {
+            // belt slot: x3 (potion) or the MP cost in blue (red without enough MP), gold B below (MAGIA 5.2)
+            _potion_sprites.clear();
+            _text.set_left_alignment();
+
+            if(state.belt == 0)
+            {
+                bn::string<8> p("x");
+                p.append(bn::to_string<4>(state.potions));
+                _text.set_palette_item(white_text);
+                _text.generate(tx(218), ty(127), p, _potion_sprites);
+            }
+            else if(state.belt > 0)
+            {
+                _text.set_palette_item(state.belt_ok ? blue_text : red_text);
+                _text.generate(tx(220), ty(127), bn::to_string<4>(state.belt_cost), _potion_sprites);
+            }
+
             _text.set_palette_item(gold_text);
             _text.set_one_sprite_per_character(true);
             _text.generate(tx(220), ty(135), "B", _potion_sprites);
             _text.set_one_sprite_per_character(false);
+            _shown.potions = state.potions;
+            _shown.belt = state.belt;
+            _shown.belt_ok = state.belt_ok;
+            _shown.belt_cost = state.belt_cost;
+            return;
         }
 
         _shown = state;
@@ -405,6 +517,86 @@ namespace dl
             _glow_drawn = glow;
         }
 
+        // G-40 MP bar: blue, same build as the HP bar; empty (and MP grey) until the first spell
+        int mp = bn::clamp(state.mp, 0, state.mp_max);
+        int mp_target = state.mp_on && state.mp_max > 0 ?
+                ((mp_x1 - mp_x0 + 1) * mp + state.mp_max - 1) / state.mp_max : 0;
+        _mp_anim_w = _mp_anim_w < mp_target ? bn::min(mp_target, _mp_anim_w + 3) : mp_target;
+
+        if(_mp_anim_w != _drawn_mp_w)
+        {
+            int xe = mp_x0 + _mp_anim_w - 1;
+
+            if(_mp_anim_w > 0)
+            {
+                painter.rectangle(mp_x0, mp_y0, xe, mp_y0, mp_hi);
+                painter.rectangle(mp_x0, mp_y0 + 1, xe, mp_y1 - 1, mp_mid);
+                painter.rectangle(mp_x0, mp_y1, xe, mp_y1, mp_dark);
+            }
+
+            if(_mp_anim_w < mp_x1 - mp_x0 + 1)
+            {
+                painter.rectangle(xe + 1, mp_y0, mp_x1, mp_y1, mp_empty);
+            }
+
+            _sync(painter, mp_x0, mp_y0, mp_x1, mp_y1);
+            _drawn_mp_w = _mp_anim_w;
+        }
+
+        // belt slot: the painted potion stays for the potion entry; any other entry gets a dark well + icon sprite
+        if(state.belt != _drawn_belt)
+        {
+            if(state.belt == 0)
+            {
+                painter.blit(belt_x0, belt_y0, bn::palette_bitmap_roi(frame_pixels(), belt_x0, belt_y0,
+                                                                     belt_x1 - belt_x0 + 1, belt_y1 - belt_y0 + 1));
+            }
+            else
+            {
+                painter.rectangle(belt_x0, belt_y0, belt_x1, belt_y1, belt_dark);
+            }
+
+            _sync(painter, belt_x0, belt_y0, belt_x1, belt_y1);
+            _belt_icon.clear();
+
+            if(state.belt > 0)
+            {
+                if(bn::optional<bn::sprite_ptr> icon = bn::sprite_items::icon_spells.create_sprite_optional(
+                        tx(belt_x0 + 8), belt_y0 + 8 - 80, state.belt - 1))
+                {
+                    icon->set_bg_priority(0);
+                    icon->set_visible(_visible);
+                    _belt_icon.push_back(bn::move(*icon));
+                }
+            }
+
+            _drawn_belt = state.belt;
+        }
+
+        int dots = state.belt_mask | (state.belt_sel << 4);
+
+        if(dots != _drawn_dots)
+        {
+            for(int i = 0; i < 4; ++i)
+            {
+                int c = i == state.belt_sel ? dot_on : (state.belt_mask & (1 << i)) ? dot_dim : belt_dark;
+                painter.rectangle(dots_x0 + 4 * i, dots_y0, dots_x0 + 4 * i + 1, dots_y0 + 1, c);
+            }
+
+            _sync(painter, dots_x0, dots_y0, dots_x0 + 15, dots_y0 + 1);
+            _drawn_dots = dots;
+        }
+
+        // casting: the inner ring of the belt slot (index 237) pulses blue (a palette change, no pixels)
+        int ring = state.casting ? 1 + ((_frame >> 2) & 1) : 0;
+
+        if(ring != _drawn_ring)
+        {
+            _bg_palette.set_color(belt_ring, ring == 0 ? _ring_color : ring == 1 ? bn::color(10, 18, 31) :
+                                                                         bn::color(4, 9, 22));
+            _drawn_ring = ring;
+        }
+
         // key icon: only with at least one key (HUD.md 2)
         int has_keys = state.keys > 0;
 
@@ -435,7 +627,9 @@ namespace dl
         // text generation is the expensive part: wait for a light frame (at most max_text_delay frames)
         bool text_changed = _has_pending_message || _floor_sprites.empty() || _shown.floor != state.floor ||
                 _shown.hp != state.hp || _shown.hp_max != state.hp_max || _shown.keys != state.keys ||
-                _shown.potions != state.potions;
+                _shown.potions != state.potions || _shown.mp != state.mp || _shown.mp_max != state.mp_max ||
+                _shown.mp_on != state.mp_on || _shown.belt != state.belt || _shown.belt_ok != state.belt_ok ||
+                _shown.belt_cost != state.belt_cost;
 
         if(text_changed && heavy_frame && _text_delay < max_text_delay)
         {
@@ -444,11 +638,14 @@ namespace dl
         else if(text_changed)
         {
             _text_delay = 0;
-            _rebuild_text();
-
+            // one text job per frame: the message line first, then one group of numbers
             if(_has_pending_message)
             {
                 _flush_message();
+            }
+            else
+            {
+                _rebuild_text();
             }
         }
 
@@ -487,6 +684,26 @@ namespace dl
             --_glow_timer;
         }
 
+        // Light status icon (214, 97); blinks (8 f) in its last 180 f
+        if(state.light > 0 && _status_icon.empty())
+        {
+            if(bn::optional<bn::sprite_ptr> icon = bn::sprite_items::icon_status.create_sprite_optional(
+                    tx(218), 101 - 80, 0))
+            {
+                icon->set_bg_priority(0);
+                _status_icon.push_back(bn::move(*icon));
+            }
+        }
+        else if(state.light <= 0 && ! _status_icon.empty())
+        {
+            _status_icon.clear();
+        }
+
+        for(bn::sprite_ptr& s : _status_icon)
+        {
+            s.set_visible(_visible && _panel_visible && (state.light > 180 || (state.light / 8) % 2 == 0));
+        }
+
         _paint_bars(painter);
 
         _last_ticks = timer.elapsed_ticks();
@@ -500,7 +717,8 @@ namespace dl
     int hud::sprites_count() const
     {
         return _compass_sprites.size() + _floor_sprites.size() + _hp_label_sprites.size() + _hp_sprites.size() +
-               _key_sprites.size() + _potion_sprites.size() + _message_sprites.size() + _arrow_sprites.size();
+               _key_sprites.size() + _potion_sprites.size() + _message_sprites.size() + _arrow_sprites.size() +
+               _mp_label_sprites.size() + _mp_sprites.size() + _belt_icon.size() + _status_icon.size();
     }
 
     int hud::sprite_tiles_count() const
@@ -522,6 +740,10 @@ namespace dl
         add(_potion_sprites);
         add(_message_sprites);
         add(_arrow_sprites);
+        add(_mp_label_sprites);
+        add(_mp_sprites);
+        add(_belt_icon);
+        add(_status_icon);
         return tiles;
     }
 }

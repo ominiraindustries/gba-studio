@@ -525,7 +525,7 @@ namespace dl
 
     bool fx_menu::update(bn::sprite_text_generator& text, monster_fx& mfx)
     {
-        bool combo = bn::keypad::select_held() && bn::keypad::l_pressed();
+        bool combo = bn::keypad::l_held() && bn::keypad::r_held() && bn::keypad::select_pressed();   // G-40: SELECT alone cycles the belt
 
         if(! _open)
         {

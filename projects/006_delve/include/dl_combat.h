@@ -24,7 +24,62 @@ namespace dl
         struct edge_state;
     }
 
-    enum item_id : uint8_t { ITEM_BREAD, ITEM_POTION, ITEM_SWORD, ITEM_KEY, ITEM_COUNT };   // = item_floor frames
+    // 0..3 = item_floor frames; 8.. = G-40 items drawn with the 16x16 icons (icon_items / icon_jewels)
+    enum item_id : uint8_t
+    {
+        ITEM_BREAD, ITEM_POTION, ITEM_SWORD, ITEM_KEY, ITEM_COUNT,
+        ITEM_SCROLL_MISSILE = 8, ITEM_SCROLL_LIGHT, ITEM_SCROLL_HEAL, ITEM_RING_MANA, ITEM_LAST
+    };
+
+    // G-40 M1 spells (MAGIA_Y_TESOROS.md 1.4); index = icon_spells frame
+    enum spell_id : uint8_t { SPELL_MISSILE, SPELL_LIGHT, SPELL_HEAL, SPELL_COUNT };
+
+    struct spell_stats
+    {
+        const char* name;
+        int mp, cast_f;
+    };
+
+    constexpr spell_stats spell_table[SPELL_COUNT] = {
+        { "MAGIC MISSILE", 3, 12 }, { "LIGHT", 4, 12 }, { "HEAL", 6, 24 },
+    };
+
+    constexpr int belt_size = 4;
+    constexpr int belt_potion = 0;          // belt entry values: 0 potion, 1 + spell_id, -1 empty
+    constexpr int max_chests = 6;
+    constexpr int missile_range = 4;        // cells
+    constexpr int missile_cell_f = 4;       // frames per cell
+    constexpr int light_frames = 2700;      // 45 s
+
+    // G-40: mana, belt, spells, scrolls, ring and chest contents (appended to combat_data: the planner offsets of
+    // the fields above do not move)
+    struct magic_state
+    {
+        int mp = 0;
+        int mp_timer = 0;
+        int known = 0;                  // bit per spell_id
+        int scrolls[SPELL_COUNT] = {};  // spare scrolls of known spells (free casts, stack 9)
+        int8_t belt[belt_size] = { belt_potion, -1, -1, -1 };
+        int belt_sel = 0;
+        int cast_timer = 0;             // frames left of the cast (0 = none)
+        int cast_spell = -1;
+        bool cast_free = false;
+        int ring = 0;                   // Ring of Mana: 0 none, 1 in the bag, 2 worn
+        int light = 0;                  // Light frames left
+        int missile_cell = -1;          // -1 none
+        int missile_dir = 0;
+        int missile_t = 0;              // frames into the current cell
+        int missile_cells = 0;          // cells flown
+        int missile_hit = 0;            // > 0: impact spark frames left (missile_cell = where)
+        int heal_fx = 0;                // frames of the heal sparkles left
+        int light_fx = 0;               // frames of the Light flash left
+        int casts = 0;                  // stats for tests
+        int hint_timer = 0;             // > 0: the belt hint follows the LEARNED line
+        int missile_kills = 0;
+        int16_t chest_ent[max_chests] = {};
+        uint8_t chest_item[max_chests] = {};
+        int nchests = 0;
+    };
     enum mon_kind : uint8_t { MON_RAT, MON_SLIME, MON_SKELETON, MON_KIND_COUNT };
     enum mon_state : uint8_t { MS_IDLE, MS_CHASE, MS_WARN, MS_DYING };
 
@@ -100,6 +155,7 @@ namespace dl
         int16_t mon_at[gen::N];     // monster index per cell, -1 none
         uint8_t dist[gen::N];       // BFS distance from the player (monster moves), 255 = far / unreachable
         int dist_from;              // cell the map was computed from (-1 stale)
+        magic_state m;              // G-40 (keep last)
     };
 
     enum event_type : uint8_t
@@ -124,8 +180,12 @@ namespace dl
 
     enum hint_id : uint8_t
     {
-        HINT_MONSTER = 1, HINT_DODGE = 2, HINT_POTION = 4, HINT_STAIRS = 8
+        HINT_MONSTER = 1, HINT_DODGE = 2, HINT_POTION = 4, HINT_STAIRS = 8, HINT_SWITCH = 16
     };
+
+    // chest state bits in entity::a of an E_FURN FURN_CHEST (the low bits are the drawing orientation)
+    constexpr uint8_t chest_locked = 0x10;
+    constexpr uint8_t chest_opened = 0x20;
 
     class combat
     {
@@ -139,7 +199,17 @@ namespace dl
         void load_floor(gen::level& lv, const view::edge_state& es, int16_t* ent_of_cell, int floor, unsigned seed);
 
         // once per frame. think: a light frame (no view redraw pending), so the BFS may run
-        void update(int cell, int dir, bool a_pressed, bool b_pressed, bool think);
+        void update(int cell, int dir, bool a_pressed, bool b_pressed, bool think, bool select_pressed = false);
+
+        // G-40 magic and treasure (dl_magic.cpp)
+        [[nodiscard]] magic_state& magic();
+        [[nodiscard]] int mp_max() const;
+        [[nodiscard]] int mp_regen_frames() const;
+        [[nodiscard]] bool casting() const;
+        void open_chest(int ent);               // the player walked against a chest
+        void toggle_ring();                     // pause: wear / take off the Ring of Mana
+        void drink_potion();
+        static const char* item_name(int item);
 
         [[nodiscard]] int monster_ent_at(int cell) const;
         [[nodiscard]] const monster* monster_of_ent(int ent) const;
@@ -187,6 +257,14 @@ namespace dl
         void _drop(int ent, int cell, int item);   // item < 0: nothing (the entity goes)
         void _gain_xp(int xp);
         void _post(uint8_t type, int ent, int value, bool crit = false, int side = 0);
+        bool _give(int item);               // false: not taken (bag full)
+        void _magic_update(bool b_pressed, bool select_pressed);
+        void _belt_use();
+        void _belt_cycle();
+        void _cast_done();
+        void _missile_update();
+        void _learn(int spell);
+        void _setup_chests(bool test_room);
         int _dir_to(int from, int to) const;
     };
 }

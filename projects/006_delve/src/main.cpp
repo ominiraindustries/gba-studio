@@ -35,7 +35,9 @@
 #include "bn_sprite_items_mon_slime.h"
 #include "bn_sprite_items_prop_barrel.h"
 #include "bn_sprite_items_prop_bones.h"
-#include "bn_sprite_items_prop_chest.h"
+#include "bn_sprite_items_prop_chests.h"
+#include "bn_sprite_items_icon_items.h"
+#include "bn_sprite_items_icon_jewels.h"
 #include "bn_sprite_items_prop_crate.h"
 #include "bn_sprite_items_prop_spikes.h"
 #include "bn_sprite_items_prop_statue.h"
@@ -52,6 +54,8 @@
 #include "dl_themes.h"
 #include "dl_combat.h"
 #include "dl_combat_fx.h"
+#include "dl_magic_fx.h"
+#include "dl_pause.h"
 #include "dl_transition.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
@@ -72,6 +76,20 @@ volatile int test_sprite_tiles;        // sprite VRAM in use, 32-byte tiles (mod
 volatile int test_sprites;             // sprites in use (OAM: 128 max)
 volatile int test_sprite_tiles_free;
 volatile int test_hud_sprites;
+// G-40 M1 magic and treasure
+volatile int test_mp;                  // MP now / max
+volatile int test_mp_max;
+volatile int test_known;               // bit per spell known
+volatile int test_casts;
+volatile int test_missile_kills;
+volatile int test_missile_shown;       // the dart sprite is on screen this frame
+volatile int test_light;               // Light frames left
+volatile int test_ring;                // 0 none, 1 bag, 2 worn
+volatile int test_pause;               // 1 while the START pause is open
+volatile int test_hp;
+volatile int test_keys;
+volatile int test_chests_opened;
+volatile int test_busy;                // player busy frames (drink / cast)
 volatile int test_hud_tiles;
 volatile int test_view_ticks;          // view only (no minimap)
 volatile int test_view_ticks_sum;
@@ -143,6 +161,8 @@ namespace
     };
 
     BN_DATA_EWRAM game_state gs;
+    BN_DATA_EWRAM bn::color deco_colors[2][3][16];     // G-40: deco palettes by theme / band (made on demand)
+    BN_DATA_EWRAM bn::color glow_colors[3][16];
 
     unsigned floor_seed(int floor)
     {
@@ -202,7 +222,7 @@ namespace
         case FURN_STATUE:
             return &bn::sprite_items::prop_statue;
         case FURN_CHEST:
-            return &bn::sprite_items::prop_chest;
+            return &bn::sprite_items::prop_chests;     // G-40: closed / open / locked / locked_open
         case FURN_TABLE:
             return &bn::sprite_items::prop_table;
         default:
@@ -228,6 +248,7 @@ namespace
         bn::fixed from_x, from_y, from_s;
         bn::fixed to_x, to_y, to_s;
         int t;
+        bool small = false;     // G-40: 16x16 icon on the floor (scroll, ring)
     };
 
     class game
@@ -269,15 +290,35 @@ namespace
                 return;
             }
 
+            if(_pause.is_open())
+            {
+                if(! _pause.update(_painter, _text, _combat, _hud))
+                {
+                    close_pause();
+                }
+
+                test_pause = _pause.is_open();
+                update_hud();
+                return;
+            }
+
             bn::timer frame_timer;
             int heavy_mark = test_redraws + test_motion_frames + test_transition_frames;
-            bool a_pressed = false, b_pressed = false;
+            bool a_pressed = false, b_pressed = false, select_pressed = false;
+            bool fx_combo = bn::keypad::l_held() && bn::keypad::r_held() && bn::keypad::select_held();
 
-            if(! _menu.update(_text, _mfx) && ! bn::keypad::select_held())
+            if(! _menu.update(_text, _mfx) && ! fx_combo)
             {
+                if(bn::keypad::start_pressed() && ! _trans && ! _dirty)
+                {
+                    open_pause();
+                    return;
+                }
+
                 handle_input();
                 a_pressed = bn::keypad::a_pressed();
                 b_pressed = bn::keypad::b_pressed();
+                select_pressed = bn::keypad::select_pressed();
             }
 
             test_fx_menu_open = _menu.open();
@@ -285,12 +326,13 @@ namespace
             if(dl::themes::take_changed())     // G-37 debug: theme forced from the FX menu
             {
                 dl::themes::apply_for_floor(_bg.palette(), _floor);
+                _light_shown = false;
                 test_theme = dl::themes::current();
                 create_deco_palettes();
                 _dirty = true;
             }
             bn::timer combat_timer;
-            _combat.update(_cell, _dir, a_pressed, b_pressed, ! _dirty && ! _trans);
+            _combat.update(_cell, _dir, a_pressed, b_pressed, ! _dirty && ! _trans, select_pressed);
             int combat_ticks = combat_timer.elapsed_ticks();
             update_spikes();
             if(_trans)
@@ -323,6 +365,8 @@ namespace
             process_events();
             sync_monster_sprites();
             update_monster_fx(heavy);
+            _mgfx.update(_combat.magic(), _cell, _dir);
+            update_light();
             _cfx.update(heavy);
             test_cfx_max_ticks = _cfx.max_ticks();
             test_cell = _cell;
@@ -360,6 +404,9 @@ namespace
         dl::combat _combat;
         dl::combat_fx _cfx;
         dl::fx_menu _menu;
+        dl::magic_fx _mgfx;
+        dl::pause_screen _pause;
+        bool _light_shown = false;
         bn::vector<bn::sprite_ptr, 32> _screen_text;   // title / death screen
         int _mode = 0;          // 0 title, 1 playing, 2 dead
         int _mode_t = 0;
@@ -389,8 +436,10 @@ namespace
         bn::vector<deco_sprite, 24> _deco_info;
         bn::vector<bn::sprite_affine_mat_ptr, dl::view::max_decos> _deco_mats;
         bn::vector<int, dl::view::max_decos> _deco_mat_keys;
-        bn::vector<bn::sprite_palette_ptr, 3> _glow_palettes;     // torch glow light [d = 0 / 1 / >= 2]
-        bn::vector<bn::sprite_palette_ptr, 6> _deco_palettes;     // [palette A / B][band d = 0 / 1 / >= 2] (theme)
+        // G-40: made on demand by rebuild_decos (only the bands / kinds in view hold a sprite palette; 9 held
+        // all the time left no room for the magic icons). Colours: deco_colors / glow_colors (theme).
+        bn::optional<bn::sprite_palette_ptr> _glow_palettes[3];   // torch glow light [d = 0 / 1 / >= 2]
+        bn::optional<bn::sprite_palette_ptr> _deco_palettes[6];   // [palette A / B][band d = 0 / 1 / >= 2] (theme)
         int _flame_frame = 0;
         int _flame_timer = 0;
         int _wave_frame = 0;
@@ -417,10 +466,17 @@ namespace
             _floor = floor;
             test_floor = floor;
             dl::themes::apply_for_floor(_bg.palette(), floor);     // G-37: theme per floor
+            _light_shown = false;
             test_theme = dl::themes::current();
             create_deco_palettes();
             bn::timer gen_timer;
             test_floor_seed = generate_floor(floor_seed(floor), floor, gs.lv);
+#ifdef DL_DEBUG_TESTROOM
+            if(floor == 0)
+            {
+                build_test_room(gs.lv);
+            }
+#endif
             test_gen_ticks = gen_timer.elapsed_ticks();
             test_gen_max_ticks = test_gen_ticks > test_gen_max_ticks ? test_gen_ticks : test_gen_max_ticks;
 
@@ -441,11 +497,125 @@ namespace
             _combat.player().keys = 0;     // DISENO.md 5: keys are per floor
             _combat.load_floor(gs.lv, gs.es, gs.ent_of_cell, floor, test_floor_seed);
             _cfx.clear();
+            _mgfx.clear();
             _objects.clear();
             _object_sprites.clear();
             _mfx.clear();
             clear_decos();
             _dirty = true;
+        }
+
+#ifdef DL_DEBUG_TESTROOM
+        // G-40 fixed test room (floor 1 of a DL_DEBUG_TESTROOM build): a 7 x 11 hall, entry at the south facing
+        // north. Row y = 20 from the west: Light scroll (9), Missile scroll (10), entry (11), key (12), chest
+        // with the Heal scroll (13); locked chest with the Ring of Mana at (12, 19); a rat at (11, 16) (d = 4),
+        // two slimes at (9, 15) and (13, 15); stairs in the north wall.
+        static void build_test_room(level& lv)
+        {
+            constexpr int x0 = 8, x1 = 14, y0 = 10, y1 = 20;
+
+            for(int i = 0; i < 2 * N; ++i)
+            {
+                lv.ed[i] = K_WALL;
+            }
+
+            for(int c = 0; c < N; ++c)
+            {
+                lv.cl[c] = 0;
+                lv.th[c] = 0;
+            }
+
+            for(int y = y0; y <= y1; ++y)
+            {
+                for(int x = x0; x <= x1; ++x)
+                {
+                    int c = y * W + x;
+                    lv.cl[c] = C_CARVED;
+                    lv.th[c] = 1;
+
+                    if(x < x1)
+                    {
+                        lv.ed[edge_index(c, 1)] = K_OPEN;
+                    }
+
+                    if(y < y1)
+                    {
+                        lv.ed[edge_index(c, 2)] = K_OPEN;
+                    }
+                }
+            }
+
+            lv.ed[edge_index(y0 * W + 11, 0)] = K_STAIRS;
+            lv.stairs = (y0 - 1) * W + 11;
+            lv.entry = y1 * W + 11;
+            lv.entry_dir = 0;
+            lv.nlocks = 0;
+            lv.nhooks = 0;
+            lv.nrooms = 1;
+            lv.rooms[0] = room{ uint8_t(x0), uint8_t(y0), uint8_t(x1 - x0 + 1), uint8_t(y1 - y0 + 1), SP_NONE };
+            lv.nents = 0;
+
+            auto add = [&lv](uint8_t type, int x, int y, int a, int b, int c)
+            {
+                lv.ents[lv.nents++] = entity{ type, uint8_t(x), uint8_t(y), uint8_t(a), uint8_t(b), uint8_t(c) };
+            };
+            add(E_ITEM, 9, 20, 0, dl::ITEM_SCROLL_LIGHT, 0);
+            add(E_ITEM, 10, 20, 0, dl::ITEM_SCROLL_MISSILE, 0);
+            add(E_KEY, 12, 20, 0, 0, 0);
+            add(E_FURN, 13, 20, 0, 0, FURN_CHEST);
+            add(E_FURN, 12, 19, dl::chest_locked, 0, FURN_CHEST);
+            add(E_MONSTER, 11, 16, 0, dl::MON_RAT, 0);
+            add(E_MONSTER, 9, 15, 0, dl::MON_SLIME, 0);
+            add(E_MONSTER, 13, 15, 0, dl::MON_SLIME, 0);
+        }
+#endif
+
+        // ---- G-40 pause (dl_pause.h): the world sprites go, the pause bitmap comes; closing repaints the dungeon
+        void open_pause()
+        {
+            _objects.clear();
+            _object_sprites.clear();
+            clear_decos();
+            _mfx.clear();
+            _cfx.clear();
+            _mgfx.set_visible(false);
+            _pause.open(_painter, _text, _combat, _hud);
+            test_pause = 1;
+        }
+
+        void close_pause()
+        {
+            for(int k = 0; k < 2; ++k)
+            {
+                _painter.blit(0, 0, bn::palette_bitmap_items::ui_frame.pixels_item());
+                _painter.flip_page_now();
+            }
+
+            dl::view::minimap_reset(gs.lv, gs.es, gs.seen);
+            _hud.invalidate();
+            _mgfx.set_visible(true);
+            _dirty = true;
+            test_pause = 0;
+        }
+
+        // Light (MAGIA 1.4): brighter view colours while it lasts (palette only, no redraw)
+        void update_light()
+        {
+            bool on = _combat.magic().light > 0;
+
+            if(on != _light_shown)
+            {
+                if(on)
+                {
+                    dl::magic_fx::light_palette(_bg.palette());
+                }
+                else
+                {
+                    dl::themes::apply_for_floor(_bg.palette(), _floor);
+                }
+
+                _light_shown = on;
+            }
         }
 
         // Floor generation blocks for a while (measured: test_gen_ticks): show the panel with a "DESCENDING..."
@@ -712,6 +882,11 @@ namespace
 
             if(_combat.monster_blocks(nb) || (e >= 0 && furn_blocking(lv.ents[e])))
             {
+                if(e >= 0 && ! _combat.monster_blocks(nb) && lv.ents[e].type == E_FURN && lv.ents[e].c == FURN_CHEST)
+                {
+                    _combat.open_chest(e);      // G-40: walking against a chest opens it (MAGIA 2.1)
+                }
+
                 bump();
                 return;
             }
@@ -854,6 +1029,44 @@ namespace
             _hud.state.reload_max = _combat.reload_max();
             _hud.state.floor = _floor;
             _hud.state.dir = _dir;
+            const dl::magic_state& m = _combat.magic();
+            int entry = m.belt[m.belt_sel];
+            _hud.state.mp = m.mp;
+            _hud.state.mp_max = _combat.mp_max();
+            _hud.state.mp_on = m.known != 0;
+            _hud.state.belt = entry;
+            _hud.state.belt_cost = entry > 0 ? dl::spell_table[entry - 1].mp : 0;
+            _hud.state.belt_ok = entry <= 0 || m.mp >= dl::spell_table[entry - 1].mp || m.scrolls[entry - 1] > 0;
+            _hud.state.belt_sel = m.belt_sel;
+            int mask = 0;
+
+            for(int i = 0; i < dl::belt_size; ++i)
+            {
+                mask |= m.belt[i] >= 0 ? 1 << i : 0;
+            }
+
+            _hud.state.belt_mask = mask;
+            _hud.state.casting = m.cast_timer > 0;
+            _hud.state.light = m.light;
+            test_mp = m.mp;
+            test_mp_max = _combat.mp_max();
+            test_known = m.known;
+            test_casts = m.casts;
+            test_missile_kills = m.missile_kills;
+            test_missile_shown = _mgfx.missile_shown();
+            test_light = m.light;
+            test_ring = m.ring;
+            test_hp = p.hp;
+            test_keys = p.keys;
+            test_busy = p.busy;
+            int opened = 0;
+
+            for(int i = 0; i < m.nchests; ++i)
+            {
+                opened += (gs.lv.ents[m.chest_ent[i]].a & dl::chest_opened) ? 1 : 0;
+            }
+
+            test_chests_opened = opened;
             int redraws = test_redraws;
             _hud.update(_painter, _trans || redraws != _hud_redraws);
             _hud_redraws = redraws;
@@ -877,6 +1090,12 @@ namespace
             if(monster)
             {
                 return monster_item(ent);
+            }
+
+            if(e.type == E_ITEM && e.b >= dl::ITEM_SCROLL_MISSILE)
+            {
+                size = 16;
+                return e.b == dl::ITEM_RING_MANA ? &bn::sprite_items::icon_jewels : &bn::sprite_items::icon_items;
             }
 
             if(e.type == E_ITEM || e.type == E_KEY)
@@ -911,7 +1130,7 @@ namespace
             }
 
             scale = bn::fixed(geo::object_ref_u) / z;
-            int size = o.monster ? geo::monster_size : geo::object_size;
+            int size = o.monster ? geo::monster_size : o.small ? 16 : geo::object_size;
 
             if(vx < 8 || vx > geo::view_w - 8 || scale > 2)
             {
@@ -945,9 +1164,16 @@ namespace
             }
 
             object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 1, -1, 1, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
+            o.small = size == 16;
             const entity& e = gs.lv.ents[ent];
             int frame = spikes ? (_spike_state > 0 ? 1 : 0) :
-                        e.type == E_KEY ? dl::ITEM_KEY : e.type == E_ITEM ? e.b % dl::ITEM_COUNT : 0;
+                        e.type == E_KEY ? dl::ITEM_KEY :
+                        e.type == E_ITEM ? (e.b >= dl::ITEM_SCROLL_MISSILE ? 0 : e.b % dl::ITEM_COUNT) : 0;
+
+            if(e.type == E_FURN && e.c == FURN_CHEST)
+            {
+                frame = ((e.a & dl::chest_locked) ? 2 : 0) + ((e.a & dl::chest_opened) ? 1 : 0);
+            }
             // 16 sprite palettes are shared by text, HUD, decos, glow, monster FX and every prop / monster art:
             // a prop whose palette is not loaded yet only gets one if 2 stay free (monsters, arrows, red edge);
             // whatever does not fit is skipped instead of asserting
@@ -1115,9 +1341,8 @@ namespace
         void create_deco_palettes()
         {
             // G-37: colours of the current theme (dl_themes.h); called again after a theme change
-            static bn::color colors[2][3][16];
+            bn::color (&colors)[2][3][16] = deco_colors;
             static constexpr int band_x100[3] = { 100, 60, 36 };   // ~ wall attenuation at d = 0, 1 and >= 2
-            bool update = ! _deco_palettes.empty();
 
             for(int p = 0; p < 2; ++p)
             {
@@ -1132,23 +1357,15 @@ namespace
                         colors[p][b][i] = i ? bn::color(c.red() * f / 100, c.green() * f / 100, c.blue() * f / 100) : c;
                     }
 
-                    bn::span<const bn::color> span(colors[p][b], 16);
-
-                    if(update)
+                    if(_deco_palettes[p * 3 + b])
                     {
-                        _deco_palettes[p * 3 + b].set_colors(span);
-                    }
-                    else
-                    {
-                        _deco_palettes.push_back(
-                                bn::sprite_palette_item(span, bn::bpp_mode::BPP_4).create_palette());
+                        _deco_palettes[p * 3 + b]->set_colors(bn::span<const bn::color>(colors[p][b], 16));
                     }
                 }
             }
 
             // glow light per index of deco_torch_glow (1 = outer ring .. 7 = centre): added to the scene, so the
             // rim adds nothing (index 1 rounds to black in 5-bit colour) and the centre adds a warm ~45 %
-            static bn::color glow_colors[3][16];
             static constexpr int ramp_x100[8] = { 0, 2, 5, 9, 15, 22, 31, 42 };
             static constexpr int band_glow_x100[3] = { 100, 85, 65 };   // d = 0, d = 1, d >= 2: small far halos need more
 
@@ -1161,15 +1378,9 @@ namespace
                     glow_colors[b][i] = bn::color(rgb[0] * f / 10000, rgb[1] * f / 10000, rgb[2] * f / 10000);
                 }
 
-                bn::span<const bn::color> span(glow_colors[b], 16);
-
-                if(update)
+                if(_glow_palettes[b])
                 {
-                    _glow_palettes[b].set_colors(span);
-                }
-                else
-                {
-                    _glow_palettes.push_back(bn::sprite_palette_item(span, bn::bpp_mode::BPP_4).create_palette());
+                    _glow_palettes[b]->set_colors(bn::span<const bn::color>(glow_colors[b], 16));
                 }
             }
         }
@@ -1232,11 +1443,49 @@ namespace
             return _deco_mats.back();
         }
 
+        // G-40: the deco / glow palettes the decorations in view need are made now; the others are released
+        // (their sprites were just cleared). A palette that cannot be made skips its decorations (never asserts).
+        void prepare_deco_palettes()
+        {
+            namespace deco = dl::deco;
+            int need = 0;
+
+            for(int i = 0; i < gs.vis.ndecos; ++i)
+            {
+                const dl::view::deco_place& p = gs.vis.decos[i];
+                const deco::art& a = deco::arts[p.kind];
+                int band = dl::geo::depth_band(p.z_u);
+                need |= 1 << ((a.palette_b ? 3 : 0) + (dl::fx::enabled.deco_depth_fade ? (band >= 2 ? 2 : band) : 0));
+
+                if(p.kind == dl::view::DECO_TORCH && dl::fx::enabled.torch_glow)
+                {
+                    need |= 1 << (6 + (band < 2 ? band : 2));
+                }
+            }
+
+            for(int k = 0; k < 9; ++k)
+            {
+                bn::optional<bn::sprite_palette_ptr>& pal = k < 6 ? _deco_palettes[k] : _glow_palettes[k - 6];
+
+                if(! (need & (1 << k)))
+                {
+                    pal.reset();
+                }
+                else if(! pal)
+                {
+                    const bn::color* colors = k < 6 ? deco_colors[k / 3][k % 3] : glow_colors[k - 6];
+                    pal = bn::sprite_palette_ptr::create_new_optional(
+                            bn::sprite_palette_item(bn::span<const bn::color>(colors, 16), bn::bpp_mode::BPP_4));
+                }
+            }
+        }
+
         void rebuild_decos()
         {
             namespace geo = dl::geo;
             namespace deco = dl::deco;
             clear_decos();
+            prepare_deco_palettes();
 
             for(int i = 0; i < gs.vis.ndecos; ++i)
             {
@@ -1270,9 +1519,16 @@ namespace
                 bn::fixed sy = geo::vp_y - 80;     // the anchor row cancels out: sprite centre = eye row
                 // created straight with the theme palette (theme colours at every band, G-37; faded with the
                 // depth when deco_depth_fade): the art's own palette is never loaded (sprite palettes are scarce)
-                const bn::sprite_palette_ptr& pal = _deco_palettes[(a.palette_b ? 3 : 0) +
+                const bn::optional<bn::sprite_palette_ptr>& pal = _deco_palettes[(a.palette_b ? 3 : 0) +
                         (dl::fx::enabled.deco_depth_fade ? (band >= 2 ? 2 : band) : 0)];
-                bn::optional<bn::sprite_ptr> so = create_with_palette(*a.item[view], sx, sy, deco_frame(p.kind), pal);
+
+                if(! pal)
+                {
+                    test_palette_skips = test_palette_skips + 1;
+                    continue;
+                }
+
+                bn::optional<bn::sprite_ptr> so = create_with_palette(*a.item[view], sx, sy, deco_frame(p.kind), *pal);
 
                 if(! so)
                 {
@@ -1297,8 +1553,13 @@ namespace
                 {
                     bn::fixed gx = sx + (deco::glow_x[view] - 16) * hs;
                     bn::fixed gy = sy + (deco::glow_y - 32) * vs;
-                    bn::optional<bn::sprite_ptr> go = create_with_palette(deco::torch_glow, gx, gy, 0,
-                            _glow_palettes[band < 2 ? band : 2]);
+                    const bn::optional<bn::sprite_palette_ptr>& gpal = _glow_palettes[band < 2 ? band : 2];
+                    bn::optional<bn::sprite_ptr> go;
+
+                    if(gpal)
+                    {
+                        go = create_with_palette(deco::torch_glow, gx, gy, 0, *gpal);
+                    }
 
                     if(! go)
                     {
