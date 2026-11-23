@@ -1,0 +1,51 @@
+65 -        # card
+81 right    # through door (7,3) towards goon 1
+1 a         # punch
+3 -
+1 a         # finish
+20 -
+30 right+down
+18 right    # onto the pistol
+1 b         # pick up
+22 left
+68 down     # door (12,7) into corridor C
+18 down     # kick door (12,13) into goon 2 and step to him
+1 a         # finish goon 2
+4 -
+25 down
+13 down+left
+34 r        # aim at gunman 3 behind the bar
+1 a         # shoot
+10 -
+32 l        # aim back east at the kitchen door
+51 -
+1 a         # shoot goon 4 (assist)
+204 -
+1 a         # shoot goon 5 (assist)
+30 -
+1 b         # throw the pistol (1 round left) away
+10 up
+72 left
+36 down     # onto gunman 3's pistol
+1 b         # pick it up
+2 -
+30 down
+156 right
+32 up
+19 right    # through door (19,17) into the kitchen
+37 up+right
+21 right
+39 up       # door (24,13) into the office
+73 up
+15 l        # aim at gunman 7 behind the desk
+1 a         # shoot
+4 -
+10 r        # turn east to meet goon 6
+53 -
+1 a         # shoot goon 6 (assist)
+14 -
+1 a         # second shot in case the first missed
+20 -
+37 up
+110 right   # to the exit
+40 -

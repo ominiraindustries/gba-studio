@@ -630,6 +630,7 @@ namespace
         int warned = 0;                 // frames of "!" seen on screen during this aim
         int flash = 0;                  // white hit flash frames
         int trail = 0;
+        bool field_pending = false;     // distance field to goal not computed yet (one flood per frame)
         bn::fixed hit_angle;
         bn::sprite_ptr sprite;
         bn::vector<bn::sprite_ptr, 1> mark;
@@ -1521,7 +1522,8 @@ namespace
             e.goal_x = x;
             e.goal_y = y;
             e.looking = false;
-            lvl.flood(enemy_fields[index], level::tile(x), level::tile(y));
+            e.field_pending = true;
+            static_cast<void>(index);
             set_mark(e, "?");
         }
 
@@ -1652,10 +1654,23 @@ namespace
         {
             int tile = level::tile(py) * map_columns + level::tile(px);
 
+            // At most one flood per frame: a pending enemy goal first, then the player's field.
+            for(int i = 0; i < enemies.size(); ++i)
+            {
+                enemy& e = enemies[i];
+
+                if(e.field_pending)
+                {
+                    e.field_pending = false;
+                    level::flood(enemy_fields[i], level::tile(e.goal_x), level::tile(e.goal_y));
+                    return;
+                }
+            }
+
             if(tile != player_tile)
             {
                 player_tile = tile;
-                lvl.flood(player_field, level::tile(px), level::tile(py));
+                level::flood(player_field, level::tile(px), level::tile(py));
             }
         }
 
@@ -1790,7 +1805,7 @@ namespace
                         e.look_timer = 0;
                         e.mark.clear();
                     }
-                    else
+                    else if(! e.field_pending)
                     {
                         navigate(e, enemy_fields[i], e.goal_x, e.goal_y, investigate_speed);
                     }
@@ -2185,7 +2200,7 @@ namespace
                 bn::fixed rx = view_x(tx) - cam_x;
                 bn::fixed ry = view_y(ty) - cam_y;
                 bn::fixed ax = rx < -108 ? bn::fixed(-108) : (rx > 108 ? bn::fixed(108) : rx);
-                bn::fixed ay = ry < -60 ? bn::fixed(-60) : (ry > 68 ? bn::fixed(68) : ry);
+                bn::fixed ay = ry < -60 ? bn::fixed(-60) : (ry > 52 ? bn::fixed(52) : ry);
                 arrow->set_position(ax, ay);
                 arrow->set_rotation_angle(sprite_rotation(angle_of(rx, ry)));
             }
@@ -2481,7 +2496,7 @@ int main()
                     small_text.generate(0, -10, line, message);
                     line = "TIME ";
                     line += bn::to_string<4>(g.frames / 60);
-                    line += "s  BONUS ";
+                    line += " SEC  BONUS ";
                     line += bn::to_string<6>(g.final_bonus);
                     small_text.generate(0, 2, line, message);
                     small_text.generate(0, 20, "A: PLAY AGAIN", message);
