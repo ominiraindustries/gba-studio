@@ -74,3 +74,47 @@ export es una tira 64×128), `tex_wall_lever_up`, `tex_wall_lever_down`, `tex_wa
 Conceptos de PixelLab (dentro de la suscripción) en `_seed/concepts/`: monstruos y atrezzo con volumen. Texturas,
 `ui_frame`, pinchos, placa y foso, dibujados por `_seed/delve_art.py`, `delve_ui.py` y `delve_sprites.py`.
 Los monstruos se reducen a 16 colores, se les engorda el contorno y se animan con transformaciones a mano.
+
+## Adornos de pared en relieve (`deco_*`, sprites 32×64, 16 colores, 0 transparente)
+
+Sustituyen a los adornos pintados dentro del muro (`tex_wall_torch`, etc.; esas texturas siguen ahí sin tocar).
+Fuente `art/deco_*.aseprite` con dos capas: **`sombra`** (sombra arrojada sobre el muro) y **`objeto`**. Exportar:
+
+    python -I projects/006_delve/art/_seed/deco_seed.py export-only
+
+(sin `export-only` regenera las semillas con `_seed/deco_art.py` y crea sólo los `.aseprite` que falten).
+
+**Escala**: el sprite mide lo que el muro, en texels: la fila `v` del sprite es la fila `v` de la textura de 64 de alto
+(ojo a la altura 32). El motor lo escala igual que la cara de pared: `escala = alto de la cara en px / 64` (frente d=0
+1,25 … d=4 0,31). Vistas: `_front` (pared de frente), `_left` (pared a la izquierda: el adorno sale hacia la derecha,
+hacia el centro de la vista; lo paralelo al muro va comprimido a 0,32 y lo que sobresale va 1:1), `_right` (espejo).
+
+| Sprite | Frames y etiquetas | Anclaje (píxel del sprite que toca el muro) |
+|---|---|---|
+| `deco_torch_front` | `flame` 1–4: 110/70/140/90 ms | (16, 43): centro de la placa |
+| `deco_torch_left` / `_right` | ídem | (6, 43) / (26, 43) |
+| `deco_banner_front` | `wave` 1–2: 500 ms | (16, 5): entre los dos soportes de la barra |
+| `deco_banner_left` / `_right` | ídem | (9, 5) / (23, 5) |
+| `deco_chains_front` | 1 frame | (16, 10): entre las dos argollas |
+| `deco_chains_left` / `_right` | 1 frame | (9, 10) / (23, 10) |
+| `deco_lever_front` | `up` 1, `down` 2 | (16, 32): eje de la palanca |
+| `deco_lever_left` / `_right` | ídem | (9, 32) / (23, 32) |
+| `deco_torch_glow` | 64×64, 1 frame | su centro va en el centro de la llama: píxel (16, 12) de `torch_front`/`_left`, (15, 12) de `_right` |
+
+El anclaje lateral corresponde a la columna central de la cara (u = 32 de la textura) a la fila indicada. Para colocar
+el sprite: `centro = punto_del_muro − (anclaje − (16, 32)) · escala`.
+
+Halo: el motor lo pinta **detrás** de su antorcha (más `z_order`) con `set_blending_enabled(true)` y
+`bn::blending::set_transparency_alpha` ≈ 0,4, a la misma escala que la antorcha (en GBA no hay mezcla entre sprites:
+el halo encima taparía la antorcha). Rampa propia de 7 tonos cálidos claros, para que nunca oscurezca el muro.
+
+Paletas (todas con 0 = transparente, 1 = contorno, 2–3 = sombra sobre piedra):
+- **A** (antorcha, cadenas, palanca; idéntica en los tres, Butano la comparte): 4–8 hierro (8 = brillo cálido de la
+  llama), 9–11 madera, 12–15 llama.
+- **B** (estandarte): 4–8 hierro, 9–12 tela roja, 13–15 oro.
+- **Halo**: 1–7 de borde a centro.
+
+Luz: la del jugador (frente, arriba a la izquierda; en las laterales, desde el lado cercano) para las caras y las
+sombras arrojadas (abajo a la derecha en el frente); la llama añade su brillo cálido al soporte. Sin ruido de 1 px.
+Pendiente del motor: oscurecer los adornos con la distancia como el muro (p. ej. `set_fade` en copias de la paleta
+por profundidad) y compartir los frames de la llama entre antorchas (cada frame 32×64 son 32 tiles; en modo 4 hay 512).

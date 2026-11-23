@@ -195,10 +195,25 @@ def main():
         for x in range(240):
             img[y][x] = TEX["tex_wall_stone"][5][5] if x >= 120 else img[y][x]
     save("scene_6", img)
+    # 7: stone wall tiled at 1x (wall decorations at several scales), 8: plain corridor for the deco sprites
+    img = blank()
+    for ty in range(3):
+        for tx in range(4):
+            blit(img, TEX["tex_wall_stone"], tx * 64, ty * 64)
+    save("scene_7", img)
+    walls = {}
+    for z in range(0, 4):
+        walls[(-1, z)] = "tex_wall_stone"
+        walls[(1, z)] = "tex_wall_stone"
+    walls[(0, 3)] = "tex_wall_stone"
+    img = blank()
+    blit(img, raycast(walls), 0, 0)
+    overlay_ui(img)
+    save("scene_8", img)
     for n in os.listdir(DGFX):
-        if n.startswith(("mon_", "prop_")) and n.endswith(".bmp"):
+        if n.startswith(("mon_", "prop_", "deco_")) and n.endswith(".bmp"):
             shutil.copy(os.path.join(DGFX, n), os.path.join(GFX, n))
-            h = 64 if n.startswith("mon_") else 32
+            h = 32 if n.startswith("prop_") else 64
             with open(os.path.join(GFX, n[:-4] + ".json"), "w") as f:
                 json.dump({"type": "sprite", "height": h}, f)
     print("scenes ok, env colours", ENV_N)

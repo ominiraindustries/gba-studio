@@ -24,3 +24,10 @@ Por línea de comandos (si `aseprite` está en el PATH):
     aseprite -b art/hero.aseprite --sheet-type vertical --sheet graphics/hero.bmp
 
 Después, `compilar.bat`.
+
+## Escenas del banco de revisión (A siguiente, B anterior)
+
+0 muro + interfaz; 1–3 texturas a 1x; 4 pasillo; 5 sala con monstruos; 6 monstruos a 1,0/0,55/0,35; 7–8 atrezzo;
+9 adornos `deco_*_front` a 1,0/0,55/0,3 con la llama animada y el halo mezclado; 10 `deco_*_left` y `_right` a las
+mismas escalas; 11 pasillo de prueba con adornos laterales y de frente. Se regenera con `tools/make_scenes.py`
+(copia los sprites de `006_delve/graphics`).
