@@ -201,7 +201,7 @@ namespace dl
             }
         }
 
-        if(bn::keypad::select_pressed())
+        if(bn::keypad::select_held() && bn::keypad::r_pressed())    // PLACEHOLDER test hit (SELECT+R)
         {
             state.hp = state.hp > 3 ? state.hp - 3 : state.hp_max;
             show_damage_arrow(_hit_side);
