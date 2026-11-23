@@ -315,7 +315,23 @@ def main():
             print("no path for", goal, "at", g.cell, file=sys.stderr)
             next_frame = g.frame + 30
             continue
-        next_frame = g.step_to(p[0]) + GAP
+        # nothing within 5 cells: several steps per replay (stops before doors, which may need a bump to open)
+        near = any(abs(m["cell"] % W - g.cell % W) + abs(m["cell"] // W - g.cell // W) <= 5 for m in alive)
+        cell, dr, f = g.cell, g.dir, g.frame + 1
+        for n in p[:1 if near else 6]:
+            d = next(d for d in range(4) if g.nb(cell, d) == n)
+            if g.kind(cell, d) == K_DOOR and n != p[0]:
+                break
+            r = (d - dr) & 3
+            for key in ([] if r == 0 else ["right"] if r == 1 else ["left"] if r == 3 else ["right", "right"]):
+                g.inputs.append((f, key))
+                f += GAP
+            g.inputs.append((f, "up"))
+            f += GAP
+            cell, dr = n, d
+            if g.kind(g.nb(cell, 0) if False else cell, d) == K_STAIRS:
+                break
+        next_frame = f
     print("frames", g.frame, "runs", g.runs, "player", g.p)
     total = max(g.frame, max(g.shots)) + 4
     shots = sorted(set(s for s in g.shots if 1 <= s <= total))
