@@ -6,6 +6,8 @@ venir y contraatacar). Referencia de género: Dungeon Hack / Eye of the Beholder
 Las reglas y los números son propios, sin nada de D&D. Todo el texto del juego va en **inglés**. La pantalla, la vista
 y los formatos están en `ESPEC_VISTA.md` (no se cambian aquí). Reglas citadas: R1–R14 de `docs/guias/diseno-juegos.md`.
 
+> Magia, tesoros, equipo, consumibles e inventario: `MAGIA_Y_TESOROS.md` (G-39; cambia SELECT/B de §1 y amplía §5).
+
 ## 1. Controles (R14: inmediatos, sin combinaciones)
 | Botón | En la mazmorra | En inventario / mapa |
 |---|---|---|
