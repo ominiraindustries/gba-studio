@@ -169,3 +169,79 @@ Luz: la del jugador (frente, arriba a la izquierda; en las laterales, desde el l
 sombras arrojadas (abajo a la derecha en el frente); la llama añade su brillo cálido al soporte. Sin ruido de 1 px.
 Pendiente del motor: oscurecer los adornos con la distancia como el muro (p. ej. `set_fade` en copias de la paleta
 por profundidad) y compartir los frames de la llama entre antorchas (cada frame 32×64 son 32 tiles; en modo 4 hay 512).
+
+## Magia, tesoros y equipo (G-40, diseño `../MAGIA_Y_TESOROS.md`)
+
+Semilla: `_seed/magic_art.py` (sprites) y `ui_seed_dungeon.py` (HUD y pausa). Exportar tras editar:
+
+    python -I projects/006_delve/art/_seed/magic_art.py --export-only
+    python -I projects/006_delve/art/ui_seed_dungeon.py --apply     (rehace ui_frame/ui_arrow; pausas sólo si faltan)
+
+`magic_art.py --apply` crea sólo los `.aseprite` que falten y exporta desde ellos. Revisión: `_seed/out/
+magic_contact_3x.png` (hoja de contacto) y `_seed/out/magic_mockup_3x.png` (pausa con iconos). Mismo estilo que el
+resto: sombreado interno con luz arriba a la izquierda, tramado suave, sin contorno de dibujo animado; magia en azul
+frío, oro y antorcha cálidos, peligro en rojo. Todos los sprites son 4bpp, 16 colores, **0 = transparente**; cada
+fichero es una tira vertical con una etiqueta por frame (el nombre de la etiqueta es el del objeto).
+
+### Iconos 16×16 (una paleta por fichero; el orden de frames es el índice que usa el código)
+
+| Fichero | Frames (0..n) |
+|---|---|
+| `icon_items` | 0 scroll, 1 healing_potion, 2 mana_potion, 3 bread, 4 iron_key, 5 fire_flask, 6 gold |
+| `icon_equip` | 0 dagger, 1 short_sword, 2 mace, 3 battle_axe, 4 leather, 5 mage_robe, 6 chain_mail, 7 plate, 8 empty_weapon, 9 empty_armor, 10 empty_ring, 11 empty_amulet (siluetas grises de hueco vacío) |
+| `icon_jewels` | 0 ring_of_mana, 1 ring_of_regeneration, 2 ring_of_protection, 3 ring_of_swiftness, 4 ring_of_light, 5 amulet_of_life, 6 amulet_of_fortune, 7 amulet_of_warding, 8 amulet_of_second_wind |
+| `icon_spells` | 0 magic_missile, 1 light, 2 heal, 3 frost, 4 fireball, 5 shield, 6 reveal, 7 blink, 8 haste, 9 unlock |
+| `icon_status` (8×8) | 0 light, 1 shield, 2 haste, 3 second_wind, 4 belt_mark (hebilla dorada de 5×5 arriba a la izquierda: marca "en el cinturón" de la bolsa, sin letra) |
+| `ui_cursor` (32×32) | 0 `bag` (marco dorado de 2 px del hueco 32×32), 1 `equip` (31×31: se pone en hueco − 2 px) |
+
+Paletas: `icon_status`, `icon_spells` y los `fx_*` azules/dorados comparten la paleta de conjuros (Butano la
+comparte); `ui_cursor` comparte la de `icon_jewels`. Gris del cinturón sin unidades / sin maná: lo hace el código
+(paleta en gris o `set_fade`), no hay frames grises.
+
+### Efectos
+
+| Fichero | Tamaño | Etiquetas (ms) | Uso |
+|---|---|---|---|
+| `fx_missile` | 16×16 | `fly` 1–2 (60), `hit` 3–4 (70) | dardo de Magic Missile; el motor lo escala con la distancia |
+| `fx_frost` | 16×16 | ídem | rayo/cristal de Frost (M2) |
+| `fx_fireball` | 32×32 | `fly` 1–2 (70), `burst` 3–5 (80) | bola y estallido (M2) |
+| `fx_heal` | 16×16 | `sparkle` 1–4 (80) | motas cálidas que suben (varias copias sobre la vista) |
+| `fx_light_burst` | 64×64 | `burst` 1–3 (45) | destello de Light; pensado con mezcla (transparencia o aditiva como el halo de antorcha) |
+| `fx_glow_h` / `fx_glow_v` | 32×8 / 8×32 | 1 frame | franja del borde de la vista (como `fx_edge_*`), índices 1–4 de borde a dentro |
+| `pal_glow_heal`, `pal_glow_light`, `pal_glow_magic` | paleta | — | `sprite_palette` para las franjas: curación, Light, magia (marco de Shield, Blink) |
+
+### Atrezzo 32×32 (apoyado en la fila inferior, como `prop_*`)
+
+| Fichero | Etiquetas | Notas |
+|---|---|---|
+| `prop_chests` | `closed` 1, `open` 2, `locked` 3, `locked_open` 4, `trap_flash` 5, `trap_shake` 6 | el cofre con trampa usa 1 y 2 para cerrado/abierto; 5 = destello rojo de la cerradura cada 60 f; 6 = tapa levantada 1 px durante los 24 f del aviso. Candado del cerrado: hierro y óxido (mismo símbolo que la puerta) |
+| `prop_mimic` | `breathe` 1–2 (600), `wake` 3–4 (120), `bite` 5–6 (150) | el frame 1 es **idéntico** a `prop_chests` `closed` (misma paleta): sólo la respiración (frame 2, tapa 1 px y colmillos) lo delata. `wake` 4 es el parpadeo claro del aviso |
+| `prop_gold` | — | pila de oro |
+| `prop_altar_coin` | — | Altar of Coin (pedestal con cuenco de monedas y ranura) |
+| `prop_fountain` | `flow` 1–2 (250), `dry` 3 | fuente clara; turbia = misma imagen con `pal_fountain_murky`; seca = frame 3 |
+| `prop_blood_altar` | `pulse` 1–2 (500) | M3 |
+
+El viejo `prop_chest` (G-33) sigue ahí sin tocar; `prop_chests` lo sustituye cuando el código lo cambie.
+
+### HUD (cambios en `ui_frame`, mismas cajas)
+
+- Canal del MP (60, 137)–(155, 143), interior (61, 138)–(154, 142). Paleta MP **232–236** (vacío, oscuro, azul,
+  claro, pálido), como la vida 210–214.
+- Placa de llaves: la calavera se quita; 4 huecos tallados para los iconos de estado 8×8 en (214, 97), (224, 97),
+  (214, 107), (224, 107).
+- Hueco B (cinturón): el anillo interior de 1 px del recuadro usa el índice **237** (de serie igual que la placa):
+  el código lo pone azul para el "late en azul" del lanzamiento. La poción pintada en (200, 126) se queda para el
+  juego actual; cuando el cinturón muestre otra cosa, el código rellena ese 16×16 con el índice 208 y pone el icono
+  como sprite.
+- Libres en la paleta UI: 238–239 y 248–255.
+
+### Pantalla de pausa: `palette_bitmap` completo (modo 4)
+
+Decisión: **un `palette_bitmap` de 240×160 por pestaña** (`pause_bag`, `pause_spells`, `pause_map`, y
+`pause_altar` para el Altar of Coin), con sólo los índices UI (192–239; nunca 0 ni 240–247). La franja inferior es
+la del `ui_frame` sin cambios; la pestaña activa va dibujada en relieve (fleje de hierro) y abierta a la página, las
+otras hundidas. El código hace `blit` del de la pestaña al abrir o cambiar, y pone encima los iconos (sprites 16×16),
+el cursor (`ui_cursor`) y el texto. Rects exactos de `MAGIA_Y_TESOROS` §5.1: pestañas en (2–33), (39–94), (97–128)
+× (0–11); bolsa 4×3 de 32×32 desde (24, 16) (icono en hueco + 8); conjuros 5×2 desde (8, 18) y detalle (8, 88,
+160, 24); mapa (40, 12, 96, 96); equipo 27×27 en (180, 4), (209, 4), (180, 33), (209, 33) (icono en hueco + 5);
+estado (178, 63)–(237, 118); altar: huecos en (40|72|104, 40) y placa de precio debajo (y 74–84).

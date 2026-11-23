@@ -50,6 +50,8 @@ put(223, "c", ["#34403f"])                                # dull glass
 put(224, "k", ["#16130f", "#252019", "#2f2920", "#cbbf9f"])                          # bone darks + highlight
 put(228, "u", ["#24160e", "#3c2616", "#56381e"])          # rust
 put(231, "c2", ["#5a6a68"])                               # glass glint
+put(232, "mp", ["#0a0c18", "#121c40", "#2a4a9c", "#5a86d4", "#a8c8ee"])              # MP (G-40): empty..pale
+put(237, "belt", ["#050404"])                             # belt-slot glow ring: = plate; the code pulses it blue
 S, I, P, R, O, B, L = NAMED["s"], NAMED["i"], NAMED["p"], NAMED["r"], NAMED["o"], NAMED["b"], NAMED["l"]
 BONE = [NAMED["k"][0], NAMED["k"][1], NAMED["k"][2], NAMED["bd"][0]] + NAMED["bn"] + [NAMED["k"][3]]  # 8 dark->light
 U = NAMED["u"]
@@ -376,8 +378,97 @@ def build():
         cv.set(x + 1, rows[-1] + 1, S[0])
     skull(cv, 101, 120, SKULL_SMALL)
     skull(cv, 37, 144, SKULL_SMALL)
+    magic_hud(cv)
     cv.rect(0, 0, 175, 119, 0)                                    # keep the hole exact
     cv.p[120, 0:176][cv.p[120, 0:176] == 0] = S[0]
+    return cv.p
+
+
+# ------------------------------------------------------------------------------------------------ G-40 magic HUD
+def recess(cv, x0, y0, x1, y1, fill=None, lit=None):
+    """Carved socket: shadowed top/left rim, torch-lit bottom/right lip, dark plate inside."""
+    cv.rect(x0, y0, x1, y1, I[0])
+    cv.rect(x0 + 1, y0 + 1, x1, y1, S[2] if lit is None else lit)
+    cv.rect(x0 + 1, y0 + 1, x1 - 1, y1 - 1, P[0] if fill is None else fill)
+    cv.set(x1, y0, S[1])
+    cv.set(x0, y1, S[1])
+
+
+def magic_hud(cv):
+    """MAGIA_Y_TESOROS 5.2: MP channel (60,137,96,7), 4 status sockets 8x8, belt glow ring. Same boxes as before."""
+    MP = NAMED["mp"]
+    trough(cv, 60, 137, 155, 143, MP[0])
+    cv.rect(180, 96, 235, 115, P[1])                              # the key-plate skull gives way to the sockets
+    cv.rect(212, 96, 235, 115, P[1])
+    for x, y in ((214, 97), (224, 97), (214, 107), (224, 107)):
+        recess(cv, x - 1, y - 1, x + 8, y + 8)
+    stamp(cv, 181, 97, KEY, ICON_MAP)
+    belt = NAMED["belt"][0]
+    for x in range(200, 234):
+        for y in (126, 141):
+            if cv.p[y, x] == P[0]:
+                cv.p[y, x] = belt
+    for y in range(126, 142):
+        for x in (200, 233):
+            if cv.p[y, x] == P[0]:
+                cv.p[y, x] = belt
+
+
+# ------------------------------------------------------------------------------------------------ G-40 pause screens
+TABS = (("bag", 2, 33), ("spells", 39, 94), ("map", 97, 128))
+
+
+def slot32(cv, x, y):
+    recess(cv, x + 1, y + 1, x + 30, y + 30, lit=S[4])
+    cv.rect(x + 2, y + 2, x + 29, y + 2, I[1])                     # inner shadow under the top rim
+    cv.rect(x + 2, y + 2, x + 2, y + 29, I[1])
+
+
+def pause_screen(hud, tab):
+    """Full 240x160 palette_bitmap for the pause (Mode 4, UI indices only). The bottom strip is the HUD's, unchanged."""
+    rng = np.random.default_rng({"bag": 401, "spells": 402, "map": 403, "altar": 404}[tab])
+    cv = Cv()
+    cv.p = hud.copy()
+    stone(cv, rng, 0, 0, 239, 119)
+    cv.rect(176, 0, 177, 120, S[0])
+    box(cv, rng, 0, 12, 175, 119, tex=False)
+    tabs = (("altar", 2, 113),) if tab == "altar" else TABS
+    for name, x0, x1 in tabs:
+        if name == tab:                                           # raised plate, open into the page, iron-capped
+            box(cv, rng, x0, 0, x1, 13, P[1], brackets=False, straps=False, tex=False)
+            cv.rect(x0 + 2, 12, x1 - 2, 13, P[1])
+            for x in range(x0, x1 + 1):
+                cv.set(x, 0, I[4] if x % 5 else I[5])
+                cv.set(x, 1, I[2])
+            nail(cv, x0 + 1, 1)
+            nail(cv, x1 - 2, 1)
+        else:                                                     # sunken slot cut in the stone
+            recess(cv, x0, 1, x1, 11, lit=S[3])
+    if tab == "bag":
+        for j in range(3):
+            for i in range(4):
+                slot32(cv, 24 + 32 * i, 16 + 32 * j)
+        for j in range(1, 3):
+            for i in range(1, 4):
+                nail(cv, 24 + 32 * i - 1, 16 + 32 * j - 1)
+    elif tab == "spells":
+        for j in range(2):
+            for i in range(5):
+                slot32(cv, 8 + 32 * i, 18 + 32 * j)
+        recess(cv, 8, 88, 167, 111, lit=S[4])
+    elif tab == "map":
+        recess(cv, 39, 11, 136, 108, lit=S[4])
+        cv.rect(40, 12, 135, 107, P[0])
+    else:
+        for x in (40, 72, 104):
+            slot32(cv, x, 40)
+            recess(cv, x + 2, 74, x + 29, 84, lit=S[4])
+    box(cv, rng, 178, 2, 237, 61)
+    for x, y in ((180, 4), (209, 4), (180, 33), (209, 33)):
+        recess(cv, x, y, x + 26, y + 26, lit=S[4])
+        cv.rect(x + 1, y + 1, x + 25, y + 1, I[1])
+        cv.rect(x + 1, y + 1, x + 1, y + 25, I[1])
+    box(cv, rng, 178, 63, 237, 118, tex=False)
     return cv.p
 
 
@@ -425,8 +516,26 @@ def main():
     arr, apal = build_arrow()
     save(os.path.join(OUT, "ui_arrow.png"), arr, apal)
     print("ui colours used:", sorted(set(np.unique(frame)) - {0}))
+    pauses = {}
+    for tab in ("bag", "spells", "map", "altar"):
+        pz = pause_screen(frame, tab)
+        assert not ((pz >= 240) & (pz <= 247)).any() and not (pz == 0).any()
+        pauses["pause_" + tab] = pz
+        save(os.path.join(OUT, "pause_" + tab + ".png"), pz, PAL)
     if "--apply" not in sys.argv:
         return
+    for name in pauses:                                           # pause screens: created only if missing
+        dst = os.path.join(HERE, name + ".aseprite")
+        if not os.path.exists(dst):
+            subprocess.run([ASE, "-b", "--script-param", "in=" + os.path.join(OUT, name + ".png"),
+                            "--script-param", "out=" + dst, "--script-param", "fh=160",
+                            "--script-param", "tags=", "--script-param", "bg=0", "--script-param", "ncol=256",
+                            "--script", os.path.join(HERE, "_seed", "build_aseprite.lua")], check=True,
+                           stdout=subprocess.DEVNULL)
+        subprocess.run([ASE, "-b", dst, "--sheet-type", "vertical", "--sheet", os.path.join(GFX, name + ".bmp")],
+                       check=True, stdout=subprocess.DEVNULL)
+        with open(os.path.join(GFX, name + ".json"), "w") as f:
+            f.write('{ "type": "palette_bitmap" }' + chr(10))
     for name, fh, ncol in (("ui_frame", 160, 256), ("ui_arrow", 16, 16)):
         dst = os.path.join(HERE, name + ".aseprite")
         if os.path.exists(dst):
