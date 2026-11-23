@@ -58,7 +58,7 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
       python -I projects/006_delve/tools/gen_metrics.py --fidelity 50 3 --seeds 1000 --levels 3 --ascii 3
 
   `--fidelity`: CRC idéntico a la v2 de Python; `--seeds`: métricas, reglas duras y solucionador (0 sin solución).
-- **Controles de prueba**: B coloca un monstruo de prueba 3 casillas delante (provisional, B será "objeto rápido").
+- **Controles** (G-35): A ataca con la barra llena (o rompe barriles/cajas), B bebe una poción; SELECT+L abre el menú de efectos.
 
 ## Vista (G-25, bloque 2)
 
@@ -71,3 +71,18 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
   `python -I projects/006_delve/tools/build_view.py` (~25 s) en `src/dl_view_motion.bin` (~14 MB).
 - Efectos con interruptor: `include/dl_fx.h` (llama, estandarte, halo, oscurecido de adornos, zoom de paso, giro,
   balanceo de cabeza).
+
+## Combate y bucle (G-35, bloque 1)
+
+- Código: `src/dl_combat.cpp` (jugador, monstruos, IA por rejilla, golpes, objetos, XP), `src/dl_combat_fx.cpp`
+  (números, borde rojo, destello dorado); `main.cpp` sólo integra (título, muerte, sprites de monstruos y objetos).
+- Semilla: al pulsar A en el título (contador de fotogramas); cada planta la mezcla con su número. Para pruebas
+  reproducibles: `make -C projects/006_delve BUILD=build_dbg TARGET=006_delve_dbg USERFLAGS=-DDL_DEBUG_SEED=0x00C0FFEEu`.
+- Ruta grabada (planificador que lee la memoria y rejuega en gbarun):
+
+      python -I projects/006_delve/tests/route.py projects/006_delve/006_delve_dbg.gba <carpeta> --death
+
+  Título → rata → aviso y esquiva (MISS) → matarla → poción → escalera → planta 2 → muerte → reinicio; deja
+  `route.txt`, capturas y `route_sheet.png`.
+- Arte provisional (G-35): `art/item_floor.aseprite` (pan, poción, espada corta, llave; 32×32) y `art/fx_edge_h/v`
+  (borde rojo), sembrados por `art/_seed/item_art.py`. Sonidos: `audio/blip.wav` a distintas velocidades.

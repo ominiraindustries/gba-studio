@@ -2,6 +2,7 @@
 // on change, grid movement (DISENO.md 1), minimap and compass, scaled monsters / props, P1 lever gate and spike plate.
 
 #include "bn_bg_palette_item.h"
+#include "bn_bg_palettes.h"
 #include "bn_blending.h"
 #include "bn_color.h"
 #include "bn_core.h"
@@ -25,6 +26,7 @@
 #include "bn_vector.h"
 
 #include "bn_palette_bitmap_items_ui_frame.h"
+#include "bn_sprite_items_item_floor.h"
 #include "bn_sprite_items_mon_rat.h"
 #include "bn_sprite_items_mon_skeleton.h"
 #include "bn_sprite_items_mon_slime.h"
@@ -44,6 +46,9 @@
 #include "dl_hud.h"
 #include "dl_monster_fx.h"
 #include "dl_blit.h"
+#include "dl_themes.h"
+#include "dl_combat.h"
+#include "dl_combat_fx.h"
 #include "dl_transition.h"
 #include "dl_view.h"
 #include "dl_view_data.h"
@@ -86,6 +91,7 @@ volatile int test_prepare_max_ticks;   // visibility + grid part of a resting re
 volatile int test_compose_max_ticks;
 volatile int test_lever_frame;         // frame of the last lever sprite shown (0 up, 1 down)
 volatile int test_ticks_per_frame;
+volatile int test_theme;               // G-37: theme index in use (dl_themes.h)
 volatile int test_visible_objects;
 volatile int test_spike_hits;
 volatile int test_levers;
@@ -99,12 +105,24 @@ volatile int test_affine_mats;         // sprite affine matrices in use (32 max)
 volatile int test_cpu_x1000;           // bn::core::last_cpu_usage() x 1000
 volatile int test_fx_menu_open;
 volatile int test_cpu_max_x1000;
+volatile int test_mode;                // G-35: 0 title, 1 playing, 2 dead
+volatile unsigned test_run_seed;
+volatile int test_combat_ticks;        // combat + AI per frame, timer ticks (last / max / max on heavy frames)
+volatile int test_combat_max_ticks;
+volatile int test_combat_heavy_max_ticks;
+volatile int test_rebuild_max_ticks;   // object sprites rebuilt because a monster moved (light frames)
+volatile int test_cfx_max_ticks;
+volatile int test_frame_max_ticks;     // whole game update (logic + view), timer ticks
+volatile int test_frame_heavy_max_ticks;
+volatile int test_deaths;
 
 namespace
 {
     using namespace dl::gen;
 
-    constexpr unsigned run_seed = 0x00C0FFEE;   // PROVISIONAL: fixed run seed until the title screen picks one
+    // Run seed: picked from the frame count when the player presses A on the title (new on every run; each floor
+    // hashes it with its number). Build with USERFLAGS=-DDL_DEBUG_SEED=0x00C0FFEE for reproducible tests.
+    unsigned run_seed = 0x00C0FFEE;
     constexpr int step_cooldown = 12;           // DISENO.md 1
     constexpr int turn_cooldown = 8;
     constexpr int monster_lerp_frames = 12;
@@ -141,11 +159,11 @@ namespace
         {
             const entity& e = gs.lv.ents[i];
 
-            if(e.type == E_MONSTER || e.type == E_FURN || e.type == E_TRAP || e.type == E_KEY)
+            if(e.type == E_ITEM || e.type == E_FURN || e.type == E_TRAP || e.type == E_KEY)
             {
                 int c = e.y * W + e.x;
 
-                if(gs.ent_of_cell[c] < 0 || e.type == E_MONSTER)
+                if(gs.ent_of_cell[c] < 0)
                 {
                     gs.ent_of_cell[c] = int16_t(i);
                 }
@@ -155,11 +173,11 @@ namespace
 
     const bn::sprite_item* monster_item(int ent)
     {
-        switch(ent % 3)
+        switch(gs.lv.ents[ent].b)      // dl::mon_kind (dl::combat::load_floor)
         {
-        case 0:
+        case dl::MON_RAT:
             return &bn::sprite_items::mon_rat;
-        case 1:
+        case dl::MON_SLIME:
             return &bn::sprite_items::mon_slime;
         default:
             return &bn::sprite_items::mon_skeleton;
@@ -200,6 +218,8 @@ namespace
         bool monster;
         bool spikes;
         int8_t band;    // depth band of the last placement (monster FX)
+        int8_t frame;   // monster animation frame shown (-1 unknown)
+        bn::fixed mult; // monster scale multiplier applied (telegraph lean, death shrink)
         bn::fixed from_x, from_y, from_s;
         bn::fixed to_x, to_y, to_s;
         int t;
@@ -213,7 +233,9 @@ namespace
             _bg(bn::palette_bitmap_bg_ptr::create(_palette)),
             _painter(_bg),
             _text(common::variable_8x8_sprite_font),
-            _hud(_bg)
+            _hud(_bg),
+            _combat(_hud, _mfx),
+            _cfx(_text)
         {
             test_ticks_per_frame = bn::timers::ticks_per_frame();
 
@@ -227,21 +249,43 @@ namespace
             // disc never shows an edge over whatever is behind it (G-29; was a 40 % alpha blend of a bright disc)
             bn::blending::set_transparency_weights(1, 1);
             create_deco_palettes();
-            descend(0);
-            message("UP: WALK   LEFT/RIGHT: TURN");
+            show_screen("DELVE", "PRESS A", nullptr);
+            _mode = 0;
         }
 
         void update()
         {
             ++_frame;
+            test_mode = _mode;
+
+            if(_mode != 1)
+            {
+                update_screen();
+                return;
+            }
+
+            bn::timer frame_timer;
             int heavy_mark = test_redraws + test_motion_frames + test_transition_frames;
+            bool a_pressed = false, b_pressed = false;
 
             if(! _menu.update(_text, _mfx) && ! bn::keypad::select_held())
             {
                 handle_input();
+                a_pressed = bn::keypad::a_pressed();
+                b_pressed = bn::keypad::b_pressed();
             }
 
             test_fx_menu_open = _menu.open();
+
+            if(dl::themes::take_changed())     // G-37 debug: theme forced from the FX menu
+            {
+                dl::themes::apply_for_floor(_bg.palette(), _floor);
+                test_theme = dl::themes::current();
+                _dirty = true;
+            }
+            bn::timer combat_timer;
+            _combat.update(_cell, _dir, a_pressed, b_pressed, ! _dirty && ! _trans);
+            int combat_ticks = combat_timer.elapsed_ticks();
             update_spikes();
             if(_trans)
             {
@@ -260,10 +304,44 @@ namespace
                 redraw();
             }
 
-            update_monster_fx(heavy_mark != test_redraws + test_motion_frames + test_transition_frames);
+            bool heavy = heavy_mark != test_redraws + test_motion_frames + test_transition_frames;
+
+            if(_combat.objects_dirty && ! _trans && ! heavy)
+            {
+                // a monster moved, died or an item went: re-place the sprites (light frames only)
+                bn::timer rt;
+                rebuild_objects();
+                test_rebuild_max_ticks = bn::max(int(test_rebuild_max_ticks), rt.elapsed_ticks());
+            }
+
+            process_events();
+            sync_monster_sprites();
+            update_monster_fx(heavy);
+            _cfx.update(heavy);
+            test_cfx_max_ticks = _cfx.max_ticks();
             test_cell = _cell;
             test_dir = _dir;
             update_hud();
+            test_combat_ticks = combat_ticks;
+            test_combat_max_ticks = bn::max(int(test_combat_max_ticks), combat_ticks);
+            int frame_ticks = frame_timer.elapsed_ticks();
+
+            if(_frame > 120)
+            {
+                test_frame_max_ticks = bn::max(int(test_frame_max_ticks), frame_ticks);
+            }
+
+            if(heavy)
+            {
+                test_combat_heavy_max_ticks = bn::max(int(test_combat_heavy_max_ticks), combat_ticks);
+                test_frame_heavy_max_ticks = bn::max(int(test_frame_heavy_max_ticks), frame_ticks);
+            }
+
+            if(_dead_pending)
+            {
+                _dead_pending = false;
+                enter_dead();
+            }
         }
 
     private:
@@ -273,7 +351,13 @@ namespace
         bn::sprite_text_generator _text;
         dl::hud _hud;
         dl::monster_fx _mfx;
+        dl::combat _combat;
+        dl::combat_fx _cfx;
         dl::fx_menu _menu;
+        bn::vector<bn::sprite_ptr, 32> _screen_text;   // title / death screen
+        int _mode = 0;          // 0 title, 1 playing, 2 dead
+        int _mode_t = 0;
+        bool _dead_pending = false;
         int _hud_redraws = 0;
         bn::vector<bn::sprite_ptr, 16> _object_sprites;
         bn::vector<object_sprite, 16> _objects;
@@ -312,7 +396,6 @@ namespace
         int _cooldown = 0;
         int _buffered = 0;      // 1 press buffered during the cooldown (DISENO.md 1)
         int _shake = 0;
-        int _keys = 0;
         int _frame = 0;
         int _spike_state = -1;
         bool _dirty = true;
@@ -327,6 +410,8 @@ namespace
         {
             _floor = floor;
             test_floor = floor;
+            dl::themes::apply_for_floor(_bg.palette(), floor);     // G-37: theme per floor
+            test_theme = dl::themes::current();
             bn::timer gen_timer;
             test_floor_seed = generate_floor(floor_seed(floor), floor, gs.lv);
             test_gen_ticks = gen_timer.elapsed_ticks();
@@ -346,7 +431,9 @@ namespace
             dl::view::minimap_reset(gs.lv, gs.es, gs.seen);
             _cell = gs.lv.entry;
             _dir = gs.lv.entry_dir;
-            _keys = 0;
+            _combat.player().keys = 0;     // DISENO.md 5: keys are per floor
+            _combat.load_floor(gs.lv, gs.es, gs.ent_of_cell, floor, test_floor_seed);
+            _cfx.clear();
             _objects.clear();
             _object_sprites.clear();
             _mfx.clear();
@@ -452,11 +539,6 @@ namespace
 
         void handle_input()
         {
-            if(bn::keypad::b_pressed())
-            {
-                place_test_monster();
-            }
-
             if(_cooldown > 0)
             {
                 --_cooldown;
@@ -571,9 +653,9 @@ namespace
                 {
                     pass = true;
                 }
-                else if(_keys > 0)
+                else if(_combat.player().keys > 0)
                 {
-                    --_keys;
+                    --_combat.player().keys;
                     set_open(idx);
                     message("UNLOCKED");
                     _dirty = true;
@@ -621,9 +703,7 @@ namespace
 
             int e = gs.ent_of_cell[nb];
 
-            // PROVISIONAL until combat exists (next block): monsters do not block, or a corridor rat would wall
-            // the floor off for good.
-            if(e >= 0 && furn_blocking(lv.ents[e]))
+            if(_combat.monster_blocks(nb) || (e >= 0 && furn_blocking(lv.ents[e])))
             {
                 bump();
                 return;
@@ -660,55 +740,20 @@ namespace
                 _dirty = true;
             }
 
-            if(e >= 0 && lv.ents[e].type == E_KEY)
+            if(e >= 0 && (lv.ents[e].type == E_KEY || lv.ents[e].type == E_ITEM))
             {
-                ++_keys;
-                lv.ents[e].type = E_NONE;
-                gs.ent_of_cell[nb] = -1;
-                message("IRON KEY");
+                _combat.pickup(e);
             }
 
             if(e >= 0 && lv.ents[e].type == E_TRAP && lv.ents[e].c == TRAP_SPIKES)
             {
                 message("WAIT FOR THE SPIKES TO DROP");
-            }
-        }
 
-        // PROVISIONAL debug (B is "quick item" in DISENO.md): the test monster 3 cells ahead, or as far as it fits
-        void place_test_monster()
-        {
-            level& lv = gs.lv;
-            int c = _cell;
-            int target = -1;
-
-            for(int d = 1; d <= 3; ++d)
-            {
-                int idx = edge_index(c, _dir);
-
-                if(idx < 0 || ! sight_kind[lv.ed[idx] & 15])
+                if(_spike_state == 2)
                 {
-                    break;
-                }
-
-                c = neighbour(c, _dir);
-
-                if(gs.ent_of_cell[c] < 0)
-                {
-                    target = c;
+                    spike_hit();
                 }
             }
-
-            if(target < 0 || lv.nents >= max_ents)
-            {
-                return;
-            }
-
-            test_cpu_max_x1000 = 0;    // G-34 measure: the frames with the test monster only
-            lv.ents[lv.nents] = entity{ E_MONSTER, uint8_t(target % W), uint8_t(target / W), 0, 0, 0 };
-            gs.ent_of_cell[target] = int16_t(lv.nents);
-            ++lv.nents;
-            _redraw_objects = true;
-            _dirty = true;
         }
 
         // ---- redraw
@@ -760,6 +805,17 @@ namespace
             test_redraws = test_redraws + 1;
             rebuild_objects();
             rebuild_decos();
+
+            for(int d = 1; d < dl::view::rows; ++d)
+            {
+                for(int x = 0; x < dl::view::cols; ++x)
+                {
+                    if(gs.vis.cell[d][x] == gs.lv.stairs && gs.vis.cell[d][x] >= 0)
+                    {
+                        _combat.hint(dl::HINT_STAIRS, "STAIRS DOWN: WALK IN");
+                    }
+                }
+            }
         }
 
         void mark_seen(int c)
@@ -782,10 +838,15 @@ namespace
         // HUD (dl_hud.h): stats the game owns today; hp / potions / reload are placeholders until combat
         void update_hud()
         {
-            _hud.state.keys = _keys;
+            const dl::player_stats& p = _combat.player();
+            _hud.state.hp = p.hp;
+            _hud.state.hp_max = p.hp_max;
+            _hud.state.potions = p.potions;
+            _hud.state.keys = p.keys;
+            _hud.state.reload = p.reload;
+            _hud.state.reload_max = _combat.reload_max();
             _hud.state.floor = _floor;
             _hud.state.dir = _dir;
-            _hud.update_placeholder_stats();
             int redraws = test_redraws;
             _hud.update(_painter, _trans || redraws != _hud_redraws);
             _hud_redraws = redraws;
@@ -809,6 +870,11 @@ namespace
             if(monster)
             {
                 return monster_item(ent);
+            }
+
+            if(e.type == E_ITEM || e.type == E_KEY)
+            {
+                return &bn::sprite_items::item_floor;
             }
 
             if(e.type == E_FURN)
@@ -871,15 +937,13 @@ namespace
                 return;
             }
 
-            object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 1, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
-            bn::sprite_ptr s = item->create_sprite(0, 0);
+            object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 1, -1, 1, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
+            const entity& e = gs.lv.ents[ent];
+            int frame = spikes ? (_spike_state > 0 ? 1 : 0) :
+                        e.type == E_KEY ? dl::ITEM_KEY : e.type == E_ITEM ? e.b % dl::ITEM_COUNT : 0;
+            bn::sprite_ptr s = item->create_sprite(0, 0, frame);
             s.set_bg_priority(0);
             s.set_visible(false);
-
-            if(spikes)
-            {
-                s.set_tiles(item->tiles_item(), _spike_state > 0 ? 1 : 0);
-            }
 
             _object_sprites.push_back(bn::move(s));
             _objects.push_back(o);
@@ -910,6 +974,11 @@ namespace
                     if(c >= 0 && gs.ent_of_cell[c] >= 0)
                     {
                         add_object(gs.ent_of_cell[c], d, xi - dl::view::half);
+                    }
+
+                    if(c >= 0 && _combat.monster_ent_at(c) >= 0)
+                    {
+                        add_object(_combat.monster_ent_at(c), d, xi - dl::view::half);
                     }
                 }
             }
@@ -954,6 +1023,15 @@ namespace
             }
 
             test_visible_objects = _objects.size();
+            _combat.objects_dirty = false;
+
+            for(const object_sprite& o : _objects)
+            {
+                if(o.monster)
+                {
+                    _combat.hint(dl::HINT_MONSTER, "A: ATTACK WHEN BAR IS FULL");
+                }
+            }
         }
 
         // smooth move: every object of the cells either end of the move sees, placed per pose
@@ -971,6 +1049,11 @@ namespace
                     if(c >= 0 && gs.ent_of_cell[c] >= 0)
                     {
                         add_object(gs.ent_of_cell[c], d, x);
+                    }
+
+                    if(c >= 0 && _combat.monster_ent_at(c) >= 0)
+                    {
+                        add_object(_combat.monster_ent_at(c), d, x);
                     }
                 }
             }
@@ -1473,11 +1556,228 @@ namespace
 
                 if(state == 2 && e >= 0 && gs.lv.ents[e].type == E_TRAP)
                 {
-                    test_spike_hits = test_spike_hits + 1;
-                    message("OUCH! THE SPIKES");
-                    bump();
+                    spike_hit();
                 }
             }
+        }
+
+        void spike_hit()
+        {
+            test_spike_hits = test_spike_hits + 1;
+            message("OUCH! THE SPIKES");
+            bump();
+            _combat.trap_hit(4 + 2 * bn::min(_floor, 2));     // DISENO.md 6b: 4 / 6 / 8, ignores DEF
+        }
+
+        // ---- G-35 combat feedback and screens
+        bool object_screen(int ent, bn::fixed& x, bn::fixed& y) const
+        {
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                if(_objects[i].ent == ent && _object_sprites[i].visible())
+                {
+                    const bn::sprite_ptr& s = _object_sprites[i];
+                    x = s.x();
+                    y = s.y() - s.vertical_scale() * (dl::geo::monster_size * 3 / 8);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void process_events()
+        {
+            for(const dl::event& ev : _combat.events)
+            {
+                switch(ev.type)
+                {
+                case dl::EV_MON_HIT:
+                case dl::EV_MON_MISS:
+                {
+                    bn::fixed x, y;
+
+                    if(object_screen(ev.ent, x, y))
+                    {
+                        bn::string<12> t;
+
+                        if(ev.type == dl::EV_MON_MISS)
+                        {
+                            t = "MISS";
+                        }
+                        else
+                        {
+                            if(ev.crit)
+                            {
+                                t = "CRIT ";
+                            }
+
+                            t.append(bn::to_string<4>(ev.value));
+                        }
+
+                        _cfx.number(t.c_str(), x, y);
+                    }
+                    break;
+                }
+
+                case dl::EV_PLAYER_HIT:
+                {
+                    bn::string<12> t("-");
+                    t.append(bn::to_string<4>(ev.value));
+                    _cfx.number(t.c_str(), 108 - 120, 114 - 80);    // just above the HP bar (HUD.md)
+                    _cfx.red_edge(6);
+                    _shake = 6;
+                    break;
+                }
+
+                case dl::EV_LEVEL_UP:
+                    _cfx.gold_flash();
+                    break;
+
+                case dl::EV_PLAYER_DEAD:
+                    _dead_pending = true;
+                    break;
+
+                default:
+                    break;
+                }
+            }
+
+            _combat.events.clear();
+        }
+
+        // animation frame and scale of every monster sprite: idle 0-1, anticipation 2 (+10 % scale), strike 3,
+        // hit 4, death: hit frame shrinking to nothing in 16 f
+        void sync_monster_sprites()
+        {
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                object_sprite& o = _objects[i];
+
+                if(! o.monster)
+                {
+                    continue;
+                }
+
+                const dl::monster* m = _combat.monster_of_ent(o.ent);
+                int frame = ((_frame + o.ent * 13) / 24) & 1;
+                bn::fixed mult = 1;
+
+                if(m)
+                {
+                    if(m->state == dl::MS_DYING)
+                    {
+                        frame = 4;
+                        mult = bn::fixed(m->timer) / 16;
+                    }
+                    else if(m->hit)
+                    {
+                        frame = 4;
+                    }
+                    else if(m->strike)
+                    {
+                        frame = 3;
+                    }
+                    else if(m->state == dl::MS_WARN)
+                    {
+                        frame = 2;
+                        mult = bn::fixed(1.1);
+                    }
+                }
+
+                bn::sprite_ptr& s = _object_sprites[i];
+
+                if(frame != o.frame)
+                {
+                    s.set_tiles(monster_item(o.ent)->tiles_item(), frame);
+                    o.frame = int8_t(frame);
+                }
+
+                if(mult != 1 || o.mult != 1)
+                {
+                    bn::fixed base = o.t < monster_lerp_frames ?
+                            o.from_s + (o.to_s - o.from_s) * (bn::fixed(o.t) / monster_lerp_frames) : o.to_s;
+                    bn::fixed sc = base * mult;
+                    s.set_scale(sc > bn::fixed(0.05) ? sc : bn::fixed(0.05));
+                    o.mult = mult;
+                }
+            }
+        }
+
+        // title and death screens: the frame without the view, three centred lines
+        void show_screen(const char* line0, const char* line1, const char* line2)
+        {
+            _objects.clear();
+            _object_sprites.clear();
+            clear_decos();
+            _cfx.clear();
+            _hud.clear_message();
+            _hud.set_visible(false);
+            _shake = 0;
+            _bg.set_x(0);
+
+            for(int k = 0; k < 2; ++k)
+            {
+                _painter.blit(0, 0, bn::palette_bitmap_items::ui_frame.pixels_item());
+                _painter.flip_page_now();
+            }
+
+            _screen_text.clear();
+            _text.set_center_alignment();
+            int cx = dl::geo::view_w / 2 - 120;
+            _text.generate(cx, -40, line0, _screen_text);
+
+            if(line1)
+            {
+                _text.generate(cx, -20, line1, _screen_text);
+            }
+
+            if(line2)
+            {
+                _text.generate(cx, 0, line2, _screen_text);
+            }
+
+            _mode_t = 0;
+        }
+
+        void update_screen()
+        {
+            ++_mode_t;
+
+            if(bn::keypad::a_pressed() && _mode_t > 20)
+            {
+                start_run();
+            }
+        }
+
+        void start_run()
+        {
+#ifdef DL_DEBUG_SEED
+            run_seed = DL_DEBUG_SEED;
+#else
+            unsigned h = unsigned(_frame) * 0x9E3779B9u ^ (run_seed << 7) ^ 0x00C0FFEEu;
+            h ^= h >> 16;
+            h *= 0x85EBCA6Bu;
+            h ^= h >> 13;
+            run_seed = h;
+#endif
+            test_run_seed = run_seed;
+            _screen_text.clear();
+            _combat.new_run();
+            _mode = 1;
+            test_mode = 1;
+            descend(0);
+            message("UP: WALK   LEFT/RIGHT: TURN");
+        }
+
+        void enter_dead()
+        {
+            test_deaths = test_deaths + 1;
+            _mode = 2;
+            test_mode = 2;
+            bn::string<24> t("FLOOR ");
+            t.append(bn::to_string<4>(_floor + 1));
+            show_screen("YOU DIED", t.c_str(), "A: NEW RUN");
         }
 
         void update_shake()

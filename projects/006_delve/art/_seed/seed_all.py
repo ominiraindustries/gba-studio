@@ -25,6 +25,8 @@ ASSETS = [  # name, frame height, tags, background layer, palette size
     ("prop_plate", 32, "up:1-1:500;pressed:2-2:500", 0, 16), ("prop_pit", 32, "", 0, 16),
     ("ui_frame", 160, "", 0, 256),
     ("ui_arrow", 16, "", 0, 16),
+    ("item_floor", 32, "bread:1-1:500;potion:2-2:500;sword:3-3:500;key:4-4:500", 0, 16),  # G-35 provisional
+    ("fx_edge_h", 8, "", 0, 16), ("fx_edge_v", 32, "", 0, 16),
     ("tex_wall_torch", 64, "flame:1-2:150", 1, 64), ("tex_bars", 64, "", 0, 64), ("tex_arch", 64, "", 0, 64),
 ] + [(t, 64, "", 1, 64) for t in (
     "tex_wall_stone", "tex_wall_stone_v1", "tex_wall_stone_v2", "tex_wall_stone_v3", "tex_door_locked", "tex_door", "tex_door_open", "tex_floor", "tex_ceiling", "tex_stairs_down",
@@ -38,7 +40,7 @@ def run(args):
 
 def main():
     if "export-only" not in sys.argv:
-        for script in ("sewer_art.py", "delve_ui.py"):   # G-33 style B; old: delve_art/sprites
+        for script in ("sewer_art.py", "delve_ui.py", "item_art.py"):   # G-33 style B; old: delve_art/sprites
             subprocess.run([sys.executable, "-I", os.path.join(HERE, script)], check=True)
         for name, fh, tags, bg, ncol in ASSETS:
             dst = os.path.join(ART, name + ".aseprite")

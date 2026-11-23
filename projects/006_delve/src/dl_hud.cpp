@@ -2,7 +2,6 @@
 
 #include "bn_bg_palette_ptr.h"
 #include "bn_color.h"
-#include "bn_keypad.h"
 #include "bn_palette_bitmap_roi.h"
 #include "bn_sprite_palette_item.h"
 #include "bn_sprite_tiles_ptr.h"
@@ -179,34 +178,6 @@ namespace dl
     void hud::show_damage_arrow(int side, int frames)
     {
         _arrow_timer[side < 0 ? 0 : 1] = frames;
-    }
-
-    void hud::update_placeholder_stats()
-    {
-        // PLACEHOLDER (G-32): replaced by the combat code (DISENO.md 1-2).
-        if(state.reload < state.reload_max)
-        {
-            ++state.reload;
-        }
-
-        if(bn::keypad::a_pressed())
-        {
-            if(state.reload >= state.reload_max)
-            {
-                state.reload = 0;
-            }
-            else
-            {
-                message("A: ATTACK WHEN BAR IS FULL", 120);
-            }
-        }
-
-        if(bn::keypad::select_held() && bn::keypad::r_pressed())    // PLACEHOLDER test hit (SELECT+R)
-        {
-            state.hp = state.hp > 3 ? state.hp - 3 : state.hp_max;
-            show_damage_arrow(_hit_side);
-            _hit_side = -_hit_side;
-        }
     }
 
     // Tape compass: the 4 letters are made once (8x8 sprites); a turn only moves them and swaps the gold palette

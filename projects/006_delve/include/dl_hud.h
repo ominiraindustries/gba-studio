@@ -19,15 +19,15 @@
 
 namespace dl
 {
-    // What the HUD shows. Filled by the game every frame; combat will own hp / reload / potions later.
+    // What the HUD shows. Filled by the game every frame from dl::combat (G-35).
     struct hud_state
     {
-        int hp = 24;            // placeholder until combat exists (G-32)
+        int hp = 30;
         int hp_max = 30;
-        int potions = 3;        // placeholder
+        int potions = 0;
         int keys = 0;
         int reload = 0;         // 0..reload_max; full = the weapon can strike
-        int reload_max = 60;    // placeholder: 60 f
+        int reload_max = 30;
         int floor = 0;          // 0-based
         int dir = 0;            // 0 N, 1 E, 2 S, 3 W
     };
@@ -60,10 +60,6 @@ namespace dl
 
         // Damage-direction arrow at the left (side < 0) or right (side > 0) edge of the view (ESPEC_VISTA).
         void show_damage_arrow(int side, int frames = 48);
-
-        // PLACEHOLDER until combat exists: reload refills by itself, A spends it, SELECT simulates a hit from
-        // alternating sides (HP -3, wraps to max), so every widget can be seen working.
-        void update_placeholder_stats();
 
         // Measured cost of the last update() / worst so far (timer ticks; bn::timers::ticks_per_frame() = 1 f).
         int last_ticks() const { return _last_ticks; }
@@ -107,7 +103,6 @@ namespace dl
         bn::string<32> _pending_message;
         int _pending_frames = 0;
         bool _has_pending_message = false;
-        int _hit_side = -1;
 
         void _update_compass();
         void _rebuild_text();
