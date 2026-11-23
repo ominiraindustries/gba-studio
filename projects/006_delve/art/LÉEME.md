@@ -12,33 +12,46 @@ Sin `export-only` también regenera las semillas (`_seed/out/*.png`) y crea los 
 sobrescribe uno existente. Para rehacer uno desde la semilla, bórralo antes (sólo si no tiene cambios tuyos).
 Revisión: ROM `projects/lab_delve_art` (A/B cambia de escena; `tools/make_scenes.py` la regenera desde aquí).
 
+## Estilo (G-33, estilo B "cloaca húmeda")
+
+Elegido por el usuario el 2026-11-23 para todo el juego: ladrillo pequeño verde negruzco, limo en la parte baja de
+los muros, charcos en el suelo, pintura con sombreado interno y tramado suave (sin contorno negro de dibujo animado,
+sin manchas de musgo "monas"). La única luz cálida es la antorcha. Muestras originales: `style_samples/b_wet_sewer/`.
+Semillas: `_seed/sewer_art.py` (texturas, monstruos, atrezzo; usa `_seed/sewer_paint.py`), `_seed/deco_art.py`
+(adornos), `_seed/delve_ui.py` + colores UI de `_seed/delve_art.py`. Las aberturas (puerta, arco, reja, escalera)
+conservan las máscaras exactas del arte anterior (`_seed/legacy/`), que el motor usa para recortar el muro.
+
 ## Paleta del entorno (texturas, índices 0–63)
 
-Común a todas las texturas `tex_*` (64 entradas; usadas 0–39, el resto negro). **0 = negro** (fondo del bitmap; en
-`tex_bars` y `tex_arch` es el hueco por el que se ve lo de detrás). En los `.aseprite` de fondo el índice
-transparente es el 63 (sin usar) para que el 0 siga siendo negro.
+Común a todas las texturas `tex_*` (43 colores usados, el resto negro). **0 = negro** (en `tex_bars`, `tex_arch` y
+`tex_door_open` es el hueco por el que se ve lo de detrás). En los `.aseprite` de fondo el índice transparente es el
+63 (sin usar) para que el 0 siga siendo negro. `build_view.py` cuantiza a su paleta de 191 colores con el fundido
+(116 usados), así que hay margen para retocar.
 
 | Índices | Rampa | Uso |
 |---|---|---|
-| 0–1 | negro, vacío | huecos, sombras profundas |
-| 2–9 | piedra cálida (oscura → clara) | muros, suelo, techo, arcos |
-| 10–14 | musgo | juntas |
-| 15–21 | madera | puerta, vigas, mangos |
-| 22–27 | hierro | herrajes, reja, palanca, cadenas |
-| 28–32 | llama | antorcha |
-| 33–36 | hueso | calaveras, estandarte |
-| 37–39 | tela roja | estandarte |
+| 0 | negro | huecos |
+| 1–10 | piedra verde negruzca (oscura → clara) | muros, suelo, techo, arcos, juntas (1–2) |
+| 11–15 | limo | regueros y franja húmeda baja, charcos |
+| 16–21 | madera | puerta |
+| 22–26 | hierro | herrajes, reja, rejilla del desagüe, candado |
+| 27–29 | óxido | regueros bajo herrajes, candado |
+| 30–34 | llama | antorcha pintada (textura antigua) |
+| 35–39 | hueso | calaveras |
+| 40–42 | tela podrida | estandarte pintado (textura antigua) |
 
-Luz: antorcha del jugador, de frente y desde arriba a la izquierda (bordes superiores claros, inferiores oscuros).
-Sin ruido de 1 px: manchas de 3×2 o más y líneas limpias, para que no "hierva" al reducir.
+Luz: antorcha del jugador, de frente y desde arriba a la izquierda; lo alto y lo bajo del muro se hunden en sombra.
+Tramado ordenado de 1 px de fuerza baja (0,6) entre tonos vecinos de la misma rampa: no parpadea apenas al moverse.
 
 ## Paleta de la interfaz (`ui_frame`, índices 192–255)
 
-HUD opción A de `../HUD.md` (G-32), dibujado por `_seed/delve_ui.py`. Usados 192–223: piedra oscura 192–197, hierro
-198–203, latón 204–207, placas hundidas 208–209, vida (rojo) 210–214, recarga 215–216 (el relleno es el latón),
-hoja de acero 217–218, cuero 219–221, vidrio 222–223. **240–247 son del minimapa del motor**: no se usan aquí. El
-índice 0 es el hueco transparente de la vista (0,0,176,120). El juego copia los colores 192–239 y 248–255 de este
-fichero a la paleta al arrancar (`src/dl_hud.cpp`): editar un color aquí y exportar basta.
+HUD opción A de `../HUD.md` (G-32), dibujado por `_seed/delve_ui.py`, restilizado en G-33: hierro forjado oscuro con
+remaches y cardenillo, sobre ladrillo de cloaca. Usados 192–223: piedra oscura 192–197, hierro 198–203, cardenillo
+204–207 (remaches, guarda de la espada, llave, relleno de recarga; el código lo llama `brass`), placas hundidas
+208–209, vida (rojo) 210–214, recarga 215–216, hoja de acero 217–218, cuero 219–221, vidrio 222–223. **240–247 son
+del minimapa del motor**: no se usan aquí. El índice 0 es el hueco transparente de la vista (0,0,176,120). El juego
+copia los colores 192–239 y 248–255 de este fichero a la paleta al arrancar (`src/dl_hud.cpp`): editar un color aquí
+y exportar basta.
 
 Cajas del `ui_frame` (x0, y0, x1, y1 inclusive; el código las usa, si se mueven hay que tocar `src/dl_hud.cpp`):
 - Panel: brújula y planta (178, 2, 237, 27), con los puntos de la cinta en y = 9; pozo del minimapa (178, 30, 237, 91),
@@ -55,7 +68,8 @@ para el borde derecho.
 
 ## Texturas 64×64 (`art/export/*.bmp`, 8 bpp)
 
-`tex_wall_stone` (repite en horizontal y vertical), `tex_door`, `tex_door_open`, `tex_floor`, `tex_ceiling`,
+`tex_wall_stone` (repite en horizontal y vertical) y sus variantes `tex_wall_stone_v1`..`_v3` (el motor elige una por
+arista; `_v3` lleva un desagüe con rejilla), `tex_door_locked` (puerta con banda de hierro y candado, G-28), `tex_door`, `tex_door_open`, `tex_floor`, `tex_ceiling`,
 `tex_stairs_down`, y decoración sobre el mismo muro: `tex_wall_torch` (2 frames, etiqueta `flame`, 150 ms; el
 export es una tira 64×128), `tex_wall_lever_up`, `tex_wall_lever_down`, `tex_wall_chains`, `tex_wall_crack`
 (pista de secreto), `tex_wall_dart`, `tex_wall_banner`, `tex_wall_skulls`, `tex_bars` (reja, 0 = se ve a través),
@@ -64,27 +78,39 @@ export es una tira 64×128), `tex_wall_lever_up`, `tex_wall_lever_down`, `tex_wa
 ## Monstruos 64×64 (`graphics/mon_*.bmp`, 16 colores, 0 transparente)
 
 `mon_rat`, `mon_skeleton`, `mon_slime`. Un solo dibujo; el tamaño por distancia lo pone el hardware (1,0 / 0,55 /
-0,35). Tira vertical de 5 frames, pies en la última fila:
+0,35). Tira vertical de 5 frames, pies en la última fila. Cada frame es una pose propia del modelo (no una
+deformación):
 
 | Etiqueta | Frames | ms | Qué es |
 |---|---|---|---|
 | `idle` | 1–2 | 400 | reposo y respiración |
-| `attack` | 3–4 | 150 | anticipación (se encoge y crece hacia arriba) y golpe (se acerca, 1,12×) |
+| `attack` | 3–4 | 150 | preparación (esqueleto alza la espada, rata se encabrita, limo se estira) y golpe |
 | `hit` | 5 | 200 | retroceso y destello claro |
 
-Índice 1 = contorno casi negro; 2–15 de oscuro a claro. Contorno de 2 px en casi todo el borde.
+Legibilidad (petición del usuario: "que resalten más"): rango de valores claramente más alto que los muros, sin
+contorno negro; **12 = borde cálido** de 1 px arriba y a los lados (la antorcha del jugador rozando la silueta).
+**13–15 = acento saturado a plena luz** (13 halo, 14 color, 15 núcleo casi blanco): el motor los deja sin oscurecer
+con la distancia. No uses 13–15 para nada más.
+
+| Sprite | 1–11 | Acento 13–15 |
+|---|---|---|
+| `mon_skeleton` | hueso 1–7, hierro oxidado 8–9, harapo 10–11 | cuencas y ojos cian |
+| `mon_rat` | pelo 1–8, piel 9–10, dientes y uñas 11 | ojos rojos |
+| `mon_slime` | limo 1–8, huesos hundidos 9–11 | cuencas de la calavera verde ácido; 15 = brillos húmedos |
 
 ## Atrezzo 32×32 (`graphics/prop_*.bmp`, 16 colores, 0 transparente)
 
 `prop_barrel`, `prop_bones`, `prop_crate`, `prop_statue`, `prop_table`, `prop_chest` (frames `closed`, `open`),
 `prop_spikes` (`down`, `up`), `prop_plate` (`up`, `pressed`), `prop_pit`. Apoyados en la fila inferior; planos
-(`spikes`, `plate`, `pit`) dibujados ya en perspectiva de suelo.
+(`spikes`, `plate`, `pit`) dibujados ya en perspectiva de suelo. G-33: los dibujos anteriores re-graduados a la
+cloaca (menos saturados, verdosos), el contorno negro convertido en sombra y el borde superior-izquierdo iluminado;
+el antiguo índice de contorno es ahora el borde frío del lado derecho.
 
 ## Origen
 
-Conceptos de PixelLab (dentro de la suscripción) en `_seed/concepts/`: monstruos y atrezzo con volumen. Texturas,
-`ui_frame`, pinchos, placa y foso, dibujados por `_seed/delve_art.py`, `delve_ui.py` y `delve_sprites.py`.
-Los monstruos se reducen a 16 colores, se les engorda el contorno y se animan con transformaciones a mano.
+Texturas, monstruos y re-graduado del atrezzo: `_seed/sewer_art.py` (pintura procedural: ruido fBm + tramado Bayer
+dentro de cada piedra; monstruos modelados con cápsulas y elipsoides iluminados). Sin créditos de PixelLab en G-33.
+Conceptos antiguos de PixelLab en `_seed/concepts/` (formas del atrezzo).
 
 ## Adornos de pared en relieve (`deco_*`, sprites 32×64, 16 colores, 0 transparente)
 
@@ -119,10 +145,11 @@ Halo: el motor lo pinta **detrás** de su antorcha (más `z_order`) con `set_ble
 `bn::blending::set_transparency_alpha` ≈ 0,4, a la misma escala que la antorcha (en GBA no hay mezcla entre sprites:
 el halo encima taparía la antorcha). Rampa propia de 7 tonos cálidos claros, para que nunca oscurezca el muro.
 
-Paletas (todas con 0 = transparente, 1 = contorno, 2–3 = sombra sobre piedra):
+Paletas (todas con 0 = transparente, 1 = contorno casi negro verdoso, 2–3 = sombra sobre la piedra de la cloaca;
+G-33: hierro forjado oscuro, madera tiznada, tela podrida y ribete de cardenillo):
 - **A** (antorcha, cadenas, palanca; idéntica en los tres, Butano la comparte): 4–8 hierro (8 = brillo cálido de la
   llama), 9–11 madera, 12–15 llama.
-- **B** (estandarte): 4–8 hierro, 9–12 tela roja, 13–15 oro.
+- **B** (estandarte): 4–8 hierro, 9–12 tela roja podrida, 13–15 cardenillo.
 - **Halo**: 1–7 de borde a centro.
 
 Luz: la del jugador (frente, arriba a la izquierda; en las laterales, desde el lado cercano) para las caras y las

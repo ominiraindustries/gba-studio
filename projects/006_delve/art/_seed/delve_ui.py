@@ -50,9 +50,9 @@ def bricks(cv, x0, y0, x1, y1):
 
 
 def rivet(cv, x, y):
-    cv.rect(x, y, x + 1, y + 1, UG[2], wrap=False)
+    cv.rect(x, y, x + 1, y + 1, UIr[3], wrap=False)     # iron rivet head with a verdigris glint
     cv.set(x, y, UG[3], wrap=False)
-    cv.set(x + 1, y + 1, UG[1], wrap=False)
+    cv.set(x + 1, y + 1, UIr[0], wrap=False)
 
 
 def box(cv, x0, y0, x1, y1, fill=UP[1], rivets=True):
@@ -70,6 +70,10 @@ def box(cv, x0, y0, x1, y1, fill=UP[1], rivets=True):
     if rivets and x1 - x0 > 12 and y1 - y0 > 12:
         for rx, ry in ((x0 + 2, y0 + 2), (x1 - 3, y0 + 2), (x0 + 2, y1 - 3), (x1 - 3, y1 - 3)):
             rivet(cv, rx, ry)
+        if x1 - x0 > 100:                                   # long plates: a riveted strap along both edges
+            for rx in range(x0 + 18, x1 - 8, 16):
+                rivet(cv, rx, y0 + 2)
+                rivet(cv, rx, y1 - 3)
 
 
 def trough(cv, x0, y0, x1, y1, empty):

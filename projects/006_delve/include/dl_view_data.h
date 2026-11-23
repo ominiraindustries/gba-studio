@@ -37,7 +37,7 @@ namespace dl::view_data
     // opaque sets hide whatever is behind them (wall decorations behind them are not shown)
     constexpr bool set_opaque[set_count] = { true, true, true, true, true, true, true, true, true, false, false, false, true };
     constexpr int ui_first_color = 192;
-    constexpr int palette_used = 191;    // environment colours actually used (1..)
+    constexpr int palette_used = 116;    // environment colours actually used (1..)
     constexpr int wall_variants = 4;               // set_wall .. set_wall + 3
     extern const bn::color palette_colors[256];
 }

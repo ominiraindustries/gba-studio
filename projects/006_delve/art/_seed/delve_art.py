@@ -55,13 +55,13 @@ def _ui(name, colors):
         UI_LIST.append(hx(c))
 
 
-_ui("s", ["#110d0c", "#1c1614", "#28201c", "#372c26", "#4a3d34", "#625142"])   # dark stone
-_ui("i", ["#0b0d10", "#1a1e24", "#2d323a", "#465059", "#6b7480", "#9da6b1"])   # iron trim
-_ui("g", ["#3a2610", "#6b4a1e", "#a67c35", "#dcb162"])                         # brass
-_ui("p", ["#07080a", "#121519"])                                               # recessed plates
+_ui("s", ["#070a08", "#0e1410", "#151d18", "#1d2820", "#28352b", "#36443a"])   # dark sewer stone (G-33 B)
+_ui("i", ["#050706", "#101412", "#1c2220", "#2c3430", "#48524c", "#6c7870"])   # wrought iron trim
+_ui("g", ["#16201a", "#2c4436", "#4a7058", "#86ae90"])                         # verdigris (rivets, reload)
+_ui("p", ["#040605", "#0b100d"])                                               # recessed plates
 # HUD option A (G-32): 210.. ; 240..247 belong to the engine minimap colours (tools/build_view.py)
 _ui("r", ["#2e0f10", "#5c1416", "#a8221f", "#e0503c", "#ffb09a"])              # HP: empty, dark, red, hi, pale
-_ui("o", ["#2a2114", "#fff0b8"])                                               # reload: empty, glint (fill = brass)
+_ui("o", ["#111a14", "#d8f0c8"])                                               # reload: empty, glint (fill = brass)
 _ui("b", ["#c9d1da", "#eef2f6"])                                               # blade steel light, edge
 _ui("l", ["#2a170c", "#4e2c16", "#7a4a26"])                                    # leather grip / cork
 _ui("c", ["#5d7f92", "#9fc3d4"])                                               # glass

@@ -27,14 +27,15 @@ def hx(s):
 
 
 # Palette A (torch, chains, lever) and B (banner): 0 transparent, 1 outline, 2-3 wall shadow (stone s2/s3).
-PAL_A = [hx(c) for c in ("#ff00ff", "#0b0807", "#352a23", "#4a3c32",
-                         "#1a1c21", "#33363d", "#555962", "#8a8d94", "#d8b88e",     # 4-8 iron, warm highlight
-                         "#33190d", "#6c3d1c", "#ab6f33",                           # 9-11 wood
+# G-33 style B (wet sewer): green-black stone shadows, dark wrought iron, soot-dark wood; the flame stays warm.
+PAL_A = [hx(c) for c in ("#ff00ff", "#070a08", "#121a16", "#1b2620",
+                         "#0e1310", "#1c2420", "#2e3832", "#4c564f", "#d0a26a",     # 4-8 iron, warm highlight
+                         "#20160c", "#3e2c18", "#6a4a28",                           # 9-11 wood
                          "#a8360c", "#ee7a1c", "#ffc44a", "#fff3c0")]               # 12-15 flame
-PAL_B = [hx(c) for c in ("#ff00ff", "#0b0807", "#352a23", "#4a3c32",
-                         "#1a1c21", "#33363d", "#555962", "#8a8d94", "#d8b88e",     # 4-8 iron
-                         "#3a0f12", "#6a1a1c", "#972b25", "#c4473a",                # 9-12 cloth
-                         "#6b4a1e", "#a67c35", "#e0b860")]                          # 13-15 gold
+PAL_B = [hx(c) for c in ("#ff00ff", "#070a08", "#121a16", "#1b2620",
+                         "#0e1310", "#1c2420", "#2e3832", "#4c564f", "#d0a26a",     # 4-8 iron
+                         "#1e0a08", "#3a120e", "#5a2016", "#7c3422",                # 9-12 rotten cloth
+                         "#2c3a26", "#4c6a48", "#7ea07a")]                          # 13-15 verdigris trim
 PAL_G = [hx(c) for c in ("#ff00ff", "#80603e", "#966a3a", "#b07636", "#cc8834", "#e49e3e", "#f6ba56",
                          "#ffd67e")] + [(0, 0, 0)] * 8
 IRON, WOOD, CHAR = [4, 5, 6, 7, 8], [9, 10, 11], [1, 9, 10]
