@@ -5,7 +5,6 @@
 
 #include "dl_gen.h"
 
-#include <setjmp.h>
 #include <string.h>
 
 #ifdef DL_HOST
@@ -54,7 +53,7 @@ namespace
         return (a % b != 0 && ((a < 0) != (b < 0))) ? q - 1 : q;
     }
 
-    jmp_buf fail_jump;     // a failed phase aborts the attempt (v2: raise Fail); no exceptions on the GBA
+    void* fail_jump[5];    // a failed phase aborts the attempt (v2: raise Fail); GCC builtin, no libc / exceptions
 
     // The generator state (v2: Gen.__init__). Lives in EWRAM.
     struct gen_state
@@ -112,7 +111,7 @@ namespace
 
     [[noreturn]] void raise()
     {
-        longjmp(fail_jump, 1);
+        __builtin_longjmp(fail_jump, 1);
     }
 
     // ---- edge helpers (v2: open_edge, close_edge, kind_at, is_room, clean, nibble)
@@ -2181,7 +2180,7 @@ namespace
 
         volatile bool ok = false;
 
-        if(setjmp(fail_jump) == 0)
+        if(__builtin_setjmp(fail_jump) == 0)
         {
             layout_phase();
             join_phase();
