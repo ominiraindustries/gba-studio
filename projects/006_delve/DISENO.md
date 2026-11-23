@@ -389,6 +389,13 @@ diagonales, varios personajes.
 | Atrezzo por planta con tablas de 16/8 entradas (Cellars, Ossuary, Warden's Halls) | R8 | captura a 1x: cada planta se reconoce sin texto |
 | Muebles bloqueantes sólo en salas, nunca en articulación ni tapando usos | R9 | 0 softlocks; BFS entre aberturas de sala en 1000 semillas |
 | Mensaje de ataque acortado a `A: ATTACK WHEN BAR IS FULL` | R6 (cabe en una línea de 28) | — |
+| (2026-11-23, revisión G-40) Pergamino repetido + MP suficiente: se gasta **MP primero**; si falta MP, se usa el pergamino solo (sin `NOT ENOUGH MANA`) | R2 (perdona), aversión a la pérdida: el MP vuelve, el pergamino no | 0 `NOT ENOUGH MANA` con pergamino del conjuro en la bolsa |
+| Heal con HP lleno se niega (`HP IS FULL`, sin gastar MP ni tiempo); igual que la poción | R2, cada acción tiene respuesta | 0 lanzamientos de Heal con HP lleno en las rutas |
+| A durante un lanzamiento: se guarda sólo si se pulsa en los **8 f finales** (la misma ventana que la recarga del arma); antes, se descarta | R2 con una sola regla de búfer, R14 | 0 ataques que salgan > 8 f después de la pulsación |
+| Cofre de reserva sobre un objeto del suelo si la planta tiene < 2 cofres: se mantiene (callejón o centro de sala); nunca en un callejón con grieta (SECRET) al fondo | gradiente de meta (§1.1 de MAGIA: pergamino garantizado), R9, R12 | 0 grietas tapadas por un cofre en 1000 semillas |
+| Se empieza con **1 poción** en vez de pan (el pan cura al recogerlo y no enseña B); rótulo `LOW HP! B: DRINK POTION` la 1.ª vez que HP < 50 % con poción | R6 (texto en el momento de uso), andamiaje | % de jugadores que beben antes de morir en la planta 1 |
+| Primer aviso enemigo desde un lado o la espalda: no enseña `STEP AWAY TO DODGE!` (no se ve al monstruo); ese rótulo espera al primer aviso de frente; de lado basta la flecha roja | R5, R6, §8 (el primer peligro se ve) | rótulo de esquiva siempre con el monstruo en la vista |
+| Muerte: se mantiene el reintento de planta de §7 (`A: RETRY FLOOR`, `SELECT: NEW RUN`), copia en RAM al bajar; la pantalla ignora A los primeros 60 f | R10 (fallar cuesta poco), aversión a la pérdida | reintento < 5 s; 0 partidas perdidas por pulsar A sin querer |
 
 ## 11. Riesgos y propuestas para `ESPEC_VISTA.md`
 - **Redibujo del modo 4 al dar un paso**: si pasa de 2 frames, la recarga de 12 f lo oculta; si pasa de 6 f se nota.
