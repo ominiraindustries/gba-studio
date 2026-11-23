@@ -1120,7 +1120,7 @@ def main():
         '#include "dl_view_data.h"\n', "namespace dl::view_data\n{"]
     ui = Image.open(UI_FRAME).getpalette() if os.path.exists(UI_FRAME) else [0] * 768
     ui += [0] * (768 - len(ui))
-    lines.append("    const bn::color theme_palette_colors[theme_count][256] = {")
+    lines.append("    constexpr bn::color theme_palette_colors[theme_count][256] = {")
     for ti, pal in enumerate(pals):
         full = [tuple(c) for c in pal] + [(0, 0, 0)] * (192 - len(pal))
         full += [(ui[i * 3] >> 3, ui[i * 3 + 1] >> 3, ui[i * 3 + 2] >> 3) for i in range(192, 256)]
@@ -1139,7 +1139,7 @@ def main():
         return [tuple(v >> 3 for v in p[i * 3:i * 3 + 3]) for i in range(16)]
 
     base_deco = [bmp_pal("deco_torch_front"), bmp_pal("deco_banner_front")]
-    lines.append("    const bn::color theme_deco_colors[theme_count][2][16] = {")
+    lines.append("    constexpr bn::color theme_deco_colors[theme_count][2][16] = {")
     glows = []
     for T, (_n, d) in zip(themes, found):
         jp = os.path.join(os.path.dirname(d), "deco_palette.json") if d else None

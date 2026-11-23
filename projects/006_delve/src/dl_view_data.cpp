@@ -3,7 +3,7 @@
 
 namespace dl::view_data
 {
-    const bn::color theme_palette_colors[theme_count][256] = {
+    constexpr bn::color theme_palette_colors[theme_count][256] = {
         {   // 0 sewer
             bn::color(0,0,0),bn::color(0,1,0),bn::color(0,1,1),bn::color(1,0,0),bn::color(1,1,0),bn::color(1,1,1),bn::color(1,2,1),bn::color(1,2,2),
             bn::color(1,3,1),bn::color(2,1,0),bn::color(2,1,1),bn::color(2,2,1),bn::color(2,2,2),bn::color(2,3,1),bn::color(2,3,2),bn::color(2,3,3),
@@ -280,7 +280,7 @@ namespace dl::view_data
 
     const bn::color* const palette_colors = theme_palette_colors[0];
 
-    const bn::color theme_deco_colors[theme_count][2][16] = {
+    constexpr bn::color theme_deco_colors[theme_count][2][16] = {
         {   // sewer
             { bn::color(31,0,31),bn::color(0,1,1),bn::color(2,3,2),bn::color(3,4,4),bn::color(1,2,2),bn::color(3,4,4),bn::color(5,7,6),bn::color(9,10,9),bn::color(26,20,13),bn::color(4,2,1),bn::color(7,5,3),bn::color(13,9,5),bn::color(21,6,1),bn::color(29,15,3),bn::color(31,24,9),bn::color(31,30,24), },
             { bn::color(31,0,31),bn::color(0,1,1),bn::color(2,3,2),bn::color(3,4,4),bn::color(1,2,2),bn::color(3,4,4),bn::color(5,7,6),bn::color(9,10,9),bn::color(26,20,13),bn::color(3,1,1),bn::color(7,2,1),bn::color(11,4,2),bn::color(15,6,4),bn::color(5,7,4),bn::color(9,13,9),bn::color(15,20,15), },
