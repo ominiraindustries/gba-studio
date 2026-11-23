@@ -1,6 +1,6 @@
 """Validation of the POKER DOJO solver against known properties.
 
-    python -I projects/003_poker_dojo/tools/solver/test_solver.py
+    python -I projects/003_poket_gto/tools/solver/test_solver.py
 
 Needs cache/equity169.npz and cache/pushfold.npz (run solve.py first). Exits 1 on any failure.
 """

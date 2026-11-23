@@ -1,6 +1,6 @@
-"""Seed greybox graphics (gb_*) for 003_poker_dojo: felt table, card face/back, suit icons, button cursor.
+"""Seed greybox graphics (gb_*) for 003_poket_gto: felt table, card face/back, suit icons, button cursor.
 
-Run `python -I projects/003_poker_dojo/tools/gen_greybox.py`. Only writes graphics/gb_*.bmp/.json; never touches art/.
+Run `python -I projects/003_poket_gto/tools/gen_greybox.py`. Only writes graphics/gb_*.bmp/.json; never touches art/.
 """
 import json
 import struct

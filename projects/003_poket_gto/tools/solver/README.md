@@ -13,9 +13,9 @@ Herramienta en Python/numpy que calcula, sin descargar nada, las tablas de póke
 Desde la raíz del repo (Git Bash o PowerShell):
 
 ```
-python -I projects/003_poker_dojo/tools/solver/solve.py                  # usa la caché si existe
-python -I projects/003_poker_dojo/tools/solver/solve.py --recompute-equity
-python -I projects/003_poker_dojo/tools/solver/test_solver.py            # validación (exit 1 si algo falla)
+python -I projects/003_poket_gto/tools/solver/solve.py                  # usa la caché si existe
+python -I projects/003_poket_gto/tools/solver/solve.py --recompute-equity
+python -I projects/003_poket_gto/tools/solver/test_solver.py            # validación (exit 1 si algo falla)
 ```
 
 Tiempos (este PC): equidades **~10 min** la primera vez (se guardan en `cache/equity169.npz`, ignorada por git);

@@ -1,7 +1,7 @@
-# 003_poker_dojo
+# 003_poket_gto
 
 Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), creado con
-`python -I tools/scripts/new_game.py 003_poker_dojo`.
+`python -I tools/scripts/new_game.py 003_poket_gto`.
 
 ## Compilar y jugar
 
@@ -9,14 +9,14 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
 - Desde Git Bash, en la raíz del repo:
 
       source tools/env.sh
-      make -C projects/003_poker_dojo -j8
+      make -C projects/003_poket_gto -j8
 
 ## Probar sin ventana (Mesen 2 headless)
 
-    python -I tools/scripts/gbarun.py projects/003_poker_dojo/003_poker_dojo.gba --frames 100 --shot 100 \
+    python -I tools/scripts/gbarun.py projects/003_poket_gto/003_poket_gto.gba --frames 100 --shot 100 \
         --input "31-90:right;95:a" --check-at "30:test_player_x.32==0" \
         --check "test_player_x.32==60,test_sounds_played.32==1" --nonblank \
-        --golden projects/003_poker_dojo/tests/golden --out <scratchpad>/run_003_poker_dojo
+        --golden projects/003_poket_gto/tests/golden --out <scratchpad>/run_003_poket_gto
 
 `--update-golden` regenera las capturas de referencia (revísalas antes de commitear).
 

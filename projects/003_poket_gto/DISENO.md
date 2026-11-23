@@ -3,7 +3,7 @@
 **Frase:** POKET GTO es un dojo de póker Texas Hold'em No-Limit en el que cada ejercicio es una mano: decides en menos de 10 s y
 el maestro te dice al momento cuánto EV has perdido y por qué. Avanzas de cinturón blanco a negro (cerca de GTO).
 
-Nombre del juego (en pantalla y en textos): **POKET GTO**. La carpeta sigue siendo `projects/003_poker_dojo`.
+Nombre del juego (en pantalla y en textos): **POKET GTO**. La carpeta sigue siendo `projects/003_poket_gto`.
 
 **Verbo central:** *decidir una mano* (fold / call / raise / all-in). Todo lo demás (mapa, estrellas, repaso) sirve
 a ese verbo (regla 1). Todo el texto del juego va en **inglés**; la fuente es `common::variable_8x8_sprite_font` con

@@ -1,9 +1,9 @@
 """POKER DOJO offline solver: equities -> push/fold Nash for every stack -> C++ headers.
 
 Usage (from the repo root, Git Bash or PowerShell):
-    python -I projects/003_poker_dojo/tools/solver/solve.py            # uses cache/equity169.npz if present
-    python -I projects/003_poker_dojo/tools/solver/solve.py --recompute-equity
-    python -I projects/003_poker_dojo/tools/solver/solve.py --no-export
+    python -I projects/003_poket_gto/tools/solver/solve.py            # uses cache/equity169.npz if present
+    python -I projects/003_poket_gto/tools/solver/solve.py --recompute-equity
+    python -I projects/003_poket_gto/tools/solver/solve.py --no-export
 """
 
 import os

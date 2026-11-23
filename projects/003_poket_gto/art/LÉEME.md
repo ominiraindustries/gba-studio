@@ -1,4 +1,4 @@
-# Arte editable de 003_poker_dojo
+# Arte editable de 003_poket_gto
 
 Aquí van los ficheros fuente de **Aseprite** (`.aseprite`), en modo de color **indexado**.
 El build de Butano no lee `.aseprite`: lee las imágenes `.bmp` indexadas de `graphics/`
