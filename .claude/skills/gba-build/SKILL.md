@@ -14,7 +14,8 @@ description: Compilar un juego o laboratorio GBA con Butano (make + devkitARM) d
 - Resume la salida (`2>&1 | tail -20` o `grep -E "error|warning"`); nunca vuelques el log entero.
 
 ## Proyecto nuevo (armazón)
-1. Copia `templates/<plantilla>` a `projects/<nombre>/` (ver `templates/README.md` del otro agente).
+1. Crea el proyecto con `python -I tools/scripts/new_game.py NNN_nombre --title "..." --romtitle X --romcode 2XXE`
+   (copia `templates/butano_game` y sustituye sus marcadores; nunca copies a mano). Ver `templates/README.md`.
 2. Desde el primer día: `art/` con `LÉEME.md`, `DISENO.md` (lo escribe `gba-designer`), `compilar.bat` y
    `compilar_y_jugar.bat` (doble clic para el usuario; el segundo abre el emulador con ventana: es **para el usuario**,
    los agentes no lo ejecutan), texto con `bn::sprite_text_generator` y una fuente de `engine/butano/common/`.
