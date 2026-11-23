@@ -32,9 +32,13 @@ tres. El diseño del juego va en `DISENO.md`.
 2. La herramienta `tools/build_view.py` (la hace el motor) proyecta cada textura a todas las piezas de la geometría,
    aplica la atenuación por distancia, cuantiza el conjunto a la paleta de 256 colores (0 = negro, 0–191 entorno,
    192–255 reservados para el panel y la franja) y escribe los datos que compila el juego. Nunca toca `art/`.
-3. Monstruos: sprite base **64×64** mirando de frente (16 colores, índice 0 transparente), con frames de reposo (2),
-   ataque (2, con anticipación) y golpeado (1). La herramienta genera las versiones de 48, 32 y 16 px para
-   d = 1, 2 y 3 (vecino más cercano + limpieza; si una reducción no se lee, el artista la retoca a mano en su propio
-   `.aseprite`, que entonces manda).
+3. Monstruos (decisión del usuario): **un solo dibujo por monstruo**, sprite base **64×64** mirando de frente
+   (16 colores, índice 0 transparente), con frames de reposo (2), ataque (2, con anticipación) y golpeado (1).
+   **El tamaño según la distancia lo pone el hardware** (sprites afines de Butano con `set_scale`), no versiones
+   reducidas a mano: escala ≈ 1,0 a d = 1, ≈ 0,55 a d = 2, ≈ 0,35 a d = 3 (valores exactos en
+   `dl_view_geometry.h`). Cuando un monstruo avanza o retrocede una casilla, la escala y la posición se interpolan
+   durante el paso (≈ 12 f), así se acerca de forma continua. El dibujo base debe leerse bien reducido: siluetas
+   claras, contorno oscuro de 1–2 px y pocos detalles de 1 px. Un sprite afín usa una de las 32 matrices: como mucho
+   unos 8 monstruos visibles, de sobra.
 4. Panel y franja: `ui_frame` 240×160 indexado con los mismos 64 índices reservados (192–255), con el hueco de la vista
    transparente (índice 0).
