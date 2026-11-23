@@ -64,9 +64,11 @@ int main(int argc, char** argv)
             return 3;
         }
 
-        for(int s = 0; s < seeds; ++s)
+        bool one = argc >= 6;      // dump SEED LEVEL OUT one: a single floor with that exact seed
+
+        for(int s = one ? seeds : 0; s < (one ? seeds + 1 : seeds); ++s)
         {
-            for(int l = 0; l < levels; ++l)
+            for(int l = one ? levels : 0; l < (one ? levels + 1 : levels); ++l)
             {
                 unsigned used = dl::gen::generate_floor(unsigned(s), l, lv);
                 int n = dl::gen::level_bytes(lv, buf, int(sizeof(buf)));
