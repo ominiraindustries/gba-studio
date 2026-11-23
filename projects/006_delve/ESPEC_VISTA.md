@@ -42,3 +42,11 @@ tres. El diseño del juego va en `DISENO.md`.
    unos 8 monstruos visibles, de sobra.
 4. Panel y franja: `ui_frame` 240×160 indexado con los mismos 64 índices reservados (192–255), con el hueco de la vista
    transparente (índice 0).
+
+## Añadido tras DISENO.md (2026-11-23)
+- **Objetos en el suelo y proyectiles** (bola de fuego, flechas): sprite base **32×32**, un solo dibujo, escalado por
+  hardware igual que los monstruos (escala por profundidad de `dl_view_geometry.h`), apoyado en el suelo de su casilla.
+- **Flechas de ataque lateral o por la espalda**: se dibujan como sprites en un hueco de 8×16 px pegado a cada borde
+  de la vista (izquierda, derecha, abajo); el arte de pared no pone nada importante en esas franjas.
+- **Franja inferior**: debe caber una barra de recarga de ≈ 48×4 px y una línea de mensaje de 28 caracteres de la fuente
+  8×8 de Butano.
