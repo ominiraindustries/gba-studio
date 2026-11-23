@@ -170,7 +170,7 @@ namespace dl
         for(int i = 1; i < 192 && i < colors.size(); ++i)
         {
             bn::color c = colors[i];
-            auto lift = [](int v) { return bn::min(31, v + ((v + 4) >> 3)); };
+            auto lift = [](int v) { return bn::min(31, v + (v + 3) / 6); };
             palette.set_color(i, bn::color(lift(c.red()), lift(c.green()), lift(c.blue())));
         }
     }

@@ -89,7 +89,12 @@ volatile int test_pause;               // 1 while the START pause is open
 volatile int test_hp;
 volatile int test_keys;
 volatile int test_chests_opened;
-volatile int test_busy;                // player busy frames (drink / cast)
+volatile int test_chests;             // chests on this floor (normal + locked)
+volatile int test_chests_locked;
+volatile int test_chest_dist;         // path distance entry -> nearest chest (cells)
+volatile int test_busy;
+volatile int test_hud_paint_max_ticks;  // HUD bitmap part / text + sprites part (worst so far)
+volatile int test_hud_pre_max_ticks;                // player busy frames (drink / cast)
 volatile int test_hud_tiles;
 volatile int test_view_ticks;          // view only (no minimap)
 volatile int test_view_ticks_sum;
@@ -1067,11 +1072,22 @@ namespace
             }
 
             test_chests_opened = opened;
+            test_chests = m.nchests;
+            int locked = 0;
+
+            for(int i = 0; i < m.nchests; ++i)
+            {
+                locked += (gs.lv.ents[m.chest_ent[i]].a & dl::chest_locked) ? 1 : 0;
+            }
+
+            test_chests_locked = locked;
             int redraws = test_redraws;
             _hud.update(_painter, _trans || redraws != _hud_redraws);
             _hud_redraws = redraws;
             test_hud_ticks = _hud.last_ticks();
             test_hud_max_ticks = _hud.max_ticks();
+            test_hud_paint_max_ticks = _hud.max_paint_ticks();
+            test_hud_pre_max_ticks = _hud.max_pre_ticks();
             test_sprite_tiles = bn::sprite_tiles::used_tiles_count();
             test_sprites = bn::sprites::used_items_count();
             test_sprite_tiles_free = bn::sprite_tiles::available_tiles_count();

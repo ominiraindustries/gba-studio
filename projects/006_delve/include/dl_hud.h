@@ -80,6 +80,8 @@ namespace dl
         // Measured cost of the last update() / worst so far (timer ticks; bn::timers::ticks_per_frame() = 1 f).
         int last_ticks() const { return _last_ticks; }
         int max_ticks() const { return _max_ticks; }
+        int max_paint_ticks() const { return _max_paint_ticks; }  // bitmap part (bars, belt, dots)
+        int max_pre_ticks() const { return _max_pre_ticks; }      // text + sprites part
 
         // Budget report: HUD sprites (OAM) and sprite VRAM tiles (32 bytes each) in use right now.
         int sprites_count() const;
@@ -99,7 +101,7 @@ namespace dl
         bn::vector<bn::sprite_ptr, 2> _hp_sprites;
         bn::vector<bn::sprite_ptr, 1> _key_sprites;
         bn::vector<bn::sprite_ptr, 2> _potion_sprites;
-        bn::vector<bn::sprite_ptr, 8> _message_sprites;
+        bn::vector<bn::sprite_ptr, 12> _message_sprites;
         bn::vector<bn::sprite_ptr, 2> _arrow_sprites;
         bn::vector<bn::sprite_ptr, 1> _mp_label_sprites;
         bn::vector<bn::sprite_ptr, 2> _mp_sprites;
@@ -131,6 +133,14 @@ namespace dl
         int _frame = 0;
         int _last_ticks = 0;
         int _max_ticks = 0;
+        int _max_paint_ticks = 0;
+        bool _text_job = false;     // a text job ran this frame
+        bool _heavy_now = false;
+        int _belt_delay = 0;
+        int _paint_delay = 0;
+        int _message_pos = 0;      // next character of _pending_message to generate (chunked)
+        int _message_x = 0;
+        int _max_pre_ticks = 0;
         int _text_delay = 0;
         bn::string<32> _pending_message;
         int _pending_frames = 0;

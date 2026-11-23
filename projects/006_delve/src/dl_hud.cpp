@@ -197,6 +197,7 @@ namespace dl
         _pending_message.append(text, bn::min(bn::string_view(text).size(), _pending_message.max_size()));
         _pending_frames = frames;
         _has_pending_message = true;
+        _message_pos = 0;
     }
 
     void hud::clear_message()
@@ -204,21 +205,42 @@ namespace dl
         _message_sprites.clear();
         _message_timer = 0;
         _has_pending_message = false;
+        _message_pos = 0;
     }
 
     void hud::_flush_message()
     {
-        _has_pending_message = false;
-        _message_sprites.clear();
+        // G-40: a long line is generated in chunks of up to 8 characters, one chunk per frame (a 22-character line
+        // in one go measured ~670 ticks, 0.15 f; a chunk stays under 0.1 f). The line appears within 4 frames.
+        constexpr int chunk_chars = 8;
+
+        if(_message_pos == 0)
+        {
+            _message_sprites.clear();
+            _message_x = 0;
+            _message_timer = _pending_frames;
+        }
+
+        int size = _pending_message.size();
+        int n = bn::min(chunk_chars, size - _message_pos);
+        bn::string_view chunk(_pending_message.data() + _message_pos, n);
         _text.set_palette_item(white_text);
         _text.set_left_alignment();
         _text.set_one_sprite_per_character(false);
-        _text.generate(tx(46), ty(149), _pending_message, _message_sprites);
-        _message_timer = _pending_frames;
+        int first = _message_sprites.size();
+        (void) _text.generate_optional(tx(46) + _message_x, ty(149), chunk, _message_sprites);
+        _message_x += _text.width(chunk);
+        _message_pos += n;
 
-        for(bn::sprite_ptr& s : _message_sprites)
+        if(_message_pos >= size)
         {
-            s.set_visible(_visible);
+            _has_pending_message = false;
+            _message_pos = 0;
+        }
+
+        for(int i = first, count = _message_sprites.size(); i < count; ++i)
+        {
+            _message_sprites[i].set_visible(_visible);
         }
     }
 
@@ -429,6 +451,16 @@ namespace dl
 
     void hud::_paint_bars(bn::palette_bitmap_bg_painter& painter)
     {
+        // G-40: a frame that generated text (~150-370 ticks) paints nothing; the bars follow on the next frame
+        // (HUD <= 0.1 f)
+        if(_text_job && _paint_delay < 4)
+        {
+            ++_paint_delay;
+            return;
+        }
+
+        _paint_delay = 0;
+
         // HP: red bar, pale blink under 25 %
         int hp = bn::clamp(state.hp, 0, state.hp_max);
         int hp_w = state.hp_max > 0 ? ((hp_x1 - hp_x0 + 1) * hp + state.hp_max - 1) / state.hp_max : 0;
@@ -544,7 +576,11 @@ namespace dl
         }
 
         // belt slot: the painted potion stays for the potion entry; any other entry gets a dark well + icon sprite
-        if(state.belt != _drawn_belt)
+        // (waits while a text job ran this frame or the view was redrawn, at most 8 frames)
+        bool belt_wait = state.belt != _drawn_belt && _heavy_now && _belt_delay < 8;
+        _belt_delay = belt_wait ? _belt_delay + 1 : 0;
+
+        if(state.belt != _drawn_belt && ! belt_wait)
         {
             if(state.belt == 0)
             {
@@ -631,13 +667,19 @@ namespace dl
                 _shown.mp_on != state.mp_on || _shown.belt != state.belt || _shown.belt_ok != state.belt_ok ||
                 _shown.belt_cost != state.belt_cost;
 
-        if(text_changed && heavy_frame && _text_delay < max_text_delay)
+        // the belt well repaint (~320 ticks) and a text job never share a frame (HUD <= 0.1 f)
+        bool paint_heavy = state.belt != _drawn_belt;
+        _text_job = false;
+        _heavy_now = heavy_frame;
+
+        if(text_changed && (heavy_frame || paint_heavy) && _text_delay < max_text_delay)
         {
             ++_text_delay;
         }
         else if(text_changed)
         {
             _text_delay = 0;
+            _text_job = true;
             // one text job per frame: the message line first, then one group of numbers
             if(_has_pending_message)
             {
@@ -704,9 +746,16 @@ namespace dl
             s.set_visible(_visible && _panel_visible && (state.light > 180 || (state.light / 8) % 2 == 0));
         }
 
+        int before_paint = timer.elapsed_ticks();
         _paint_bars(painter);
 
         _last_ticks = timer.elapsed_ticks();
+
+        if(_frame > 2)
+        {
+            _max_paint_ticks = bn::max(_max_paint_ticks, _last_ticks - before_paint);
+            _max_pre_ticks = bn::max(_max_pre_ticks, before_paint);
+        }
 
         if(_frame > 2)                  // frames 1-2 create every sprite; not the per-frame cost
         {

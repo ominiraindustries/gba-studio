@@ -58,7 +58,7 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
       python -I projects/006_delve/tools/gen_metrics.py --fidelity 50 3 --seeds 1000 --levels 3 --ascii 3
 
   `--fidelity`: CRC idéntico a la v2 de Python; `--seeds`: métricas, reglas duras y solucionador (0 sin solución).
-- **Controles** (G-35): A ataca con la barra llena (o rompe barriles/cajas), B bebe una poción; SELECT+L abre el menú de efectos.
+- **Controles** (G-35, G-40): A ataca con la barra llena (o rompe barriles/cajas), B usa la entrada del cinturón (poción o conjuro), SELECT pasa a la siguiente, START abre la pausa (BAG / SPELLS); L+R+SELECT abre el menú de efectos.
 
 ## Vista (G-25, bloque 2)
 
@@ -86,3 +86,17 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
   `route.txt`, capturas y `route_sheet.png`.
 - Arte provisional (G-35): `art/item_floor.aseprite` (pan, poción, espada corta, llave; 32×32) y `art/fx_edge_h/v`
   (borde rojo), sembrados por `art/_seed/item_art.py`. Sonidos: `audio/blip.wav` a distintas velocidades.
+
+## Magia y tesoros (G-40, bloque M1)
+
+- Código: `src/dl_magic.cpp` (MP, cinturón, Magic Missile / Light / Heal, pergaminos, Ring of Mana, cofres normal y
+  con llave), `src/dl_magic_fx.cpp` (dardo, chispas de Heal, destello y paleta de Light), `src/dl_pause.cpp` (pausa).
+  Diseño: `MAGIA_Y_TESOROS.md` §6 M1.
+- Sala de prueba fija (planta 1) para rutas cortas M1-a..M1-e:
+
+      make -C projects/006_delve BUILD=build_tr TARGET=006_delve_tr USERFLAGS="-DDL_DEBUG_SEED=0x00C0FFEEu -DDL_DEBUG_TESTROOM"
+
+  Fila de entrada (mirando al norte): Light (2 a la izquierda), Missile (1 a la izquierda), llave (1 a la derecha),
+  cofre con Heal (2 a la derecha); cofre con llave y Ring of Mana delante de la llave; rata a d = 4, dos slimes.
+  Ejemplo M1-a: `--input "60:a;130:l;165:r;200:b" --check "test_missile_kills.32==1"`.
+- Paletas de sprites: las de adornos y halo se crean al verlas (antes 9 fijas); con magia en pantalla se miden 14 de 16.

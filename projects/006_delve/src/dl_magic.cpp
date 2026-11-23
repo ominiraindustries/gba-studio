@@ -577,14 +577,29 @@ namespace dl
         // chests the generator placed, reachable, nearest first
         int want = _floor == 0 ? 2 : 3;
 
-        for(int pass = 0; pass < 2; ++pass)
+        // pass 2: still too few, so an item lying in a dead end (nothing behind it) or in the open middle of a room
+        // (3+ open sides) becomes a chest: a blocking chest there never cuts a path
+        auto open_sides = [&lv](int c)
+        {
+            int n = 0;
+
+            for(int d = 0; d < 4; ++d)
+            {
+                n += graph_kind[kind_at(lv, c, d)] ? 1 : 0;
+            }
+
+            return n;
+        };
+
+        for(int pass = 0; pass < 3; ++pass)
         {
             for(int i = 0; i < lv.nents && m.nchests < want; ++i)
             {
                 entity& e = lv.ents[i];
                 int c = e.y * W + e.x;
 
-                if(e.type != E_FURN || cell_dist(c) == 255 || _ent_of_cell[c] != i)
+                if((e.type != E_FURN && ! (pass == 2 && e.type == E_ITEM)) || cell_dist(c) == 255 ||
+                   _ent_of_cell[c] != i)
                 {
                     continue;
                 }
@@ -597,12 +612,15 @@ namespace dl
                 }
 
                 // pass 1: too few chests, so room furniture that blocks anyway becomes one (MAGIA 6 M1: 2-3 on floor 1)
+                int sides = pass == 2 ? open_sides(c) : 0;
                 bool ok = ! taken && (pass == 0 ? e.c == FURN_CHEST :
-                          (e.c == FURN_CRATE || e.c == FURN_BARREL || e.c == FURN_STATUE) && lv.th[c] &&
-                          cell_dist(c) > 3);
+                          pass == 1 ? (e.c == FURN_CRATE || e.c == FURN_BARREL || e.c == FURN_STATUE) && lv.th[c] &&
+                                      cell_dist(c) > 3 :
+                          cell_dist(c) > 3 && (sides == 1 || (lv.th[c] && sides >= 3)));
 
                 if(ok)
                 {
+                    e.type = E_FURN;
                     e.c = FURN_CHEST;
                     e.a = uint8_t(e.a & 3);
                     m.chest_ent[m.nchests++] = int16_t(i);
