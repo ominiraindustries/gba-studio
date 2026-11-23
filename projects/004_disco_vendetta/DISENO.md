@@ -149,6 +149,9 @@ mira sigue a la cruceta" sería una tarea P4, sólo como opción (regla 14).
 | Mira de 10 f de espera y 3 f/paso, con ayuda de ±22,5° | regla 2 | menos de 1 de cada 5 disparos del jugador fallan a 64 px o menos en la entrada grabada |
 | Los enemigos sólo disparan en pantalla y tras 30 f | regla 5 | 0 muertes en las que el que dispara no aparezca en la captura de los 30 f anteriores |
 | Reiniciar con A tras morir; nunca con R+A | reglas 10 y 14 | reintento < 90 f medido con `gbarun.py` |
+| (Usuario, 2026-11-23) Mira continua: L/R giran 6°/f manteniendo y 5,625° por toque; jugador y enemigos rotan por hardware (sprites afines), un solo dibujo por personaje | flujo e inmediatez: el giro a saltos de 22,5° no se sentía fluido | ≤ 13 matrices afines en uso (jugador + vivos); 180° en ~30 f |
+| (Usuario) Gore: partículas de sangre en la dirección del golpe, manchas persistentes en una capa de fondo, charcos bajo cadáveres, hitstop 3 f y temblor de cámara | cada acción tiene respuesta (checklist del primer minuto); recompensa | 60 fps con 7 enemigos + 24 partículas |
+| (Usuario) Vista cenital total, sin perspectiva: muros, puertas, muebles, personajes y manchas vistos desde arriba, sin caras laterales ni sombras proyectadas | lenguaje visual coherente; legibilidad de colisiones (lo que se ve es lo que choca) | ningún tile o sprite con cara frontal en la revisión de arte |
 
 ## Riesgos
 - **Rotación**: Butano tiene 32 matrices afines, que bastan para 13 sprites en el greybox, pero el pixel art rotado por
