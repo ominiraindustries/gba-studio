@@ -29,10 +29,12 @@ Juegos de Game Boy Advance en C++ con **Butano** (`engine/butano/`, v21.10). Cli
 ## Inicio de una tarea
 
 1. `python -I .claude/scripts/tasks.py ready` y `show ID`. Sin tarea no se implementa: créala (`add`) con aceptación.
-2. Lee sólo lo que la tarea necesita: `docs/INDEX.md` → la guía o skill concreta → la sección. No leas docs enteras,
-   ni todas las skills, ni ficheros enteros cuando basta un trozo (`grep -n`, `Read` con offset).
-3. Para APIs de Butano: `docs/guias/que-usar-butano.md`, luego `engine/butano/butano/include/bn_*.h` y el ejemplo
-   correspondiente. **No inventes funciones.**
+2. Lee sólo lo que la tarea necesita: `python -I .claude/scripts/kb.py brief --role <rol> --task "<tarea>"` (o
+   `docs/INDEX.md`) → la guía o skill concreta → la sección. No leas docs enteras, ni todas las skills, ni ficheros
+   enteros cuando basta un trozo (`grep -n`, `Read` con offset).
+3. Antes de trabajo de hardware o API: `kb.py query "..." --kind hw|butano` y `kb.py symbol bn::x` (firma exacta;
+   skill `gba-kb`). Luego `docs/guias/que-usar-butano.md` y el ejemplo de `engine/butano/examples/`.
+   **No inventes funciones**: si `symbol` no la encuentra, no existe.
 4. Confirma y reclama: `tasks.py update ID --status confirmed --append-notes "Evidence: ..."` y `--claim`.
    Ciclo completo en `docs/harness/flujo.md`.
 
@@ -98,7 +100,8 @@ Juegos de Game Boy Advance en C++ con **Butano** (`engine/butano/`, v21.10). Cli
 - Trabaja directamente en búsquedas, cambios pequeños y tareas secuenciales. Subagentes sólo para líneas paralelas
   con rutas disjuntas, revisión independiente o una especialidad clara. Máximo 2–3 a la vez.
 - Agentes: `gba-game-dev`, `gba-engine-dev`, `gba-reviewer`, `gba-designer`, `gba-artist`. Skills: `gba-build`,
-  `gba-run`, `gba-gfx`, `gba-audio`, `gba-performance`, `gba-design`, `gba-release`.
+  `gba-run`, `gba-gfx`, `gba-audio`, `gba-performance`, `gba-design`, `gba-release`, `gba-kb` (consulta de
+  hardware/API). Para estudiar un juego comercial: skill `gba-study`.
 - Presupuesto: ~120 llamadas por agente, máximo 150 salvo permiso. A las ~120: commit, nota de relevo en la tarea
   (`--append-notes "Relevo: hecho / falta / cómo probar"`) y terminar. Nunca reanudar un agente largo para otra
   fase: uno nuevo con la nota. Reglas en `docs/harness/coste-tokens.md`.
