@@ -53,7 +53,9 @@ class Inputs:
 
 
 def menu(inp, rows):
-    inp.press("start", 30)   # title -> run
+    inp.press("start", 30)   # title -> main menu
+    inp.press("a", 20)       # PLAY -> stage select
+    inp.press("a", 30)       # Gloam Meadow -> run
     inp.press("select", 10)
     for r in rows:
         inp.row(*r)
@@ -78,6 +80,56 @@ def main():
             rows.append((ROW_FORCE, "a", int(force)))
         menu(inp, rows)
         inp.kite(seconds * 60)
+    elif case == "meta":
+        # Block 4: META1 = fresh save, Meta preset, quit, shop (Might x5, refund, Might x1, Cinda), records,
+        # stage select with Cinda. META2 (KEEP_SAVE=1) = boot again and open the shop: purchases kept.
+        marks = []
+        inp.press("start", 30)
+        marks.append(inp.f)                      # main menu
+        if os.environ.get("PHASE", "1") == "1":
+            inp.press("a", 20)
+            inp.press("a", 60)                   # run
+            inp.press("select", 10)
+            inp.row(ROW_FORCE + 1)               # DBG Meta preset
+            inp.press("select", 20)
+            inp.press("start", 20)
+            inp.press("down", 8)
+            inp.press("a", 40)                   # quit -> menu
+            marks.append(inp.f)
+            inp.press("down", 10)
+            inp.press("a", 30)                   # SHOP
+            for _ in range(5):
+                inp.press("a", 12)
+            marks.append(inp.f)                  # Might 5/5
+            inp.press("select", 12)
+            marks.append(inp.f)                  # refund prompt
+            inp.press("a", 20)
+            inp.press("a", 12)                   # Might 1/5
+            for _ in range(11):
+                inp.press("down", 6)
+            inp.press("a", 20)                   # Cinda
+            marks.append(inp.f)
+            inp.press("b", 30)
+            inp.press("down", 10)
+            inp.press("a", 30)                   # RECORDS
+            marks.append(inp.f)
+            inp.press("b", 30)
+            inp.press("up", 8)
+            inp.press("up", 8)
+            inp.press("a", 30)                   # stage select
+            inp.press("r", 20)
+            marks.append(inp.f)
+            inp.press("right", 20)
+            marks.append(inp.f)
+        else:
+            inp.press("down", 10)
+            inp.press("a", 30)
+            marks.append(inp.f)                  # shop after reboot
+            for _ in range(11):
+                inp.press("down", 6)
+            marks.append(inp.f)
+        os.environ.setdefault("SHOTS", ",".join(str(m) for m in marks))
+        seconds = 0
     print("kite_start", inp.f - seconds * 60)
     frames = inp.f + 30
     shots = os.environ.get("SHOTS") or ",".join(str(x) for x in range(inp.f - seconds * 60 + 120, frames, 600))
@@ -86,11 +138,16 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]
     cmd += ["--check", ",".join(checks + syms)]
+    # Block 4: the run reads the meta save (Mesen keeps it in Documents/Mesen2/Saves). A fresh save by default so
+    # the card pool and shop ranks are those of a first run; KEEP_SAVE=1 keeps it.
+    sav = os.path.join(os.path.expanduser("~"), "Documents", "Mesen2", "Saves", "007_survivors.sav")
+    if os.environ.get("KEEP_SAVE") != "1" and os.path.exists(sav):
+        os.remove(sav)
     rc = subprocess.call(cmd, stdout=subprocess.DEVNULL)
     import json
     res = json.load(open(os.path.join(out, "result.json")))

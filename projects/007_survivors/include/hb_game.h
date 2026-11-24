@@ -28,8 +28,16 @@ namespace hb
         title
     };
 
-    // Plays one run (title -> run -> summary). Allocates the run state once on entry (EWRAM heap).
-    [[nodiscard]] run_end play_run(unsigned seed, fx_settings& fx);
+    // Chosen on the stage select screen (hb_meta.cpp).
+    struct run_setup
+    {
+        int character = 0;   // hb::character_id
+        int stage = 0;
+    };
+
+    // Plays one run (run -> summary). Reads the meta save (shop ranks, unlocks) and writes it at the end of the run.
+    // Allocates the run state once on entry (EWRAM heap).
+    [[nodiscard]] run_end play_run(unsigned seed, fx_settings& fx, const run_setup& setup);
 }
 
 #endif

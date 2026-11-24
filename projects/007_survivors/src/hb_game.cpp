@@ -2,6 +2,14 @@
 // Numbers come from DISENO.md (sections cited next to each system).
 
 #include "hb_game.h"
+#include "hb_save.h"
+
+#include "bn_sprite_affine_mat_ptr.h"
+#include "bn_sprite_items_fx_lance.h"
+#include "bn_sprite_items_fx_star.h"
+#include "bn_sprite_palette_items_wizard_cinda_palette.h"
+#include "bn_sprite_palette_items_wizard_morrow_palette.h"
+#include "bn_sound_items.h"
 
 #include "bn_array.h"
 #include "bn_bg_palettes.h"
@@ -95,6 +103,10 @@ volatile int test_gold_bosses;
 volatile int test_nova_pulled;         // gems pulled by Novas with Lodestone >= 3
 volatile int test_charge_offscreen;    // Warchief charges warned with the boss off screen (review: 0)
 volatile int test_curse_elites;        // most elites alive during a cursed wave (<= 5)
+volatile int test_evolved;           // G-55: evolution bits (1 Starfall, 2 Blizzard, 4 Ward of Ages)
+volatile int test_meta_gold;         // gold banked by the last finished run
+volatile int test_new_unlocks;       // unlock bits gained by the last finished run
+volatile int test_lance_hits;
 volatile int test_tiles_menu;         // peak with a menu open (cards, pause, summary)
 volatile int test_tiles_menu_mode;
 volatile int test_tiles_used;         // peak bn::sprite_tiles::used_tiles_count() during play (§C6: <= 900)
@@ -489,10 +501,13 @@ namespace
         up_frost,
         up_ember,
         up_chain,
+        up_lance,       // G-55
         up_boots,       // first passive
         up_heart,
         up_tome,
         up_lodestone,
+        up_lens,        // G-55
+        up_ward,        // G-55
         up_heal,
         up_gold,
         up_count
@@ -517,12 +532,23 @@ namespace
         { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slows", "+3 dmg", "Bigger", "Faster", "Freeze" } },
         { "Ember Toss", &art::icons, art::icon_ember_toss, { "Fire", "+1 ball", "Wider", "+6 dmg", "Burn+" } },
         { "Storm Chain", &art::icons, art::icon_storm_chain, { "Zap", "+1 jump", "+4 dmg", "+2 jump", "Faster" } },
+        { "Moon Lance", &art::icons, 10, { "Beam", "+5 dmg", "Wider", "Behind", "Faster" } },
         { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD" } },
         { "Heart Amulet", &art::icons, art::icon_heart_amulet, { "+20 HP", "+20 HP", "+20 HP", "+20 HP", "+20 HP" } },
         { "Spell Tome", &art::icons, art::icon_spell_tome, { "-6% CD", "-6% CD", "-6% CD", "-6% CD", "-6% CD" } },
         { "Lodestone", &art::icons, art::icon_magnet, { "Reach+", "Reach+", "Reach+", "Reach+", "Reach+" } },
+        { "Lens of Reach", &art::icons, 11, { "+10% area", "+10% area", "+10% area", "+10% area", "+10% area" } },
+        { "Ward Stone", &art::icons, 12, { "-6% hurt", "-6% hurt", "-6% hurt", "-6% hurt", "+10 f safe" } },
         { "Heal", &art::heart, 0, { "Heal 30", "", "", "", "" } },
         { "Gold", &art::coin, 0, { "+10 G", "", "", "", "" } },
+    };
+
+    // Evolutions of block 4 (§C3): weapon Nv5 + its passive -> the next boss or elite chest transforms it.
+    enum evolution_bit : uint8_t
+    {
+        evo_starfall = 1,       // Spark Bolt + Spell Tome
+        evo_blizzard = 2,       // Frost Ring + Lens of Reach
+        evo_ward_of_ages = 4    // Rune Orbit + Ward Stone
     };
 
     enum blessing_id : uint8_t
@@ -703,7 +729,7 @@ namespace
     {
 
     public:
-        game(unsigned seed, fx_settings& fx) :
+        game(unsigned seed, fx_settings& fx, const run_setup& setup) :
             _fx(fx),
             _camera(bn::camera_ptr::create(0, 0)),
             _text(common::variable_8x8_sprite_font),
@@ -723,7 +749,20 @@ namespace
             _grid_clear();
             _build_palettes();
             _white_pal = _white_palette().create_palette();
-            _wizard_pal = art::wizard.palette_item().create_palette();
+            // Characters (§C4): Wendel's tiles with another palette.
+            _setup = setup;
+            _wizard_pal = (setup.character == char_cinda ? bn::sprite_palette_items::wizard_cinda_palette :
+                           setup.character == char_morrow ? bn::sprite_palette_items::wizard_morrow_palette :
+                                                            art::wizard.palette_item()).create_palette();
+            _wizard.set_palette(*_wizard_pal);
+            const save_data& meta = save();
+
+            for(int k = 0; k < shop_count; ++k)
+            {
+                _shop[k] = meta.shop_ranks[k];
+            }
+
+            _unlocks = meta.unlock_bits;
 
             for(int t = 0; t < type_count; ++t)
             {
@@ -804,9 +843,17 @@ namespace
                 _hud_frame.push_back(bn::move(plaque));
             }
 
-            _levels[up_spark] = 1;
-            _player_hp = player_hp;
-            _player_max_hp = player_hp;
+            // Starting weapon per character; shop Vitality / Charged / Reroll / Revival (§C4).
+            _levels[_setup.character == char_cinda ? up_ember : _setup.character == char_morrow ? up_chain : up_spark] = 1;
+            _player_max_hp = player_hp + 10 * _shop[shop_vitality] - (_setup.character == char_cinda ? 10 : 0);
+            _player_hp = _player_max_hp;
+            _rerolls = _shop[shop_reroll];
+            _revivals = _shop[shop_revival];
+
+            if(_shop[shop_charged])
+            {
+                _nova = nova_max / 2;
+            }
             _facing = fixed_point(1, 0);
 
             // Treasure Goblin: one 50 % window per act, 0:30-3:30 into the act (§C5), never near a boss.
@@ -863,6 +910,7 @@ namespace
                 case game_mode::pause:
                     if(_update_pause())
                     {
+                        _commit_meta();   // quitting keeps the gold (R10)
                         return run_end::title;
                     }
                     break;
@@ -893,7 +941,7 @@ namespace
                         if(--_summary_lock == 0)
                         {
                             _text.set_center_alignment();
-                            _text.generate(0, 28, "A: RETRY    B: TITLE", _menu);
+                            _text.generate(0, 66, "A: RETRY    B: MENU", _menu);
                         }
                     }
                     else if(bn::keypad::a_pressed())
@@ -1042,6 +1090,28 @@ namespace
         int _xp = 0;
         int _pending_levels = 0;
         int _free_upgrades = 0;
+
+        // Meta (G-55): setup, shop ranks and unlocks read at the start of the run.
+        run_setup _setup;
+        int _shop[shop_count] = {};
+        uint32_t _unlocks = 0;
+        int _rerolls = 0;
+        int _revivals = 0;
+        int _xp_frac = 0;           // Growth: XP hundredths
+        int _recovery_t = 0;
+        int _evolved = 0;           // evolution_bit
+        int _evolve_flash = 0;
+        bool _meta_done = false;
+        int _meta_earned = 0;
+        int _new_best = 0;          // 1 time, 2 kills, 4 level
+        uint32_t _new_unlocks = 0;
+        int _star_cd = 30;
+        int _lance_cd = 60;
+        int _lance_t = -1;
+        bn::vector<bn::sprite_ptr, 8> _lance_sprites;
+        bn::optional<bn::sprite_affine_mat_ptr> _lance_mat;
+        bn::optional<bn::sprite_affine_mat_ptr> _lance_mat_back;
+        int _ward_kills = 0;
         int _gold = 0;
         int _gold_from[gold_source_count] = {};   // summary breakdown (E5.4)
         int _kills = 0;
@@ -1533,6 +1603,12 @@ namespace
             _update_shrine();
             _update_timers();
 
+            if(_shop[shop_recovery] && _player_hp > 0 && ++_recovery_t >= 10 * fps / _shop[shop_recovery])
+            {
+                _recovery_t = 0;
+                _player_hp = bn::min(_player_max_hp, _player_hp + 1);   // shop Recovery: 1 HP every 10 s per rank
+            }
+
             int cam_x = to_int(_pos.x());
             int cam_y = to_int(_pos.y());
 
@@ -1575,6 +1651,18 @@ namespace
 
             _refresh_hud(false);
 
+            if(_player_hp <= 0 && _revivals > 0)
+            {
+                // Shop Revival: once, back with 50 % HP and a Nova-like burst (§C4).
+                --_revivals;
+                _player_hp = _player_max_hp / 2;
+                _invulnerable = 2 * fps;
+                _push_enemies_out(64);
+                _show_banner("REVIVED!", art::text_gold, 2 * fps);
+                _play(art::sfx_nova);
+                _shake = 16;
+            }
+
             if(_player_hp <= 0)
             {
                 _player_hp = 0;
@@ -1612,7 +1700,8 @@ namespace
 
         [[nodiscard]] fixed _speed_multiplier() const
         {
-            fixed m = 1 + fixed(0.08) * _levels[up_boots];
+            fixed m = 1 + fixed(0.08) * _levels[up_boots] + fixed(0.04) * _shop[shop_haste] +
+                      (_setup.character == char_morrow ? fixed(0.1) : fixed(0));
 
             if(_blessing == bless_haste)
             {
@@ -1710,7 +1799,7 @@ namespace
             }
 
             _pos = end;
-            _blink_cd = _cooldown(3 * fps);
+            _blink_cd = _cooldown(3 * fps) * (_setup.character == char_morrow ? 4 : 5) / 5;   // Morrow -20 %
             _blink_invulnerable = 10;
             _play(art::sfx_blink, fixed(0.8));
             test_blinks = test_blinks + 1;
@@ -2062,8 +2151,11 @@ namespace
                 _show_hint("B: BLINK", 3 * fps);
             }
 
+            // §C3: max(1, round(contact x (1 - Ward - Armor))); Ward Stone Nv5 +10 f invulnerability.
+            int cut = 6 * _levels[up_ward] + 5 * _shop[shop_armor];
+            damage = bn::max(1, (damage * (100 - cut) + 50) / 100);
             _player_hp -= damage;
-            _invulnerable = player_invulnerable_frames;
+            _invulnerable = player_invulnerable_frames + (_levels[up_ward] >= 5 ? 10 : 0);
             _shake = 8;
             _play(art::sfx_hurt);
         }
@@ -3061,7 +3153,16 @@ namespace
 
         [[nodiscard]] int _damage(int base) const
         {
-            return _blessing == bless_fury ? (base * 13 + 9) / 10 : base;
+            // §C3: max(1, base x (1 + Might + blessing)); Morrow -15 %.
+            int pct = 100 + 5 * _shop[shop_might] + (_blessing == bless_fury ? 30 : 0) -
+                      (_setup.character == char_morrow ? 15 : 0);
+            return bn::max(1, (base * pct + 50) / 100);
+        }
+
+        // Lens of Reach +10 % area per level, Cinda +10 % (§C3, §C4).
+        [[nodiscard]] int _area(int radius) const
+        {
+            return radius * (100 + 10 * _levels[up_lens] + (_setup.character == char_cinda ? 10 : 0)) / 100;
         }
 
         // Spell Tome: -6 % weapon and Blink cooldown per level (§C3).
@@ -3098,7 +3199,7 @@ namespace
 
                 if(b.t >= 40)
                 {
-                    _explode(b.pos, lv >= 3 ? 32 : 24, _damage(lv >= 4 ? 20 : 14));
+                    _explode(b.pos, _area(lv >= 3 ? 32 : 24), _damage(lv >= 4 ? 20 : 14));
 
                     if(! _fires.full())
                     {
@@ -3357,8 +3458,201 @@ namespace
                 test_prof_chain = bn::max(int(test_prof_chain), c);
             }
             _prof(4);
+            _update_lance();
+            _update_stars();
             _update_bolts();
             _prof(5);
+        }
+
+        // ---- Moon Lance (§C3): beam where the wizard looks, 120 x 12, 8 f, pierces everything.
+        void _update_lance()
+        {
+            int lv = _levels[up_lance];
+
+            if(_lance_t >= 0)
+            {
+                ++_lance_t;
+                int frame = _lance_t < 2 ? 0 : _lance_t < 6 ? 1 : 2;
+
+                for(bn::sprite_ptr& sp : _lance_sprites)
+                {
+                    sp.set_tiles(bn::sprite_items::fx_lance.tiles_item(), frame);
+                }
+
+                if(_lance_t >= 8)
+                {
+                    _lance_sprites.clear();
+                    _lance_t = -1;
+                }
+            }
+
+            if(lv == 0 || --_lance_cd > 0)
+            {
+                return;
+            }
+
+            _lance_cd = _cooldown(lv >= 5 ? 60 : 90);
+            int damage = _damage(lv >= 2 ? 15 : 10);
+            int width = _area(lv >= 3 ? 18 : 12);
+            bool behind = lv >= 4;
+
+            // 8 directions from the facing vector.
+            fixed fx = _facing.x();
+            fixed fy = _facing.y();
+            int sx = fx > fixed(0.38) ? 1 : fx < fixed(-0.38) ? -1 : 0;
+            int sy = fy > fixed(0.38) ? 1 : fy < fixed(-0.38) ? -1 : 0;
+
+            if(sx == 0 && sy == 0)
+            {
+                sx = 1;
+            }
+
+            constexpr int angles[3][3] = { { 135, 90, 45 }, { 180, 0, 0 }, { 225, 270, 315 } };
+            int angle = angles[sy + 1][sx + 1];
+            fixed_point dir = sx && sy ? fixed_point(fixed(sx) * diag, fixed(sy) * diag) : fixed_point(sx, sy);
+
+            if(! _lance_mat)
+            {
+                _lance_mat = bn::sprite_affine_mat_ptr::create();
+                _lance_mat_back = bn::sprite_affine_mat_ptr::create();
+            }
+
+            _lance_mat->set_rotation_angle(angle);
+            _lance_mat->set_vertical_scale(fixed(width) / 12);
+            _lance_mat_back->set_rotation_angle((angle + 180) % 360);
+            _lance_mat_back->set_vertical_scale(fixed(width) / 12);
+            _lance_sprites.clear();
+
+            for(int side = 0; side < (behind ? 2 : 1); ++side)
+            {
+                for(int k = 0; k < 4; ++k)
+                {
+                    fixed_point c = _pos + fixed_point(0, -4) + dir * (side ? -(16 + 32 * k) : 16 + 32 * k);
+                    bn::optional<bn::sprite_ptr> sp = bn::sprite_items::fx_lance.create_sprite_optional(c, 0);
+
+                    if(! sp)
+                    {
+                        break;
+                    }
+
+                    sp->set_camera(_camera);
+                    sp->set_bg_priority(2);
+                    sp->set_z_order(3);
+                    sp->set_affine_mat(side ? *_lance_mat_back : *_lance_mat);
+                    _lance_sprites.push_back(bn::move(*sp));
+                }
+            }
+
+            _lance_t = 0;
+            _play(art::sfx_spark, fixed(0.4), fixed(0.7));
+            int half = width / 2 + enemy_half_box;
+
+            for(int i = _enemies.size() - 1; i >= 0; --i)
+            {
+                const enemy& e = _enemies[i];
+                fixed_point d = e.pos - _pos;
+                int along = to_int(d.x() * dir.x() + d.y() * dir.y());
+                int perp = abs_int(to_int(d.x() * dir.y() - d.y() * dir.x()));
+
+                if(perp <= half && along <= 128 && along >= (behind ? -128 : 0))
+                {
+                    test_lance_hits = test_lance_hits + 1;
+                    _hit_enemy(i, damage, _pos);
+                }
+            }
+
+            if(_boss && _boss_state != 3)
+            {
+                for(int k = (behind ? -7 : 0); k <= 7; ++k)
+                {
+                    fixed_point q = _pos + dir * (k * 16);
+
+                    if(_boss_box_hit(to_int(q.x()), to_int(q.y()), width / 2))
+                    {
+                        _hit_boss(damage);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ---- Starfall (§C3 evolution): a star falls every 30 f on an enemy on screen (20 damage, r 12).
+        void _update_stars()
+        {
+            if(! (_evolved & evo_starfall) || --_star_cd > 0)
+            {
+                return;
+            }
+
+            _star_cd = 30;
+            int n = _enemies.size();
+
+            if(n == 0)
+            {
+                return;
+            }
+
+            int start = _random.get_int(n);
+
+            for(int k = 0; k < n; ++k)
+            {
+                const enemy& e = _enemies[(start + k) % n];
+                int dx = to_int(e.pos.x() - _pos.x());
+                int dy = to_int(e.pos.y() - _pos.y());
+
+                if(abs_int(dx) < 112 && abs_int(dy) < 72)
+                {
+                    fixed_point p = e.pos;
+                    _spawn_particle(p + fixed_point(0, -6), fixed_point(), bn::sprite_items::fx_star, { 0, 4, 3 }, 12, 3);
+                    _area_damage(p, 12, _damage(20), true);
+                    break;
+                }
+            }
+        }
+
+        // Evolution (§C3): weapon Nv5 + its passive; called when a boss or elite chest opens. True if one happened.
+        bool _try_evolve()
+        {
+            struct recipe
+            {
+                int weapon;
+                int passive;
+                int bit;
+                const char* text;
+            };
+
+            constexpr recipe recipes[3] = {
+                { up_spark, up_tome, evo_starfall, "EVOLVED: STARFALL" },
+                { up_frost, up_lens, evo_blizzard, "EVOLVED: BLIZZARD" },
+                { up_rune, up_ward, evo_ward_of_ages, "EVOLVED: WARD OF AGES" },
+            };
+
+            for(const recipe& r : recipes)
+            {
+                if(! (_evolved & r.bit) && _levels[r.weapon] >= max_upgrade_level && _levels[r.passive] > 0)
+                {
+                    _evolved |= r.bit;
+                    test_evolved = _evolved;
+                    _show_banner(r.text, art::text_gold, 2 * fps);
+                    _play(bn::sound_items::sfx_evolve);
+                    _level_flash = 30;
+                    _evolve_flash = 30;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        [[nodiscard]] int _upgrade_icon(int id) const
+        {
+            if((id == up_spark && (_evolved & evo_starfall)) || (id == up_frost && (_evolved & evo_blizzard)) ||
+               (id == up_rune && (_evolved & evo_ward_of_ages)))
+            {
+                return id == up_spark ? 13 : id == up_frost ? 14 : 15;
+            }
+
+            return upgrade_texts[id].icon;
         }
 
         void _update_spark()
@@ -3370,15 +3664,16 @@ namespace
                 return;
             }
 
-            _spark_cd = _cooldown(lv >= 5 ? 40 : 50);
+            bool starfall = _evolved & evo_starfall;
+            _spark_cd = _cooldown(starfall ? 36 : lv >= 5 ? 40 : 50);
             _play(art::sfx_spark, fixed(0.3));   // one per burst, not per spark (audio/LEEME.md)
-            int count = lv >= 4 ? 3 : lv >= 2 ? 2 : 1;
-            int damage = _damage(lv >= 3 ? 8 : 5);
-            int pierce = lv >= 5 ? 2 : 0;
+            int count = starfall ? 4 : lv >= 4 ? 3 : lv >= 2 ? 2 : 1;
+            int damage = _damage(starfall ? 10 : lv >= 3 ? 8 : 5);
+            int pierce = starfall ? 3 : lv >= 5 ? 2 : 0;
 
             // Nearest distinct targets.
-            int best_i[3] = { -1, -1, -1 };
-            int best_d[3] = { 1 << 30, 1 << 30, 1 << 30 };
+            int best_i[4] = { -1, -1, -1, -1 };
+            int best_d[4] = { 1 << 30, 1 << 30, 1 << 30, 1 << 30 };
             constexpr int range2 = 200 * 200;
 
             for(int i = 0, n = _enemies.size(); i < n; ++i)
@@ -3557,9 +3852,10 @@ namespace
                 return;
             }
 
-            int count = lv >= 4 ? 4 : lv >= 2 ? 3 : 2;
-            int radius = lv >= 3 ? 36 : 28;
-            bool always = lv >= 5;
+            bool ages = _evolved & evo_ward_of_ages;
+            int count = ages ? 6 : lv >= 4 ? 4 : lv >= 2 ? 3 : 2;
+            int radius = _area(ages ? 40 : lv >= 3 ? 36 : 28);
+            bool always = ages || lv >= 5;
             ++_rune_timer;
 
             if(_rune_timer >= 300)
@@ -3596,7 +3892,15 @@ namespace
             }
 
             int base = (_t * 2048) / 120;
-            int damage = _damage(4);
+            int damage = _damage(ages ? 8 : 4);
+
+            if(ages && (_t & 7) == 0)
+            {
+                for(bn::sprite_ptr& rune : _runes)
+                {
+                    rune.set_tiles(art::fx_rune.tiles_item(), 2 + ((_t >> 3) & 1));   // gold runes (art/LEEME.md)
+                }
+            }
 
             for(int r = 0, rn = _runes.size(); r < rn; ++r)
             {
@@ -3653,7 +3957,7 @@ namespace
                     return;
                 }
 
-                _frost_cd = _cooldown(lv >= 4 ? 110 : 150);
+                _frost_cd = _cooldown((_evolved & evo_blizzard) ? 90 : lv >= 4 ? 110 : 150);
                 _frost_t = 0;
                 ++_frost_pulse_id;
 
@@ -3663,9 +3967,10 @@ namespace
                 }
             }
 
-            int max_r = lv >= 3 ? 72 : 56;
+            bool blizzard = _evolved & evo_blizzard;
+            int max_r = _area(blizzard ? 96 : lv >= 3 ? 72 : 56);
             int r = (max_r * (_frost_t + 1)) / 24;
-            int damage = _damage(lv >= 2 ? 9 : 6);
+            int damage = _damage(blizzard ? 14 : lv >= 2 ? 9 : 6);
 
             _ensure_frost_shards();
             int frost_frame = bn::min(2, _frost_t / 8);
@@ -3706,7 +4011,7 @@ namespace
 
                     if(lv >= 5)
                     {
-                        e.freeze = 45;
+                        e.freeze = blizzard ? 60 : 45;
                     }
 
                     if(_hit_enemy(i, damage, _pos))
@@ -5659,7 +5964,8 @@ namespace
         void _update_pickups()
         {
             // Lodestone: +25 % pickup radius per level (§C3 pasivas).
-            int radius = _blessing == bless_magnet ? 400 : pickup_radius * (4 + _levels[up_lodestone]) / 4;
+            int radius = _blessing == bless_magnet ? 400 :
+                         pickup_radius * (4 + _levels[up_lodestone]) * (100 + 15 * _shop[shop_magnet]) / 400;
             int r2 = radius * radius;
 
             if(_gem_combo_t > 0 && --_gem_combo_t == 0)
@@ -5688,7 +5994,8 @@ namespace
                         }
                         else
                         {
-                            _free_upgrades += g.value;
+                            // §C3: a ready evolution comes first and takes one of the chest's items.
+                            _free_upgrades += _try_evolve() ? g.value - 1 : g.value;
                         }
 
                         _play(g.kind == pickup_heart ? art::sfx_gem : art::sfx_chest, fixed(0.6));
@@ -5750,7 +6057,10 @@ namespace
 
         void _add_xp(int value)
         {
-            _xp += value;
+            // Shop Growth: +4 % XP per rank, kept in hundredths so small gems still count.
+            _xp_frac += value * (100 + 4 * _shop[shop_growth]);
+            _xp += _xp_frac / 100;
+            _xp_frac %= 100;
 
             while(_xp >= xp_needed(_level + _pending_levels))
             {
@@ -6194,7 +6504,7 @@ namespace
             {
                 bool slot_free = _levels[i] > 0 || (i < up_boots ? weapons : passives) < max_slots;
 
-                if(_levels[i] < max_upgrade_level && slot_free)
+                if(_levels[i] < max_upgrade_level && slot_free && (_levels[i] || _upgrade_unlocked(i)))
                 {
                     pool[pool_n++] = uint8_t(i);
                 }
@@ -6267,6 +6577,12 @@ namespace
             if(shrine)
             {
                 _text.generate(0, 72, "Pick a blessing: D-PAD + A", _menu);
+            }
+            else if(_rerolls > 0)
+            {
+                bn::string<32> line(_pick_hint_done ? "R: REROLL x" : "D-PAD + A    R: REROLL x");
+                line.append(bn::to_string<4>(_rerolls));
+                _text.generate(0, 72, line, _menu);
             }
             else if(! _pick_hint_done)
             {
@@ -6455,6 +6771,17 @@ namespace
                 _menu[_sel_card_sprite + 1].set_tiles(art::card_base.tiles_item(), frame);
             }
 
+            if(bn::keypad::r_pressed() && _rerolls > 0 && _mode == game_mode::level_up && _cards_shown)
+            {
+                // Shop Reroll (§C3 "Cartas"): a new hand.
+                --_rerolls;
+                _open_level_up();
+                _burst.reset();
+                _burst_t = 0;
+                _draw_cards();
+                return;
+            }
+
             if(bn::keypad::left_pressed() && _cursor > 0)
             {
                 --_cursor;
@@ -6508,6 +6835,25 @@ namespace
                 {
                     _open_level_up();   // chained level ups (§10)
                 }
+            }
+        }
+
+        [[nodiscard]] bool _upgrade_unlocked(int id) const
+        {
+            switch(id)
+            {
+            case up_ember:
+                return _unlocks & unlock_ember;
+            case up_chain:
+                return _unlocks & unlock_chain;
+            case up_lens:
+                return _unlocks & unlock_lens;
+            case up_ward:
+                return _unlocks & unlock_ward;
+            case up_lance:
+                return _unlocks & unlock_lance;
+            default:
+                return true;
             }
         }
 
@@ -6593,7 +6939,7 @@ namespace
                 bool weapon = i < up_boots;
                 int x = weapon ? -104 : 6;
                 int& row_y = weapon ? y : y_passive;
-                int icon = upgrade_texts[i].icon;
+                int icon = _upgrade_icon(i);
                 bn::sprite_ptr slot = icon < 8 ?
                             art::slots.create_sprite(x, row_y, (weapon ? art::slot_weapon_first : art::slot_passive_first) + icon) :
                             art::icons.create_sprite(x, row_y, icon);
@@ -6635,7 +6981,7 @@ namespace
         }
 
         static constexpr int fx_rows = 11;
-        static constexpr int debug_rows = 5;
+        static constexpr int debug_rows = 6;
         static constexpr int dbg_start_count = 11;
         static constexpr int dbg_force_count = 11;
 
@@ -6861,7 +7207,7 @@ namespace
             constexpr const char* names[fx_rows + debug_rows] = {
                 "Hit flash", "Knockback", "Damage numbers", "Screen shake", "Death poof", "Gem trail",
                 "Level-up flash", "Dusk", "Frost translucent", "Boss mosaic", "Shadows",
-                "DBG God mode", "DBG Max power", "DBG Start at", "DBG Stress 56", "DBG Force"
+                "DBG God mode", "DBG Max power", "DBG Start at", "DBG Stress 56", "DBG Force", "DBG Meta preset"
             };
 
             _menu.clear();
@@ -6873,7 +7219,7 @@ namespace
             {
                 bn::string<32> line(r == _cursor ? "> " : "  ");
                 line.append(names[r]);
-                _text.generate(-100, -62 + r * 9, line, _menu);
+                _text.generate(-100, -64 + r * 8, line, _menu);
 
                 const char* state = "";
 
@@ -6944,7 +7290,7 @@ namespace
                     // Worst legal build: 4 weapon slots (Ember Toss left out) and every passive at Nv5.
                     for(int i = 0; i < weapon_or_passive_count; ++i)
                     {
-                        _levels[i] = i == up_ember ? 0 : max_upgrade_level;
+                        _levels[i] = i == up_ember || i == up_lance || i == up_lens || i == up_ward ? 0 : max_upgrade_level;
                     }
 
                     _player_max_hp = player_hp + 20 * max_upgrade_level;
@@ -6966,6 +7312,16 @@ namespace
                 else if(_cursor == fx_rows + 4)
                 {
                     _dbg_force_event(_dbg_force);
+                }
+                else if(_cursor == fx_rows + 5)
+                {
+                    // Meta preset (DISENO_RUTA block 4): +3000 gold and every unlock of stage 1, saved at once.
+                    save().gold += 3000;
+                    save().unlock_bits |= unlock_ember | unlock_chain | unlock_lens | unlock_ward | unlock_lance |
+                                          unlock_stage2;
+                    _unlocks = save().unlock_bits;
+                    write_save();
+                    _levels[up_lance] = max_upgrade_level;   // test convenience: see the Moon Lance at once
                 }
                 else if(_cursor == fx_rows + 3)
                 {
@@ -6994,6 +7350,80 @@ namespace
         // -----------------------------------------------------------------------------------------------------
         // End of run (§3: summary and Retry on A in < 3 s)
 
+        // §C4: bank the run in the save (gold with Greed, records, totals, unlocks). Once per run.
+        void _commit_meta()
+        {
+            if(_meta_done || _stress)
+            {
+                return;
+            }
+
+            _meta_done = true;
+            bool won = _mode == game_mode::won;
+            int s = _t / fps;
+            save_data& d = save();
+            uint32_t before = d.unlock_bits;
+            int earned = _gold + 5 * (s / 60) + (won ? 100 : 0);
+            earned = earned * (100 + 10 * _shop[shop_greed]) / 100;
+            _meta_earned = earned;
+            test_meta_gold = earned;
+            d.gold += uint32_t(earned);
+            d.gold_total += uint32_t(earned);
+
+            stage_record& r = d.records[_setup.stage];
+            _new_best = (s > r.best_time_s ? 1 : 0) | (_kills > r.best_kills ? 2 : 0) | (_level > r.best_level ? 4 : 0);
+
+            if(r.best_time_s == 0 && r.best_kills == 0)
+            {
+                _new_best = 0;   // the first run sets the records quietly
+            }
+
+            r.best_time_s = uint16_t(bn::max(int(r.best_time_s), s));
+            r.best_kills = uint16_t(bn::max(int(r.best_kills), _kills));
+            r.best_level = uint8_t(bn::max(int(r.best_level), _level));
+
+            if(won)
+            {
+                ++r.clears;
+                d.stages_cleared |= uint8_t(1 << _setup.stage);
+                d.unlock_bits |= _setup.stage == 0 ? unlock_stage2 : unlock_stage3;
+            }
+
+            d.kills_total += uint32_t(_kills);
+            ++d.runs;
+            d.deaths += _player_hp <= 0 ? 1 : 0;
+            d.boss_bits |= uint16_t((1 << _bosses_killed) - 1);
+
+            if(s >= 5 * 60)
+            {
+                d.unlock_bits |= unlock_ember;
+            }
+
+            if(_bosses_killed >= 1)
+            {
+                d.unlock_bits |= unlock_chain;
+            }
+
+            if(d.kills_total >= 500)
+            {
+                d.unlock_bits |= unlock_lens;
+            }
+
+            if(_bosses_killed >= 2)
+            {
+                d.unlock_bits |= unlock_ward;
+            }
+
+            if(s >= 10 * 60)
+            {
+                d.unlock_bits |= unlock_lance;
+            }
+
+            _new_unlocks = d.unlock_bits & ~before;
+            test_new_unlocks = int(_new_unlocks);
+            write_save();
+        }
+
         void _show_summary()
         {
             bool won = _mode == game_mode::won;
@@ -7016,36 +7446,72 @@ namespace
             _big_text.generate(0, -44, won ? "STAGE CLEAR" : "YOU FELL", _menu);
             _text.set_center_alignment();
 
+            _commit_meta();
             int s = _t / fps;
-            bn::string<32> line("Time ");
+            bn::string<48> line("Time ");
             line.push_back(char('0' + (s / 60) / 10));
             line.push_back(char('0' + (s / 60) % 10));
             line.push_back(':');
             line.push_back(char('0' + (s % 60) / 10));
             line.push_back(char('0' + (s % 60) % 10));
-            _text.generate(0, -20, line, _menu);
-
-            line = "Level ";
+            line.append("   Level ");
             line.append(bn::to_string<4>(_level));
             line.append("   Kills ");
             line.append(bn::to_string<6>(_kills));
-            _text.generate(0, -8, line, _menu);
+            _text.generate(0, -22, line, _menu);
 
-            line = "Gold ";
-            line.append(bn::to_string<6>(_gold));
-            _text.generate(0, 4, line, _menu);
+            if(_new_best)
+            {
+                // §C4 "Records": NEW BEST in time, kills or level.
+                line = "NEW BEST:";
+                line.append((_new_best & 1) ? " TIME" : "");
+                line.append((_new_best & 2) ? " KILLS" : "");
+                line.append((_new_best & 4) ? " LEVEL" : "");
+                _text.set_palette_item(art::text_gold);
+                _text.generate(0, -11, line, _menu);
+                _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+            }
+
+            line = "Gold +";
+            line.append(bn::to_string<6>(_meta_earned));
+            line.append("   Total ");
+            line.append(bn::to_string<8>(int(save().gold)));
+            _text.set_palette_item(art::text_gold);
+            _text.generate(0, 2, line, _menu);
+            _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
 
             // E5.4: gold broken down by source.
             line = "Drops ";
             line.append(bn::to_string<6>(_gold_from[gold_drops]));
             line.append("  Goblin ");
             line.append(bn::to_string<6>(_gold_from[gold_treasure]));
-            _text.generate(0, 16, line, _menu);
-            line = "Bosses ";
+            line.append("  Bosses ");
             line.append(bn::to_string<6>(_gold_from[gold_bosses]));
             line.append("  Cards ");
             line.append(bn::to_string<6>(_gold_from[gold_cards]));
-            _text.generate(0, 28, line, _menu);
+            _text.generate(0, 13, line, _menu);
+
+            // §C4 "Desbloqueos": NEW: ... (one line each, up to 3).
+            int y_new = 28;
+
+            for(int b = 0; b < 7 && y_new <= 48; ++b)
+            {
+                if(_new_unlocks & (1u << b))
+                {
+                    line = "NEW: ";
+                    line.append(unlock_name(b));
+                    _text.set_palette_item(art::text_gold);
+                    _text.generate(0, y_new, line, _menu);
+                    _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+                    y_new += 10;
+                }
+            }
+
+            if(_new_unlocks)
+            {
+                _play(bn::sound_items::jingle_unlock);
+            }
+
             test_gold_drops = _gold_from[gold_drops];
             test_gold_bosses = _gold_from[gold_bosses];
 
@@ -7057,12 +7523,12 @@ namespace
     };
 }
 
-run_end play_run(unsigned seed, fx_settings& fx)
+run_end play_run(unsigned seed, fx_settings& fx, const run_setup& setup)
 {
     test_cpu_max = 0;
     test_cpu_nova_max = 0;
     test_cpu_max_plain = 0;
-    bn::unique_ptr<game> g(new game(seed, fx));
+    bn::unique_ptr<game> g(new game(seed, fx, setup));
     return g->run();
 }
 
