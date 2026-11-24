@@ -199,3 +199,15 @@ Pruebas: `STAGE=2` en `tests/b2run.py` (`START_AT=-1` = desde 0:00). Ver tabla d
 | Texto | `bn::sprite_text_generator` + `common::variable_8x8_sprite_font` | sí |
 | Efecto de sonido | `bn::sound_items` (Maxmod) | sí |
 | Entrada | `bn::keypad` | sí |
+
+## Bloque 5.1 (G-55.1, G-55.3)
+
+- **DBG Bot C** (última fila del menú SELECT): bot reactivo que sustituye cruceta, B y A (huye de enemigos ≤ 96 px con
+  peso 1/d², evita muros y zarzas, órbita r 80, va a la gema más cercana ≤ 64 px, Blink a ≤ 16 px, 2.ª carta, Nova
+  llena). Prueba: `SEED=n SECONDS_RUN=490 python -I projects/007_survivors/tests/b2run.py botc <salida>` (GOD=1 y
+  START_AT opcionales). Tiempos: 3/5 semillas vivas a 7:00.
+- Bat 0.95 px/f, `player_hp` 120, zarzas 4 daño / 60 f / empuje 12 px.
+- Start at sólo acredita oro (ni récords, ni estadísticas, ni desbloqueos).
+- **OPTIONS** (menú principal): Music, Sound FX, Screen shake, Flash (ON por defecto) y Erase save (mantener A 2 s).
+  Se guarda en `music_vol`, `sfx_vol` y `fx_bits` del guardado (sin cambiar de versión). Pruebas: `meta` con
+  `PHASE=4` (tienda, fase, Start at) y `PHASE=5` (flechas de la tienda y OPTIONS).
