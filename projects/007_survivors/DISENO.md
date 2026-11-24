@@ -19,17 +19,22 @@ Reglas citadas de `docs/guias/diseno-juegos.md` como **R1..R14**; "Psico" = secc
 
 | Botón | En partida | En menús |
 |---|---|---|
-| Cruceta | mover en 8 direcciones (la última dirección es la "mirada" para hechizos direccionales) | elegir |
-| A | — (nada; las armas son automáticas) | confirmar |
-| B | — (reservado: Blink, ver pregunta 3) | volver |
-| R (mantener) | fija la mirada: te mueves sin girar (para apuntar Ember Toss / Moon Lance hacia atrás) | — |
+| Cruceta | mover en 8 direcciones | elegir |
+| A | **Hex Nova**: limpia la pantalla cuando el medidor (abajo izq.) está lleno; se carga al matar (2) y con gemas (1 por XP) | confirmar |
+| B | **Blink**: teletransporte corto en la dirección de la cruceta, 10 f invulnerable, recarga 3 s | volver |
+| R (mantener) | (bloque 2) fija la mirada para armas direccionales | — |
 | L | — | — |
 | START | pausa: muestra armas, pasivas y niveles; "Resume / Quit" | — |
 | SELECT | sólo build de pruebas: menú de efectos (§12) | — |
 
-Decisión: en el bloque 1 **sólo se usa la cruceta en partida**. R mantener es opcional y no se enseña hasta que el
-jugador tiene un arma direccional (bloque 2). A no hace nada en partida para que no haya un botón "que debería
-servir" (R14; antipatrón "controles que hay que aprender").
+**Decisión del usuario (2026-11-24, G-45)**, sustituye a la del 2026-11-23 ("sólo cruceta"):
+- **Mirada = dirección de disparo**, no de la marcha: el mago se gira hacia donde apunta su hechizo. Se lee qué
+  dispara y hacia dónde (respuesta a cada acción, CL1M).
+- **A = Hex Nova** y **B = Blink**, ya en el bloque 1. Ambos son **opcionales**: sólo con la cruceta se puede jugar
+  y ganar (R14: la complejidad, opcional). Se enseñan **en su momento** con una línea (R6): "B: BLINK" al recibir el
+  primer golpe, "A: NOVA READY!" la primera vez que el medidor se llena.
+- La A deja de ser "botón que no sirve" (el antipatrón que motivó la decisión anterior) porque el medidor visible
+  avisa de cuándo sirve.
 
 ## 2. Números iniciales (60 fps)
 
@@ -290,7 +295,7 @@ Límite duro: **128 sprites** (`BN_CFG_SPRITES_MAX_ITEMS`) y ~954 ciclos de OBJ 
 - Efectos de §12 con su menú SELECT; sonidos básicos (golpe, gema, nivel, daño, jefe).
 
 **No entra**: tienda, desbloqueos, armas 4–6, evolución, minutos 5–15, fases 2–3, cofres malditos, curses,
-reliquias, semilla diaria, Blink.
+reliquias, semilla diaria. (Blink y Hex Nova sí entran: decisión del usuario, §1.)
 
 **Aceptación del bloque 1**: 56 enemigos + 24 proyectiles sin parpadeo ni caída de fps (medido); un jugador nuevo
 entiende qué hacer en 10 s; muere o gana a los 5 min; Retry < 3 s; revisión de primer minuto (`gba-designer`).
@@ -315,7 +320,9 @@ Formato: `art/*.aseprite` indexado con paleta del juego, una etiqueta por animac
 
 | Decisión | Principio / regla | Métrica que lo comprobará |
 |---|---|---|
-| Sólo la cruceta en partida; armas automáticas | R14, R1 | 10 s sin dudas en la revisión del primer minuto |
+| Armas automáticas; cruceta basta para jugar | R14, R1 | 10 s sin dudas en la revisión del primer minuto |
+| A = Hex Nova (medidor 2/muerte, 1/XP), B = Blink (3 s) — usuario | R14 opcional; R6 rótulo en su momento; Psico tensión/alivio | Nova llena a ~0:50 (±10 s); Blink se usa ≥1 vez en 2 min en la prueba del usuario |
+| Mirada = dirección de disparo — usuario | respuesta a cada acción (CL1M) | el usuario dice qué dispara sin preguntar |
 | Monstruos por tiempo; nivel del jugador sólo da mejoras | decisión del usuario; R3 por actos de 5 min | muertes por minuto en dientes de sierra |
 | Velocidad 1.0, slime 0.35, skeleton 0.55, bat 1.1 | flujo: unos se esquivan andando, otros obligan a esquivar de verdad | ¿cuántos golpes de bat vs slime recibe un novato? (bats ≥ 2× slimes) |
 | Aparición fuera de pantalla, avisos "!" 1 s antes de oleadas | R5 | 0 golpes recibidos en los 30 f tras una aparición |
@@ -345,6 +352,45 @@ Formato: `art/*.aseprite` indexado con paleta del juego, una etiqueta por animac
 2. **Modelo de pantallas**: fases temáticas fijas (Meadow → Graveyard → Castle), cada una con su plantel y jefes, que
    se desbloquean al superar la anterior, con atrezzo/obstáculos procedurales por partida. **Recomendado** (§3–4).
    Alternativa: una sola fase que cambia de bioma con el tiempo dentro de la misma partida (más arte por partida).
-3. **Botón B = Blink** (pequeño salto de 40 px, enfriamiento 3 s) para escapar de rodeos. Recomendado: **no en el
-   bloque 1**; probarlo como interruptor en el bloque 2 si el usuario se siente encerrado.
+3. ~~Botón B = Blink~~ **Resuelta** por el usuario el 2026-11-24: Blink en B y Hex Nova en A, ya en el bloque 1 (§1).
 4. **Duración de la fase completa**: **15 min** (recomendado; 3 actos de 5) o 10 min (jefe final a 10).
+
+## 19. Revisión primer minuto (bloque 1) — 2026-11-24, ROM de 95adf60
+
+Método (R13): ROM de 95adf60 sin ventana (`gbarun.py`), 3 perfiles de entrada reproducibles con A cada 2.5 s (cartas
+y Nova) y B cada 7 s: **A "corro en círculo"** (cuadrado de 90 f por lado, novato que no se aleja), **B "paseante"**
+(lados de 240 f, se aleja de sus gemas). Valores leídos de `test_*` cada 20–80 f; capturas revisadas a 1x.
+
+| Punto (CL1M / R) | Medido | Veredicto | Arreglo concreto |
+|---|---|---|---|
+| Qué controlo y qué hago en 10 s (CL1M) | mago centrado, "D-PAD: MOVE" 3 s, chispa al aire a 0:01, primer slime 0:04, "GRAB GEMS" 0:06 | **OK** | — |
+| Empiezo con lo necesario, sitio seguro (CL1M, R5) | Spark Bolt equipado, 100 HP, 0 enemigos hasta 0:04, claro sin atrezzo | **OK** | — |
+| Cruceta / A / B enseñados en su momento (R6) | "B: BLINK" al 1.er golpe (0:22); "A: NOVA READY!" al llenarse (1:00) | **OK** con fallo: el rótulo de Nova **sigue 3 s después de lanzarla** (medidor ya a 14) | ocultar el rótulo al lanzar la Nova |
+| Elegir carta (R6) | "PICK ONE: D-PAD + A" la 1.ª vez; selección = esquinas azules, poco visible a 1x; mundo sin oscurecer, slimes encima del marco de la carta; texto cortado: "Slow ring" → "low rin" | **CAMBIAR** | carta elegida sube 4 px + parpadeo de marco 8 f, las otras con paleta al 60 %; ocultar sprites del mundo o fundido 50 % detrás de las cartas; textos de carta **≤ 7 caracteres por línea** ("Slows", "+8% SPD") |
+| 1.ª subida (métrica ≤ 0:25) | A: **0:22**; B: **0:34** (8 muertes a 0:22 pero 5 gemas abandonadas) | **CAMBIAR** | `need(1)` **5 → 3** (`xp_needed`: caso especial nivel 1; resto igual) y `pickup_radius` **24 → 32 px**. Previsto A ≈ 0:14, B ≈ 0:20 |
+| Ritmo de la Nova (diseño ~0:50) | A: llena a **1:00**; B: **1:14** | **CAMBIAR** | `nova_max` **150 → 120** → A ≈ 0:48, B ≈ 0:59 |
+| Nada mata sin aviso (R5, flujo) | A muere a **1:13** (Nv5): a 1:00 entran los 2 esqueletos "solos" **y a la vez** el sorteo pasa a 35 % esqueletos; a 1:08 hay 6+; 70 HP perdidos en 7 s (8 por toque, 30 f invulnerable = 16 HP/s rodeado). B sigue vivo a 1:32 con 56 HP | **CAMBIAR** (objetivo §6: un novato llega a 3:00) | esqueletos del sorteo desde **1:10** (no 1:00), proporción **15 % a 1:10 → 35 % a 1:40** lineal; daño del esqueleto **8 → 6** |
+| Al cerrar las cartas | A recibe 3 golpes en 1 s (95 → 85) justo al volver al juego | **CAMBIAR** (R2, R5) | al cerrar la carta: **45 f invulnerable** y empujar a 32 px a los enemigos que estén a < 32 px (reusar el destello de subida) |
+| Legibilidad del mago (R5, §17) | parpadeo de daño = **invisible 50 % de los frames** (`(_invulnerable & 2)`): rodeado de esqueletos el mago desaparece justo cuando más importa (capturas 0:23 y 1:13). Fuera de eso el z-order es correcto (mago 5 < enemigos 10) | **CAMBIAR** | sustituir la invisibilidad por destello de paleta (blanco 2 f / normal 2 f) o 50 % de transparencia; el mago **nunca** deja de verse. Barra de vida ya sigue visible |
+| Cada acción tiene respuesta (CL1M) | impacto, poof, gema, destello de nivel y tinte de Nova (13 f) visibles; Nova aún sin anillo (`fx_nova` provisional) | **OK** (provisional anotado) | — |
+| Reintentar < 5 s (R10) | muerte → resumen ~1 s → Retry; total < 3 s | **OK** con riesgo: el resumen **no bloquea la entrada**: una A pulsada para la Nova reintenta sin ver el resumen, y una **B de Blink vuelve al título** (pasó en la prueba) | bloquear A/B **60 f** en el resumen y mostrar "A: RETRY  B: TITLE" al acabar el bloqueo; ocultar el sprite del mago, que tapa "Kills 79" |
+| Textos (inglés, `sprite_text_generator`) | correctos; "LEVEL UP!", "YOU FELL", "PRESS START" legibles | **OK** salvo cartas (arriba) | — |
+
+**Veredicto: CAMBIAR antes de dar la ROM.** El primer minuto se entiende y es justo hasta ~0:55; los fallos son de
+números y de claridad, no del núcleo: 8 arreglos pequeños (todos datos o detalle de presentación), ningún cambio de
+vista ni de mecánica.
+
+Prioridad (implementador; prueba = los dos perfiles de arriba, métricas entre paréntesis):
+1. Mago siempre visible al recibir daño (0 capturas sin mago en 1:00–1:20 del perfil A).
+2. Esqueletos: sorteo desde 1:10 con rampa 15 → 35 %, daño 6 (perfil A vivo a 1:30 con ≥ 30 HP).
+3. Invulnerable 45 f + empuje 32 px al cerrar cartas (0 golpes en los 45 f tras cerrar).
+4. `need(1)` = 3 y `pickup_radius` = 32 (Nv2 ≤ 0:25 en ambos perfiles).
+5. Resumen de muerte: bloqueo 60 f de A/B, mago oculto (la A/B pulsadas no lo saltan).
+6. `nova_max` = 120 (llena a 0:50 ± 10 s en perfil A).
+7. Cartas: selección clara, mundo apagado detrás, textos ≤ 7 caracteres.
+8. Ocultar "A: NOVA READY!" al lanzarla.
+
+Riesgos que quedan: contraste del mago (túnica lila oscura sobre hierba oscura; los esqueletos blancos destacan más
+que él) → pregunta de dirección artística al usuario (tarea `design-question`); la Nova lanzada en pantalla casi vacía
+se desperdicia (aceptado: decisión del jugador, el medidor lo enseña); el perfil A es un novato pasivo: si con los
+arreglos sigue muriendo antes de 2:00, bajar el tope de §6 del minuto 1 de 20 a 16.
