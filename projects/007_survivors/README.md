@@ -29,8 +29,23 @@ Ejemplo: arranque + 20 s moviéndose en círculo:
     python -I tools/scripts/gbarun.py projects/007_survivors/007_survivors.gba --frames 1300 --shot 30,1200         --input "40:start;100-400:right;400-700:down;700-1000:left" --check "test_time_s.32>=15" --nonblank         --out <scratchpad>/run_007
 
 Para el jefe: SELECT (frame 60), 11 × abajo, A (God), abajo, abajo, A (Skip to 4:30), SELECT; luego moverse y pulsar A
-de vez en cuando (cartas). Medidas de G-45: 56 enemigos con armas Nv1 = 82 % de frame en el peor caso; con Max power
-el peor frame llega al 118 % (54 enemigos) y la Nova al 163 % (un frame): pendiente de perfilar.
+de vez en cuando (cartas).
+
+## Rendimiento (G-45)
+
+Peor frame medido con `test_cpu_max` (1/10000 de frame) y por secciones en `test_prof_worst[14]` / `test_prof_nova[14]`
+(ticks de `bn::timer`, 4389 = 1 frame; orden en el comentario de `src/hb_game.cpp`).
+
+| Caso | Antes | Después |
+|---|---|---|
+| Max power + Stress 56, peor frame | 145 % | 92 % |
+| Frame de la Nova | 159 % | 88 % |
+| Partida normal 4:30-5:10 (God + Skip) | 76 % | 78 % |
+
+Qué se hizo: tiles y paletas de enemigos cacheados (`sprite_tiles_ptr`/`sprite_palette_ptr`), sprites de chispa, runas
+y escarcha reutilizados (crear un sprite cuesta ~5-10 % de frame con 150 vivos), cubos espaciales de 32 px para
+armas y separación, golpes de la Nova repartidos en 6 frames (anillo que crece), `_update_enemies` en ARM/IWRAM
+(`HB_HOT`), 1 número de daño nuevo por frame y Stress repone 4 por frame.
 
 ## Provisionales
 
