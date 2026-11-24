@@ -1,4 +1,4 @@
-# Block 2 (G-49) headless checks for 007_survivors with tools/scripts/gbarun.py (no window).
+# Block 2-3 (G-49, G-52) headless checks for 007_survivors with tools/scripts/gbarun.py (no window).
 # Usage (repo root): python -I projects/007_survivors/tests/b2run.py CASE OUTDIR
 #   stress   DBG God + Stress 56 (mixed horde) + Max power, 40 s circling; prints test_tiles_used / test_cpu_max
 #   cards    stress + open a level-up (DBG Level up) for the VRAM peak with cards open
@@ -86,10 +86,10 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
-        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(14)]
+        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]
     cmd += ["--check", ",".join(checks + syms)]
     rc = subprocess.call(cmd, stdout=subprocess.DEVNULL)
     import json

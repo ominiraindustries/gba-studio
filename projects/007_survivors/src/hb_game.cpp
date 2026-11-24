@@ -20,6 +20,7 @@
 #include "bn_regular_bg_map_ptr.h"
 #include "bn_regular_bg_ptr.h"
 #include "bn_sound_handle.h"
+#include "bn_music.h"
 #include "bn_sprite_palettes.h"
 #include "bn_sprite_palette_item.h"
 #include "bn_sprite_palette_ptr.h"
@@ -66,22 +67,31 @@ volatile int test_cpu_nova_max;   // worst frame in which a Hex Nova was cast
 // Section ticks (bn::timer, 1/ticks_per_frame of a frame) of the current and of the worst measured frame.
 // 0 player, 1 director, 2 spark, 3 runes, 4 frost, 5 bolts, 6 enemies, 7 boss, 8 pickups, 9 particles,
 // 10 rest of the logic, 11 engine (bn::core::update until the next frame starts), 12 ticks inside _kill_enemy,
-// 13 kills in the frame.
-volatile int test_prof[14];
-volatile int test_prof_worst[14];     // worst frame without a Nova cast
-volatile int test_prof_nova[14];      // worst Nova frame
+// 13 kills in the frame, 14 ticks of _update_horde_frames (inside 6), 15 enemies alive.
+volatile int test_prof[16];
+volatile int test_prof_worst[16];     // worst frame without a Nova cast
+volatile int test_prof_nova[16];      // worst Nova frame
 volatile int test_cpu_max_plain;      // worst frame without a Nova cast
+volatile int test_prof_worst_frame;    // test_frames of that frame
 volatile int test_wolf_crouches;      // DASH warnings started
 volatile int test_wolf_dashes;        // dashes started (each one after a 30 f crouch)
 volatile int test_wolf_dash_hits;     // hits on the wizard by a dashing wolf
 volatile int test_events;             // bit 0 treasure goblin, 1 split, 2 wolf pack, 3 goblin raid, 4 warchief,
-                                      // 5 horn, 6 stunned, 7 double charge, 8 warchief dead, 9 treasure killed
+                                      // 5 horn, 6 stunned, 7 double charge, 8 warchief dead, 9 treasure killed,
+                                      // 10 boss rage, 11 stampede orcs, 12 elite pair, 13 cursed chest, 14 roots,
+                                      // 15 thorn wall, 16 seeds, 17 treant dead, 18 hex moon, 19 stage clear
 volatile int test_boss_phase;
 volatile int test_dead_at;            // second of death (0 alive)
 volatile int test_prof_ember;         // worst ticks of Ember Toss / Storm Chain updates
 volatile int test_prof_chain;
 volatile int test_boss_ttk;           // seconds from the boss entrance to its death
 volatile int test_first_crouch_frame; // test_frames of the first wolf crouch (for a capture)
+volatile int test_thorn_radius;        // current thorn wall radius (150 -> 110)
+volatile int test_gold_drops;          // summary breakdown (E5.4)
+volatile int test_gold_bosses;
+volatile int test_nova_pulled;         // gems pulled by Novas with Lodestone >= 3
+volatile int test_charge_offscreen;    // Warchief charges warned with the boss off screen (review: 0)
+volatile int test_curse_elites;        // most elites alive during a cursed wave (<= 5)
 volatile int test_tiles_used;         // peak bn::sprite_tiles::used_tiles_count() during play (§C6: <= 900)
 
 // perf: the hottest per-frame loops run as ARM code from IWRAM (measured in G-45; see README "Rendimiento").
@@ -231,6 +241,11 @@ namespace
         void init(unsigned map_seed)
         {
             seed = map_seed;
+
+            for(unsigned& key : template_cache_key)
+            {
+                key = 0x80008000u;
+            }
             bn::memory::clear(prop_cells);
 
             for(int t = 0; t < template_count * 2; ++t)
@@ -310,11 +325,30 @@ namespace
                 return -1;
             }
 
+            // perf (G-52): every walking monster asks 2-3 times per frame; a 16-entry cache skips the hash and the
+            // division (the template of a chunk never changes).
+            int slot = (kx & 3) | ((ky & 3) << 2);
+            unsigned key = (unsigned(kx) << 16) ^ (unsigned(ky) & 0xFFFFu);
+
+            if(template_cache_key[slot] == key)
+            {
+                return template_cache_value[slot];
+            }
+
             unsigned h = hash3(seed, kx, ky);
             unsigned pick = (h >> 4) % 10;
             int t = pick < 3 ? 0 : int(pick) - 2;
-            return t * 2 + int(h & 1);
+            int result = t * 2 + int(h & 1);
+            template_cache_key[slot] = key;
+            template_cache_value[slot] = int8_t(result);
+            return result;
         }
+
+        mutable unsigned template_cache_key[16] = { 0x80008000u, 0x80008000u, 0x80008000u, 0x80008000u,
+                                                    0x80008000u, 0x80008000u, 0x80008000u, 0x80008000u,
+                                                    0x80008000u, 0x80008000u, 0x80008000u, 0x80008000u,
+                                                    0x80008000u, 0x80008000u, 0x80008000u, 0x80008000u };
+        mutable int8_t template_cache_value[16] = {};
 
         [[nodiscard]] bool solid_at(int wx, int wy) const
         {
@@ -427,7 +461,7 @@ namespace
         { &art::skeleton, 14, fixed(0.55), 6, false, kind_chase, 7, 1, 20, 0, false },   // damage 8 -> 6 (§19.2)
         { &art::big_slime, 30, fixed(0.3), 8, false, kind_hop, 11, 5, 0, 2, true },
         { &art::goblin, 10, fixed(0.85), 6, false, kind_chase, 9, 1, 0, 0, true },
-        { &art::wolf, 18, fixed(0.7), 10, false, kind_dash, 9, 5, 0, 0, false },
+        { &art::wolf, 18, fixed(0.7), 8, false, kind_dash, 9, 5, 0, 0, false },
         { &art::orc, 60, fixed(0.45), 12, false, kind_tank, 11, 5, 0, 0, true },
         { &art::goblin, 40, fixed(1.3), 0, false, kind_flee, 9, 0, 0, 0, true },
     };
@@ -540,6 +574,7 @@ namespace
         uint8_t cd = 0;         // DASH recharge (frames / 2)
         uint8_t safe = 0;       // SPLIT children: frames without dealing or taking damage
         bool small = false;     // Splitting copy: does not split again
+        bool tiny = false;      // Splitting elite copy: 50 % logical size
         bool flank = false;     // goblins: +30 or -30 degrees while far (§C1 CHASE flank)
 
         explicit enemy(bn::sprite_ptr&& s) :
@@ -569,7 +604,17 @@ namespace
         pickup_gem,
         pickup_coin,
         pickup_chest,
-        pickup_heart
+        pickup_heart,
+        pickup_cursed   // cursed chest (§C5): 2 upgrades, then 20 s of elites
+    };
+
+    enum gold_source : uint8_t
+    {
+        gold_drops,      // coins from monsters and elites
+        gold_treasure,   // Treasure Goblin
+        gold_bosses,
+        gold_cards,      // "+10 gold" card
+        gold_source_count
     };
 
     struct split_request
@@ -587,13 +632,15 @@ namespace
         int16_t life;
         uint8_t type;
         uint8_t mode;
+        uint8_t elite_den;   // elite chance 1/den (0 none)
     };
 
     enum swarm_kind : uint8_t
     {
         swarm_bats,
         swarm_wolves,
-        swarm_goblins
+        swarm_goblins,
+        swarm_stampede   // 14:00: wolves, orcs, wolves
     };
 
     struct pickup
@@ -603,6 +650,7 @@ namespace
         fixed speed;
         int value = 0;
         uint8_t kind = 0;
+        uint8_t source = gold_drops;
         bool flying = false;
 
         explicit pickup(bn::sprite_ptr&& s) :
@@ -757,14 +805,16 @@ namespace
             _facing = fixed_point(1, 0);
 
             // Treasure Goblin: one 50 % window per act, 0:30-3:30 into the act (§C5), never near a boss.
-            for(int act = 1; act >= 0; --act)
+            // Treasure Goblin: one 50 % window per act, 0:30-3:30 into the act; cursed chest: 60 %, 1:00-3:30 (§C5).
+            for(int act = 0; act < 3; ++act)
             {
-                int at = (act * 300 + 30 + _random.get_int(181)) * fps;
-
-                if(_random.get_int(2) == 0)
-                {
-                    _treasure_at = at;
-                }
+                // Review block 2: never within 20 s of an event (act 2: 6:25-6:50 or 7:20-7:50; act 3: 11:10-11:40).
+                int at = act == 0 ? 30 + _random.get_int(61) :
+                         act == 1 ? (_random.get_int(2) ? 385 + _random.get_int(26) : 440 + _random.get_int(31)) :
+                                    670 + _random.get_int(31);
+                _treasure_at[act] = _random.get_int(2) == 0 ? at * fps : -1;
+                at = (act * 300 + 60 + _random.get_int(151)) * fps;
+                _cursed_at[act] = _random.get_int(10) < 6 ? at : -1;
             }
 
             art::music_meadow.play(fixed(art::music_volume_pct) / 100);
@@ -885,7 +935,7 @@ namespace
                     {
                         test_cpu_nova_max = cpu;
 
-                        for(int k = 0; k < 14; ++k)
+                        for(int k = 0; k < 16; ++k)
                         {
                             test_prof_nova[k] = test_prof[k];
                         }
@@ -893,8 +943,9 @@ namespace
                     else if(! nova_frame && cpu > test_cpu_max_plain)
                     {
                         test_cpu_max_plain = cpu;
+                        test_prof_worst_frame = test_frames;
 
-                        for(int k = 0; k < 14; ++k)
+                        for(int k = 0; k < 16; ++k)
                         {
                             test_prof_worst[k] = test_prof[k];
                         }
@@ -942,6 +993,10 @@ namespace
         bn::array<bn::color, 16> _white_colors;
         bn::array<bn::color, 16> _elite_colors[type_count][4];   // swift, shielded, splitting, treasure gold
         bn::array<bn::color, 16> _boss_white_colors;
+        bn::array<bn::color, 16> _wolf_red_colors;
+        bn::optional<bn::sprite_palette_ptr> _wolf_red_pal;
+        int _crouching = 0;        // wolves crouching in the previous frame (max 3 at once)
+        int _crouching_now = 0;
 
         // Hot-path caches (perf): enemies swap palettes and animation frames by handle, without a VRAM lookup.
         bn::optional<bn::sprite_palette_ptr> _white_pal;
@@ -949,6 +1004,7 @@ namespace
         bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs> _horde_tiles[max_horde_arts];
         const art::monster_art* _horde_looks[max_horde_arts] = {};
         int _horde_frame[max_horde_arts] = {};
+        int _horde_next = 0;   // first art looked at this frame (round robin)
         int _horde_art_count = 0;
         uint8_t _type_slot[type_count] = {};
         int _type_alive[type_count] = {};
@@ -972,6 +1028,7 @@ namespace
         int _pending_levels = 0;
         int _free_upgrades = 0;
         int _gold = 0;
+        int _gold_from[gold_source_count] = {};   // summary breakdown (E5.4)
         int _kills = 0;
         int _levels[weapon_or_passive_count] = {};
         int _walk_anim = 0;
@@ -1022,11 +1079,13 @@ namespace
         int _boss_max_hp = 600;
         int _big_alive = 0;
         static constexpr int max_big_alive = 10;   // 32x32 monsters (§C1, OBJ line budget)
-        int _treasure_at = -1;
+        int _treasure_at[3] = { -1, -1, -1 };   // frame of each act's Treasure Goblin window (-1 none)
+        int _cursed_at[3] = { -1, -1, -1 };     // and of its cursed chest
+        int _curse_t = 0;                       // frames left of the cursed elite wave
         bool _treasure_alive = false;
         bn::optional<bn::sprite_ptr> _treasure_arrow;
         bn::vector<split_request, 8> _splits;
-        bn::vector<queued_spawn, 24> _spawn_queue;
+        bn::vector<queued_spawn, 40> _spawn_queue;
         int _spawn_queue_age = 0;
         fixed_point _swarm_dir;
         fixed_point _swarm_origin;
@@ -1104,8 +1163,54 @@ namespace
         int _boss_attacks = 0;
         int _boss_bar_shown = -1;
         bool _boss_second = false;
+        bool _boss_leash = false;
         fixed_point _boss_dir;
         bn::vector<bn::sprite_ptr, 4> _boss_warn;
+
+        // Thornwood Treant (block 3): roots, thorn wall, seeds.
+        struct root_spike
+        {
+            bn::sprite_ptr sprite;
+            fixed_point pos;
+            int t = 0;
+            int frame = 0;
+
+            explicit root_spike(bn::sprite_ptr&& s) :
+                sprite(bn::move(s))
+            {
+            }
+        };
+
+        struct seed_shot
+        {
+            bn::sprite_ptr sprite;
+            fixed_point pos;
+            fixed_point vel;
+            int t = 0;
+
+            explicit seed_shot(bn::sprite_ptr&& s) :
+                sprite(bn::move(s))
+            {
+            }
+        };
+
+        bn::vector<root_spike, 6> _roots;
+        bn::vector<seed_shot, 8> _seeds;
+        bn::vector<bn::sprite_ptr, 16> _thorns;
+        bn::optional<bn::sprite_tiles_ptr> _thorn_tiles;   // one block shared by the 16 thorn sprites
+        bn::optional<bn::sprite_palette_ptr> _thorn_pal;
+        fixed_point _boss_entry;
+        fixed_point _thorn_center;
+        int _thorn_t = -1;          // frames since the wall rose (-1 none)
+        int _thorn_hurt_cd = 0;
+        int _roots_pending = 0;     // roots still to come out this slam (1 per frame)
+        int _seeds_pending = 0;     // seeds still to fire (2 per frame)
+        int _root_cd = 0;
+        int _seed_cd = 0;
+        int _wolf_cd = 0;
+        bool _hex_moon = false;
+        int _slowmo_t = 0;          // E5.4: logic at 1/2 after the final boss dies
+        int _music_resume_t = 0;    // meadow music back after the boss jingle
 
         // Ember Toss / Storm Chain
         struct ember_ball
@@ -1235,6 +1340,15 @@ namespace
 
             _boss_white_colors = _white_colors;
 
+            // Wolf crouch warning (review block 2): the wolf palette pushed to red, blinking every 4 f.
+            bn::span<const bn::color> wolf_colors = art::wolf.item->palette_item().colors_ref();
+
+            for(int k = 0; k < 16 && k < wolf_colors.size(); ++k)
+            {
+                bn::color c = wolf_colors[k];
+                _wolf_red_colors[k] = k == 0 ? c : bn::color(bn::min(31, 12 + c.red()), c.green() / 3, c.blue() / 3);
+            }
+
             // Elite tint (§4 2b): Swift = gold, Shielded = cyan; computed from whatever palette the item has.
             const bn::color tints[4] = { bn::color(31, 26, 4), bn::color(8, 28, 31), bn::color(30, 8, 28),
                                          bn::color(31, 22, 0) };
@@ -1346,6 +1460,11 @@ namespace
                 return;
             }
 
+            if(_slowmo_t > 0 && (--_slowmo_t & 1))
+            {
+                return;   // the skipped half of the frames: everything holds still
+            }
+
             ++_t;
             _create_budget = create_budget_per_frame;
             _prof_timer.restart();
@@ -1354,7 +1473,12 @@ namespace
             _update_director();
             _prof(1);
             _update_weapons();
-            _update_horde_frames();
+            {
+                bn::timer horde_timer;
+                _update_horde_frames();
+                test_prof[14] = horde_timer.elapsed_ticks();
+            }
+            test_prof[15] = _enemies.size();
             _update_enemies();
             _prof(6);
             _update_boss();
@@ -1399,7 +1523,9 @@ namespace
                 _wizard.set_visible(true);
                 _death_anim = 0;
                 _end_timer = 60;
+                bn::music::stop();
                 _play(art::sfx_hurt);
+                _play(art::jingle_defeat);
             }
             else if(_pending_levels > 0 || _free_upgrades > 0)
             {
@@ -1566,6 +1692,23 @@ namespace
             test_nova = 0;
             test_novas_cast = test_novas_cast + 1;
             _nova_cast_frame = true;
+
+            // Lodestone >= 3 (§C3): the Nova pulls every gem on the field.
+            if(_levels[up_lodestone] >= 3)
+            {
+                int pulled = 0;
+
+                for(pickup& g : _pickups)
+                {
+                    if(g.kind == pickup_gem && ! g.flying)
+                    {
+                        g.flying = true;
+                        ++pulled;
+                    }
+                }
+
+                test_nova_pulled = test_nova_pulled + pulled;
+            }
             _nova_flash = 24;
             _shake = 20;
             _play(art::sfx_nova);
@@ -1872,6 +2015,11 @@ namespace
 
             if(_boss)
             {
+                if(_boss_kind == 2 && _boss_fight_t > 3 * 60 * fps)
+                {
+                    return max_enemies;   // E5 "THE HEX MOON RISES": normal monsters at 100 % of the cap
+                }
+
                 return _boss_kind == 0 ? 12 : 16;   // DISENO_FASES E2 boss rows
             }
 
@@ -1881,15 +2029,24 @@ namespace
             }
 
             // E2 Cap per minute; minute 1: 20 -> 16 -> 12 (DISENO §19.1, G-45.2); minute 5 = after the Slime King.
-            constexpr int per_minute[10] = { 14, 12, 26, 32, 38, 12, 36, 40, 44, 46 };
-            return per_minute[bn::min(s / 60, 9)];
+            constexpr int per_minute[16] = { 14, 12, 26, 32, 38, 12, 36, 40, 44, 46, 16, 48, 52, 54, 56, 16 };
+            int cap = per_minute[bn::min(s / 60, 15)];
+
+            // Review block 2 (R3): x0.6 for 10 s after the goblin, wolf and orc introductions.
+            if((s >= 360 && s < 370) || (s >= 420 && s < 430) || (s >= 540 && s < 550))
+            {
+                cap = cap * 6 / 10;
+            }
+
+            return cap;
         }
 
         [[nodiscard]] bool _spawn_paused() const
         {
             int s = _t / fps;
             return (s >= 50 && s < 56) || (_t >= boss_time - pre_boss_pause && _t < boss_time) ||
-                   (_t >= boss2_time - pre_boss_pause && _t < boss2_time && _bosses_killed == 1) || _rest_t > 0 ||
+                   (_t >= boss2_time - pre_boss_pause && _t < boss2_time && _bosses_killed == 1) ||
+                   (_t >= boss3_time - pre_boss_pause && _t < boss3_time && _bosses_killed == 2) || _rest_t > 0 ||
                    _boss_dead;
         }
 
@@ -1902,7 +2059,7 @@ namespace
 
         [[nodiscard]] int _pick_mixed(int minute, int r) const
         {
-            static constexpr mix_entry mixes[9][5] = {
+            static constexpr mix_entry mixes[14][5] = {
                 { { type_skeleton, 50 }, { type_bat, 30 }, { type_slime, 20 }, {}, {} },                      // 2
                 { { type_skeleton, 45 }, { type_bat, 25 }, { type_slime, 15 }, { type_big_slime, 15 }, {} },  // 3
                 { { type_skeleton, 50 }, { type_bat, 25 }, { type_big_slime, 25 }, {}, {} },                  // 4
@@ -1912,8 +2069,13 @@ namespace
                 { { type_wolf, 30 }, { type_goblin, 30 }, { type_skeleton, 25 }, { type_bat, 15 }, {} },      // 8
                 { { type_goblin, 35 }, { type_wolf, 25 }, { type_skeleton, 25 }, { type_orc, 15 }, {} },      // 9
                 { { type_goblin, 60 }, { type_bat, 40 }, {}, {}, {} },                                        // 10
+                { { type_orc, 20 }, { type_wolf, 25 }, { type_goblin, 25 }, { type_bat, 15 }, { type_skeleton, 15 } }, // 11
+                { { type_orc, 25 }, { type_wolf, 25 }, { type_goblin, 20 }, { type_skeleton, 20 }, { type_big_slime, 10 } }, // 12
+                { { type_orc, 30 }, { type_wolf, 30 }, { type_goblin, 20 }, { type_skeleton, 20 }, {} },      // 13
+                { { type_orc, 35 }, { type_wolf, 30 }, { type_goblin, 20 }, { type_skeleton, 15 }, {} },      // 14
+                { { type_goblin, 50 }, { type_wolf, 50 }, {}, {}, {} },                                       // 15
             };
-            const mix_entry* mix = mixes[bn::max(0, bn::min(minute, 10) - 2)];
+            const mix_entry* mix = mixes[bn::max(0, bn::min(minute, 15) - 2)];
 
             for(int k = 0; k < 5 && mix[k].weight; ++k)
             {
@@ -2062,6 +2224,92 @@ namespace
             return e;
         }
 
+        // 13:00 ELITE PAIR (E1): two elites of the minute's mix from opposite sides, with the red elite arrow.
+        void _spawn_elite_pair()
+        {
+            _make_room(2);
+            fixed_point dir = angle_vector(_random.get_int(2048));
+            test_events = test_events | 4096;
+
+            for(int k = 0; k < 2; ++k)
+            {
+                fixed_point p = _pos + dir * (k ? -130 : 130);
+
+                if(_map.solid_at(to_int(p.x()), to_int(p.y())))
+                {
+                    p = _spawn_point(120, 140, k == 0);
+                }
+
+                int type = _pick_type();
+                type = enemy_defs[type].big ? int(type_orc) : type;
+                _make_elite(_spawn_enemy(type, p, 0), 1 + _random.get_int(3));
+            }
+        }
+
+        void _make_elite(enemy* e, int elite)
+        {
+            if(e && ! e->elite)
+            {
+                e->elite = uint8_t(elite);
+                e->shield = elite == 2 ? 3 : 0;
+                e->hp *= elite == 1 ? 2 : 3;
+                e->sprite.set_palette(_enemy_palette(*e));
+                e->aura = _world_sprite(art::fx_aura, e->pos, 0, 11);
+            }
+        }
+
+        void _spawn_cursed_chest()
+        {
+            fixed_point p = _spawn_point(80, 100, true);
+
+            if(_spawn_pickup(p, pickup_cursed, 2))
+            {
+                _show_world_hint("CURSED CHEST", p, 3 * fps);
+            }
+        }
+
+        // §C5 cursed chest: "CURSED!" and 20 s of elites, one every 2 s, at most 5 alive.
+        void _open_cursed_chest(const fixed_point& p)
+        {
+            _free_upgrades += 2;
+            _curse_t = 20 * fps;
+            test_events = test_events | 8192;
+            _spawn_particle(p, fixed_point(), art::chest, { art::chest_cursed_open, 1, 40 }, 40, 20);
+            _play(art::sfx_curse_sting);
+            _show_banner("CURSED!", art::text_red, 2 * fps);
+            _shake = bn::max(_shake, 8);
+        }
+
+        void _update_curse()
+        {
+            if(_curse_t <= 0)
+            {
+                return;
+            }
+
+            --_curse_t;
+
+            if(_curse_t % (2 * fps) == 0 && _elites_alive() < 5)
+            {
+                int type = _pick_type();
+                type = enemy_defs[type].big || type == type_treasure ? int(type_skeleton) : type;
+                _make_room(1);
+                _make_elite(_spawn_enemy(type, _spawn_point(110, 130, false), 0), 1 + _random.get_int(3));
+                test_curse_elites = bn::max(int(test_curse_elites), _elites_alive());
+            }
+        }
+
+        // Big centred banner (boss names, CURSED!, THE HEX MOON RISES, STAGE CLEAR).
+        void _show_banner(const char* text, const bn::sprite_palette_item& palette, int frames)
+        {
+            _boss_title.clear();
+            _big_text.set_center_alignment();
+            _big_text.set_palette_item(palette);
+            _big_text.generate(0, -30, text, _boss_title);
+            _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
+            _boss_title_t = frames;
+        }
+
         void _make_room(int needed)
         {
             // Removes the farthest chasers (no drops) so a scripted event always fits in the 56 cap.
@@ -2190,6 +2438,11 @@ namespace
             if(--_type_alive[type] == 0)
             {
                 _type_pal[type].reset();
+
+                if(type == type_wolf)
+                {
+                    _wolf_red_pal.reset();
+                }
             }
 
             int last = _enemies.size() - 1;
@@ -2220,6 +2473,13 @@ namespace
             if(s >= 120)
             {
                 int type = _pick_mixed(s / 60, r);
+
+                // A held-back type (not introduced yet, or the big cap) is redrawn from the minute's mix (review).
+                for(int retry = 0; retry < 4 && (s < _intro_second(type) + 10 ||
+                                                 (enemy_defs[type].big && _big_alive >= max_big_alive)); ++retry)
+                {
+                    type = _pick_mixed(s / 60, _random.get_int(100));
+                }
 
                 if(s < _intro_second(type) + 10 || (enemy_defs[type].big && _big_alive >= max_big_alive))
                 {
@@ -2276,7 +2536,7 @@ namespace
             _spawn_queued();
 
             // Shrines every 90 s (§4 2a, E2): not with a boss alive, not at 5:00 / 6:00 (boss and rest).
-            if(second && s > 0 && s % 90 == 0 && s != 360 && _t < boss2_time && ! _boss && ! _shrine)
+            if(second && s > 0 && s % 90 == 0 && s != 360 && _t < boss3_time && ! _boss && ! _shrine && ! _boss_dead)
             {
                 _spawn_shrine();
             }
@@ -2313,11 +2573,32 @@ namespace
                 _spawn_swarm();
             }
 
-            // 4:00 Bone Ring (§6).
-            if(_t == 4 * 60 * fps)
+            // 4:00 Bone Ring (§6); 12:00 Double Bone Ring (2 x 16, the second 3 s later); 13:00 Elite Pair;
+            // 14:00 Stampede of wolves and orcs (3 rows, 90 f + horn).
+            if(_t == 4 * 60 * fps || ((_t == 12 * 60 * fps || _t == (12 * 60 + 3) * fps) && ! _stress))
             {
                 _spawn_bone_ring();
             }
+            else if(_t == 13 * 60 * fps && ! _stress)
+            {
+                _spawn_elite_pair();
+            }
+            else if(_t == 14 * 60 * fps - 90 && ! _stress)
+            {
+                _begin_swarm_warning(swarm_stampede, 90);
+                _play(art::sfx_horn);
+            }
+
+            // Cursed chest: one 60 % window per act (§C5).
+            for(int act = 0; act < 3; ++act)
+            {
+                if(_t == _cursed_at[act] && ! _boss)
+                {
+                    _spawn_cursed_chest();
+                }
+            }
+
+            _update_curse();
 
             // First appearances (§C1): alone, from the side the wizard faces. 7:00 wolves howl 1.5 s before.
             if(second && ! _stress)
@@ -2345,9 +2626,12 @@ namespace
             }
 
             // Treasure Goblin: one window per act (§C5), or forced from the DBG menu.
-            if(_t == _treasure_at && ! _boss)
+            for(int act = 0; act < 3; ++act)
             {
-                _spawn_treasure();
+                if(_t == _treasure_at[act] && ! _boss)
+                {
+                    _spawn_treasure();
+                }
             }
 
             // 5:00 Slime King (§8), 10:00 Orc Warchief (E5.1).
@@ -2358,6 +2642,10 @@ namespace
             else if(_t >= boss2_time && _bosses_killed == 1 && ! _boss && ! _stress)
             {
                 _spawn_boss(1);
+            }
+            else if(_t >= boss3_time && _bosses_killed == 2 && ! _boss && ! _stress)
+            {
+                _spawn_boss(2);
             }
 
             if(_t < 10 * fps && ! _stress)
@@ -2426,16 +2714,25 @@ namespace
                     p = base;
                 }
 
-                _spawn_enemy(_pick_type(), p, s < 300 ? 40 : 30);
+                // perf (G-52): groups enter through the queue, 2 per frame (5 sprites in one frame cost ~590 ticks).
+                int den = s < 300 ? 40 : s < 660 ? 30 : s < 840 ? 20 : 15;   // E2 elites per minute
+                if(_stress)
+                {
+                    _spawn_enemy(_pick_type(), p, den);   // Stress keeps its measured 2 per frame directly
+                }
+                else
+                {
+                    _queue_spawn(_pick_type(), p, mode_chase, fixed_point(), 0, den);
+                }
             }
         }
 
         // perf: formations are queued and enter 2 per frame (20 goblins in one frame measured 2173 ticks, 50 %).
-        void _queue_spawn(int type, const fixed_point& p, int mode, const fixed_point& vel, int life)
+        void _queue_spawn(int type, const fixed_point& p, int mode, const fixed_point& vel, int life, int elite_den = 0)
         {
             if(! _spawn_queue.full())
             {
-                _spawn_queue.push_back({ p, vel, int16_t(life), uint8_t(type), uint8_t(mode) });
+                _spawn_queue.push_back({ p, vel, int16_t(life), uint8_t(type), uint8_t(mode), uint8_t(elite_den) });
             }
         }
 
@@ -2449,7 +2746,7 @@ namespace
                 // Moving formations advance while they wait so the line keeps its shape.
                 fixed_point p = q.pos + q.vel * _spawn_queue_age;
 
-                if(enemy* e = _spawn_enemy(q.type, p, 0))
+                if(enemy* e = _spawn_enemy(q.type, p, q.elite_den))
                 {
                     e->mode = q.mode;
                     e->vel = q.vel;
@@ -2474,6 +2771,7 @@ namespace
                     {
                         e->safe = 20;
                         e->small = true;
+                        e->tiny = r.hp > 0;
 
                         if(r.hp > 0)
                         {
@@ -2503,6 +2801,7 @@ namespace
                 _show_hint("TREASURE GOBLIN!", 2 * fps);
                 _play(art::sfx_coin_burst, fixed(0.6));
                 bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
+                arrow.set_palette(art::coin.palette_item());   // review block 2: gold, the coin's palette
                 arrow.set_bg_priority(0);
                 _treasure_arrow = bn::move(arrow);
             }
@@ -2572,10 +2871,10 @@ namespace
             _swarm_dir = fixed_point(-dx[side], -dy[side]);
             _swarm_origin = fixed_point(dx[side] * 150, dy[side] * 110);
             _swarm_warning_t = frames;
-            _swarm_rows_left = kind == swarm_wolves ? 2 : 1;
+            _swarm_rows_left = kind == swarm_wolves ? 2 : kind == swarm_stampede ? 3 : 1;
             _warnings.clear();
 
-            if(kind != swarm_wolves)
+            if(kind != swarm_wolves && kind != swarm_stampede)
             {
                 _play(art::sfx_wave, fixed(0.8));
             }
@@ -2606,12 +2905,33 @@ namespace
             fixed_point origin = _pos + _swarm_origin;
             --_swarm_rows_left;
 
-            if(_swarm_kind == swarm_wolves)
+            if(_swarm_kind == swarm_stampede && _swarm_rows_left == 1)
+            {
+                // 14:00 Stampede, middle row: 3 orcs straight across at 1.2 px/f.
+                _make_room(3);
+                test_events = test_events | 2048;
+                _swarm_row_t = 20;
+
+                for(int i = 0; i < 3; ++i)
+                {
+                    if(enemy* e = _spawn_enemy(type_orc, origin + perp * ((i - 1) * 30), 0))
+                    {
+                        e->mode = mode_swarm;
+                        e->vel = _swarm_dir * fixed(1.2);
+                        e->life = 300;
+                        e->sprite.set_horizontal_flip(_swarm_dir.x() < 0);
+                    }
+                }
+
+                return;
+            }
+
+            if(_swarm_kind == swarm_wolves || _swarm_kind == swarm_stampede)
             {
                 // STAMPEDE (E1): rows of 3 dashing wolves, 20 f apart, straight across at 3 px/f.
                 _make_room(3);
                 test_events = test_events | 4;
-                _swarm_row_t = 20;
+                _swarm_row_t = _swarm_kind == swarm_stampede ? 30 : 20;
 
                 for(int i = 0; i < 3; ++i)
                 {
@@ -3109,7 +3429,7 @@ namespace
                     int dx = to_int(e.pos.x()) - bx;
                     int dy = to_int(e.pos.y()) - by;
 
-                    int reach = enemy_defs[e.type].half + 3;
+                    int reach = (e.tiny ? enemy_defs[e.type].half / 2 : enemy_defs[e.type].half) + 3;
 
                     if(abs_int(dx) < reach && abs_int(dy) < reach)
                     {
@@ -3488,7 +3808,7 @@ namespace
             if(e.type == type_treasure)
             {
                 // §C2: 30 + rnd(31) gold and one heart.
-                _spawn_pickup(p + fixed_point(-6, 0), pickup_coin, 30 + _random.get_int(31));
+                _spawn_pickup(p + fixed_point(-6, 0), pickup_coin, 30 + _random.get_int(31), gold_treasure);
                 _spawn_pickup(p + fixed_point(6, 0), pickup_heart, 30);
                 _treasure_alive = false;
                 test_events = test_events | 512;
@@ -3536,13 +3856,31 @@ namespace
         // Shared horde frame (§C6): advances every art's animation and retargets its direction blocks.
         void _update_horde_frames()
         {
-            for(int a = 0; a < _horde_art_count; ++a)
-            {
-                const art::monster_art& look = *_horde_looks[a];
-                int f = (_t / look.move[0].frame_time) % look.move[0].count;
+            // perf (G-52): every art stepping on the same frame cost 632 ticks (14 % of a frame) in profile C. Arts
+            // are phase-shifted, skipped while none of their monsters is alive, and at most 2 retarget per frame
+            // (one that is due waits a frame).
+            bool alive[max_horde_arts] = {};
 
-                if(f != _horde_frame[a])
+            for(int t = 0; t < type_count; ++t)
+            {
+                if(_type_alive[t])
                 {
+                    alive[_type_slot[t]] = true;
+                }
+            }
+
+            int budget = 2;
+
+            for(int k = 0; k < _horde_art_count && budget > 0; ++k)
+            {
+                int a = _horde_next + k;
+                a = a >= _horde_art_count ? a - _horde_art_count : a;
+                const art::monster_art& look = *_horde_looks[a];
+                int f = ((_t + a * 3) / look.move[0].frame_time) % look.move[0].count;
+
+                if(alive[a] && f != _horde_frame[a])
+                {
+                    --budget;
                     _horde_frame[a] = f;
                     bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs>& blocks = _horde_tiles[a];
 
@@ -3552,6 +3890,8 @@ namespace
                     }
                 }
             }
+
+            _horde_next = _horde_next + 1 >= _horde_art_count ? 0 : _horde_next + 1;
 
             int used = bn::sprite_tiles::used_tiles_count();
 
@@ -3563,6 +3903,8 @@ namespace
 
         HB_HOT void _update_enemies()
         {
+            _crouching = _crouching_now;
+            _crouching_now = 0;
             int px = to_int(_pos.x());
             int py = to_int(_pos.y());
             int n = _enemies.size();
@@ -3647,12 +3989,37 @@ namespace
                         // DASH (§C1): crouch 30 f with red eyes (warning), then 20 f straight at 3 px/f.
                         step = e.state == 2 ? e.vel : fixed_point();
 
+                        if(e.state == 1)
+                        {
+                            ++_crouching_now;
+
+                            if((e.timer & 3) == 0)
+                            {
+                                if(e.timer & 4)
+                                {
+                                    // perf: one red palette held while wolves live (creating it per blink cost ~30 %).
+                                    if(! _wolf_red_pal)
+                                    {
+                                        _wolf_red_pal = bn::sprite_palette_item(_wolf_red_colors,
+                                                                                bn::bpp_mode::BPP_4).create_palette();
+                                    }
+
+                                    e.sprite.set_palette(*_wolf_red_pal);
+                                }
+                                else
+                                {
+                                    _restore_palette(e);
+                                }
+                            }
+                        }
+
                         if(--e.timer == 0)
                         {
                             if(e.state == 1)
                             {
                                 e.state = 2;
                                 e.timer = 20;
+                                _restore_palette(e);
                                 e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_dash);
                                 test_wolf_dashes = test_wolf_dashes + 1;
                             }
@@ -3706,12 +4073,13 @@ namespace
                             step = step * fixed(1.6);
                         }
 
-                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase &&
+                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < 3 &&
                            abs_int(dx) <= 100 && abs_int(dy) <= 60 && dx * dx + dy * dy <= 96 * 96)
                         {
                             // Direction fixed when the warning starts; only on screen (the crouch is the warning).
                             e.state = 1;
                             e.timer = 30;
+                            ++_crouching;
                             e.vel = unit(dx, dy) * 3;
                             e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_crouch);
                             e.sprite.set_horizontal_flip(dx < 0);
@@ -3818,7 +4186,8 @@ namespace
                 _grid_refresh(i);
 
                 // Contact damage (§7); the body box grows with the monster (32x32: 11 px half).
-                int reach = player_half_box + def.half - 1;
+                // Splitting copies are 50 % of the logical size (DISENO_CONTENIDO élites).
+                int reach = player_half_box + (e.tiny ? def.half / 2 : def.half) - 1;
 
                 if(def.damage && ! e.safe && abs_int(dx) < reach && abs_int(dy) < reach)
                 {
@@ -3895,13 +4264,20 @@ namespace
             _boss_spawned = true;
             _boss_kind = kind;
             _boss_pos = _pos + _facing * (kind ? 110 : 90);   // E5: never on top, >= 96 px
+            _boss_frame = -1;
 
             if(_map.solid_at(to_int(_boss_pos.x()), to_int(_boss_pos.y())))
             {
                 _boss_pos = _pos + fixed_point(0, -100);
             }
 
-            _boss_max_hp = kind ? warchief_hp : 600;
+            _boss_entry = _boss_pos;
+            _boss_max_hp = kind == 2 ? treant_hp : kind ? warchief_hp : 450;   // King: R13, 600 gave TTK 47 s
+            _root_cd = 90;
+            _seed_cd = 3 * fps;
+            _wolf_cd = 5 * fps;
+            _thorn_t = -1;
+            _hex_moon = false;
             _boss_hp = _boss_max_hp;
             _boss_state = 0;
             _boss_timer = 30;
@@ -3910,13 +4286,13 @@ namespace
             _boss_invuln = 0;
             test_boss_phase = 1;
 
-            if(kind)
+            if(kind == 1)
             {
                 test_events = test_events | 16;
             }
 
             art::music_boss.play(fixed(art::music_volume_pct) / 100);
-            bn::sprite_ptr b = _world_sprite(kind ? art::warchief : art::slime_king, _boss_pos, 0, 8);
+            bn::sprite_ptr b = _world_sprite(_boss_item(), _boss_pos, 0, 8);
             b.set_mosaic_enabled(_fx.boss_mosaic);
             _boss = bn::move(b);
             bn::sprite_ptr sh = _world_sprite(art::shadow_big, _boss_pos + fixed_point(0, 22), 0, 31);
@@ -3934,7 +4310,7 @@ namespace
             // Notches where the boss changes phase (E5: Warchief 60 % and 30 %, King 50 % and 25 %).
             for(int k = 0; k < 2; ++k)
             {
-                int pct = kind ? (k ? 30 : 60) : (k ? 25 : 50);
+                int pct = kind == 2 ? (k ? 33 : 66) : kind ? (k ? 30 : 60) : (k ? 25 : 50);
                 bn::sprite_ptr notch = art::boss_bar.create_sprite(-96 + (192 * pct) / 100, -56, art::boss_bar_notch);
                 notch.set_bg_priority(0);
                 notch.set_z_order(0);
@@ -3943,7 +4319,8 @@ namespace
 
             _boss_title.clear();
             _big_text.set_center_alignment();
-            _big_text.generate(0, -30, kind ? "ORC WARCHIEF" : "SLIME KING", _boss_title);
+            _big_text.generate(0, -30, kind == 2 ? "THORNWOOD TREANT" : kind ? "ORC WARCHIEF" : "SLIME KING",
+                               _boss_title);
             _boss_title_t = 2 * fps;
             _shake = 12;
             _play(art::sfx_boss);
@@ -4007,12 +4384,27 @@ namespace
                 --_boss_rune_cd;
             }
 
+            if(_music_resume_t > 0 && --_music_resume_t == 0)
+            {
+                art::music_meadow.play(fixed(art::music_volume_pct) / 100);
+            }
+
             if(! _boss)
             {
-                if(_boss_dead && _end_timer > 0 && --_end_timer == 0)
+                if(_boss_dead && _end_timer > 0)
                 {
-                    _mode = game_mode::won;
-                    _end_timer = 1;
+                    if(_end_timer == 3 * fps)
+                    {
+                        _show_banner("STAGE CLEAR", art::text_gold, 3 * fps);
+                        _play(art::jingle_victory);
+                        test_events = test_events | (1 << 19);
+                    }
+
+                    if(--_end_timer == 0)
+                    {
+                        _mode = game_mode::won;
+                        _end_timer = 1;
+                    }
                 }
 
                 return;
@@ -4020,7 +4412,7 @@ namespace
 
             if(_boss_flash && --_boss_flash == 0)
             {
-                _boss->set_palette(_boss_kind ? art::warchief.palette_item() : art::slime_king.palette_item());
+                _boss->set_palette(_boss_item().palette_item());
             }
 
             if(_boss_hp <= 0)
@@ -4038,9 +4430,21 @@ namespace
                 return;
             }
 
-            bool phase2 = _boss_hp * 2 < 600;
-            bool phase3 = _boss_hp * 4 < 600;
+            if(_boss_kind == 2)
+            {
+                _update_treant();
+                return;
+            }
+
+            bool phase2 = _boss_hp * 2 < _boss_max_hp;
+            bool phase3 = _boss_hp * 4 < _boss_max_hp;
+            bool rage = _boss_fight_t > 2 * 60 * fps;   // E5 ira at 2:00 of combat: +30 % speed
             int air_time = phase3 ? 30 : 45;
+
+            if(rage && ! (test_events & 1024))
+            {
+                test_events = test_events | 1024;
+            }
             int height = 0;
 
             switch(_boss_state)
@@ -4063,7 +4467,7 @@ namespace
             case 1: // walk
             {
                 fixed_point d = unit(to_int(_pos.x() - _boss_pos.x()), to_int(_pos.y() - _boss_pos.y()));
-                _boss_pos += d * fixed(0.3);
+                _boss_pos += d * (rage ? fixed(0.39) : fixed(0.3));
 
                 if(--_boss_timer <= 0)
                 {
@@ -4127,7 +4531,7 @@ namespace
                 {
                     _boss->set_tiles(art::slime_king.tiles_item(), art::king_idle.first);
                     _boss_state = 1;
-                    _boss_timer = phase3 ? 18 : 60;
+                    _boss_timer = phase3 ? (rage ? 14 : 18) : (rage ? 46 : 60);
                 }
                 break;
 
@@ -4189,8 +4593,13 @@ namespace
             if(frame != _boss_frame)
             {
                 _boss_frame = frame;
-                _boss->set_tiles(art::warchief.tiles_item(), frame);
+                _boss->set_tiles(_boss_item().tiles_item(), frame);
             }
+        }
+
+        [[nodiscard]] const bn::sprite_item& _boss_item() const
+        {
+            return _boss_kind == 2 ? art::treant : _boss_kind ? art::warchief : art::slime_king;
         }
 
         void _warchief_warning(int frames)
@@ -4201,10 +4610,21 @@ namespace
             _boss_timer = frames;
             _boss_warn.clear();
 
+            int bx = to_int(_boss_pos.x() - _camera.x());
+            int by = to_int(_boss_pos.y() - _camera.y());
+
+            if(abs_int(bx) > 96 || abs_int(by) > 56)
+            {
+                test_charge_offscreen = test_charge_offscreen + 1;
+            }
+
+            // Review block 2: 12 px apart, kept on screen.
             for(int k = 1; k <= 4; ++k)
             {
-                bn::sprite_ptr w = _world_sprite(art::alert, _boss_pos + _boss_dir * (k * 26), 0, 7);
-                _boss_warn.push_back(bn::move(w));
+                fixed_point w = _boss_pos + _boss_dir * (24 + k * 12);
+                w.set_x(bn::clamp(w.x(), _camera.x() - 112, _camera.x() + 112));
+                w.set_y(bn::clamp(w.y(), _camera.y() - 72, _camera.y() + 72));
+                _boss_warn.push_back(_world_sprite(art::alert, w, 0, 7));
             }
         }
 
@@ -4213,6 +4633,11 @@ namespace
             int pct = (_boss_hp * 100) / _boss_max_hp;
             int phase = pct < 30 ? 3 : pct < 60 ? 2 : 1;
             fixed rage = _boss_fight_t > 2 * 60 * fps ? fixed(1.3) : fixed(1);   // E5 ira at 2:00 of combat
+
+            if(_boss_fight_t > 2 * 60 * fps)
+            {
+                test_events = test_events | 1024;
+            }
             int dx = to_int(_pos.x() - _boss_pos.x());
             int dy = to_int(_pos.y() - _boss_pos.y());
 
@@ -4270,10 +4695,12 @@ namespace
             case wc_roar:
             {
                 fixed speed = fixed(0.5) * rage;
+                int dist = abs_int(dx) + abs_int(dy);
+                _boss_leash = dist > 100 || (_boss_leash && dist > 64);   // review block 2: x3 from 100 to 64 px
 
-                if(abs_int(dx) + abs_int(dy) > 160)
+                if(_boss_leash)
                 {
-                    speed *= 3;   // E5: never left behind
+                    speed *= 3;
                 }
 
                 if(_boss_state == wc_walk)
@@ -4296,6 +4723,11 @@ namespace
                         _boss_timer = 45;
                         _play(art::sfx_horn);
                     }
+                    else if(abs_int(to_int(_boss_pos.x() - _camera.x())) > 96 ||
+                            abs_int(to_int(_boss_pos.y() - _camera.y())) > 56)
+                    {
+                        _boss_timer = fps;   // review block 2: charges only start on screen; walk 1 s more
+                    }
                     else
                     {
                         _boss_second = _boss_phase >= 3;
@@ -4317,7 +4749,7 @@ namespace
 
                 for(int k = 0; k < _boss_warn.size(); ++k)
                 {
-                    _boss_warn[k].set_tiles(art::alert.tiles_item(), (_boss_timer >> 3) & 1);
+                    _boss_warn[k].set_tiles(art::alert.tiles_item(), (_boss_timer >> 2) & 1);
                 }
 
                 if(--_boss_timer <= 0)
@@ -4356,7 +4788,8 @@ namespace
 
                 if(--_boss_timer <= 0)
                 {
-                    if(_boss_second)
+                    if(_boss_second && abs_int(to_int(_boss_pos.x() - _camera.x())) <= 96 &&
+                       abs_int(to_int(_boss_pos.y() - _camera.y())) <= 56)
                     {
                         // Phase 3: second warning of 20 f, re-aimed.
                         _boss_second = false;
@@ -4431,6 +4864,376 @@ namespace
             }
         }
 
+        // ---- Thornwood Treant (DISENO_FASES E5.1, block 3): roots with a 40 f crack every 150 f; < 66 % a thorn
+        // wall of 16 sprites at r 150 around his entry point closing to r 110 in 10 s; < 33 % seeds (30 f glow,
+        // 8 radial at 1.2 px/f), 4 wolves every 20 s and roots every 120 f. 3:00 "THE HEX MOON RISES": +50 %.
+        // PROVISIONAL HP: E5.1 says 7000; R13 from the Warchief's measured ~21 dps at Lv 20 (TTK 60-120 s).
+        static constexpr int treant_hp = 3000;
+        enum treant_state
+        {
+            tr_walk = 21,
+            tr_slam = 22,
+            tr_glow = 23,
+            tr_roar = 24
+        };
+
+        void _update_treant()
+        {
+            int pct = (_boss_hp * 100) / _boss_max_hp;
+            int phase = pct < 33 ? 3 : pct < 66 ? 2 : 1;
+            int dx = to_int(_pos.x() - _boss_pos.x());
+            int dy = to_int(_pos.y() - _boss_pos.y());
+
+            if(! _hex_moon && _boss_fight_t > 3 * 60 * fps)
+            {
+                _hex_moon = true;
+                test_events = test_events | 1024 | (1 << 18);
+                _show_banner("THE HEX MOON RISES", art::text_red, 3 * fps);
+                _play(art::sfx_boss);
+                _shake = 16;
+            }
+
+            fixed rage = _hex_moon ? fixed(1.5) : fixed(1);
+
+            if(phase > _boss_phase && _boss_state != 0)
+            {
+                _boss_phase = phase;
+                test_boss_phase = phase;
+                _boss_invuln = 60;
+                _boss_state = tr_roar;
+                _boss_timer = 60;
+                _shake = 20;
+                _play(art::sfx_boss);
+                _push_monsters_from_boss();
+
+                if(phase == 2)
+                {
+                    // The wall closes around his entry point; PROVISIONAL: around the wizard if he is far from it.
+                    int ex = to_int(_pos.x() - _boss_entry.x());
+                    int ey = to_int(_pos.y() - _boss_entry.y());
+                    _thorn_center = ex * ex + ey * ey > 120 * 120 ? _pos : _boss_entry;
+                    _thorn_t = 0;
+                    test_events = test_events | (1 << 15);
+                    _play(art::sfx_thorn, fixed(0.8));
+                }
+            }
+
+            if(_boss_invuln > 0)
+            {
+                --_boss_invuln;
+                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+                                                        art::treant.palette_item());
+            }
+
+            switch(_boss_state)
+            {
+            case 0: // entrance (mosaic 1 -> 0 in 30 f)
+                if(_fx.boss_mosaic)
+                {
+                    bn::sprites_mosaic::set_stretch(fixed(_boss_timer) / 30);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    bn::sprites_mosaic::set_stretch(0);
+                    _boss->set_mosaic_enabled(false);
+                    _boss_state = tr_walk;
+                }
+                break;
+
+            case tr_walk:
+            {
+                fixed speed = fixed(0.25) * rage;
+
+                if(abs_int(dx) + abs_int(dy) > 160)
+                {
+                    speed *= 3;   // E5: never left behind
+                }
+
+                _boss_pos += unit(dx, dy) * speed;
+                _set_boss_frame(art::treant_walk, _t, true);
+
+                if(--_root_cd <= 0)
+                {
+                    _boss_state = tr_slam;
+                    _boss_timer = 30;
+                    _play(art::sfx_slam, fixed(0.9));
+                }
+                else if(_boss_phase >= 3 && --_seed_cd <= 0)
+                {
+                    _boss_state = tr_glow;
+                    _boss_timer = 30;
+                }
+                break;
+            }
+
+            case tr_slam:
+                _set_boss_frame(art::treant_slam, 30 - _boss_timer, false);
+
+                if(_boss_timer == 12)
+                {
+                    _roots_pending = 3;
+                    _shake = bn::max(_shake, 6);
+                    _play(art::sfx_root_crack, fixed(0.8));
+                    test_events = test_events | (1 << 14);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    _root_cd = (_boss_phase >= 3 ? 120 : 150) * 2 / (_hex_moon ? 3 : 2);
+                    _boss_state = tr_walk;
+                }
+                break;
+
+            case tr_glow:
+                _set_boss_frame(art::treant_idle, _t, true);
+                _boss->set_palette((_boss_timer & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+                                                       art::treant.palette_item());
+
+                if(--_boss_timer <= 0)
+                {
+                    _boss->set_palette(art::treant.palette_item());
+                    _seeds_pending = 8;
+                    _seed_cd = 5 * fps;
+                    _boss_state = tr_walk;
+                    test_events = test_events | (1 << 16);
+                    _play(art::sfx_thorn, fixed(0.6));
+                }
+                break;
+
+            case tr_roar:
+                if(_boss_frame != art::treant_hurt)
+                {
+                    _boss_frame = art::treant_hurt;
+                    _boss->set_tiles(art::treant.tiles_item(), art::treant_hurt);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    _boss_state = tr_walk;
+                }
+                break;
+
+            default:
+                break;
+            }
+
+            if(_boss_phase >= 3 && --_wolf_cd <= 0)
+            {
+                _wolf_cd = 20 * fps;
+                _make_room(4);
+                fixed_point p = _spawn_point(130, 150, false);
+                _play(art::sfx_howl, fixed(0.7));
+
+                for(int k = 0; k < 4; ++k)
+                {
+                    _queue_spawn(type_wolf, p + fixed_point((k & 1) * 18, (k >> 1) * 18), mode_chase, fixed_point(), 0);
+                }
+            }
+
+            _update_roots();
+            _update_seeds();
+            _update_thorns();
+
+            _boss->set_horizontal_flip(dx < 0);
+            _boss->set_position(_boss_pos.x(), _boss_pos.y() - 16);
+
+            if(_boss_shadow)
+            {
+                _boss_shadow->set_position(_boss_pos + fixed_point(0, 14));
+                _boss_shadow->set_visible(_fx.shadows);
+            }
+
+            if(_boss_state != 0 && _boss_box_hit(to_int(_pos.x()), to_int(_pos.y()), player_half_box))
+            {
+                _hurt_player(16);
+            }
+        }
+
+        // Phase change (E5): monsters within 48 px of the boss are pushed out to 48 px.
+        void _push_monsters_from_boss()
+        {
+            for(int i = 0, n = _enemies.size(); i < n; ++i)
+            {
+                enemy& e = _enemies[i];
+                int ex = to_int(e.pos.x() - _boss_pos.x());
+                int ey = to_int(e.pos.y() - _boss_pos.y());
+
+                if(ex * ex + ey * ey < 48 * 48)
+                {
+                    e.pos = _boss_pos + (ex == 0 && ey == 0 ? fixed_point(1, 0) : unit(ex, ey)) * 48;
+                    _grid_refresh(i);
+                }
+            }
+        }
+
+        // Roots: a crack for 40 f under / next to the wizard, then spikes r 12 for 20 f (14 damage).
+        void _update_roots()
+        {
+            if(_roots_pending > 0 && ! _roots.full())
+            {
+                // One per frame (a new sprite costs ~5 % of a frame): under the wizard, then two beside him.
+                fixed_point p = _pos;
+
+                if(_roots_pending < 3)
+                {
+                    p += angle_vector(_random.get_int(2048)) * _random.get_int(16, 29);
+                }
+
+                --_roots_pending;
+                bn::sprite_ptr sprite = _world_sprite(art::fx_root, p + fixed_point(0, 2), art::root_crack.first, 30);
+                root_spike& r = _roots.emplace_back(bn::move(sprite));
+                r.pos = p;
+            }
+
+            for(int k = 0; k < _roots.size();)
+            {
+                root_spike& r = _roots[k];
+                ++r.t;
+                int frame = r.t < 40 ? art::root_crack.frame(r.t, true) : art::root_spike.frame(r.t - 40, false);
+
+                if(frame != r.frame)
+                {
+                    r.frame = frame;
+                    r.sprite.set_tiles(art::fx_root.tiles_item(), frame);
+                    r.sprite.set_z_order(r.t < 40 ? 30 : 9);
+                }
+
+                if(r.t >= 40 && r.t < 60)
+                {
+                    int dx = to_int(_pos.x() - r.pos.x());
+                    int dy = to_int(_pos.y() - r.pos.y());
+
+                    if(dx * dx + dy * dy <= (12 + player_half_box) * (12 + player_half_box))
+                    {
+                        _hurt_player(14);
+                    }
+                }
+
+                if(r.t >= 60)
+                {
+                    _roots.erase(_roots.begin() + k);
+                    continue;
+                }
+
+                ++k;
+            }
+        }
+
+        // Seeds: 8 radial at 1.2 px/f from the treant, 8 damage, 150 f of life (2 created per frame).
+        void _update_seeds()
+        {
+            for(int n = 0; n < 2 && _seeds_pending > 0 && ! _seeds.full(); ++n)
+            {
+                --_seeds_pending;
+                int k = _seeds_pending;
+                bn::sprite_ptr sprite = _world_sprite(art::fx_seed, _boss_pos, 0, 9);
+                seed_shot& sd = _seeds.emplace_back(bn::move(sprite));
+                sd.vel = angle_vector(k * 256) * fixed(1.2);
+                sd.pos = _boss_pos + sd.vel * 8;
+            }
+
+            for(int k = 0; k < _seeds.size();)
+            {
+                seed_shot& sd = _seeds[k];
+                sd.pos += sd.vel;
+                sd.sprite.set_position(sd.pos);
+
+                if((++sd.t & 7) == 0)
+                {
+                    sd.sprite.set_tiles(art::fx_seed.tiles_item(), (sd.t >> 3) & 1);
+                }
+
+                int dx = to_int(_pos.x() - sd.pos.x());
+                int dy = to_int(_pos.y() - sd.pos.y());
+
+                if(abs_int(dx) < 3 + player_half_box && abs_int(dy) < 3 + player_half_box)
+                {
+                    _hurt_player(8);
+                    sd.t = 150;
+                }
+
+                if(sd.t >= 150)
+                {
+                    _seeds.erase(_seeds.begin() + k);
+                    continue;
+                }
+
+                ++k;
+            }
+        }
+
+        // Thorn wall: 16 sprites (2 created per frame, one shared tile block) on a ring that closes from r 150 to
+        // r 110 in 10 s; outside it (or touching it) the wizard takes 6 every 30 f.
+        void _update_thorns()
+        {
+            if(_thorn_t < 0)
+            {
+                return;
+            }
+
+            ++_thorn_t;
+            int radius = 150 - bn::min(_thorn_t, 600) * 40 / 600;
+
+            if(! _thorn_tiles)
+            {
+                _thorn_tiles = bn::sprite_tiles_ptr::create(art::fx_thorn.tiles_item(), 0);
+                _thorn_pal = art::fx_thorn.palette_item().create_palette();
+            }
+
+            if((_thorn_t & 15) == 0)
+            {
+                _thorn_tiles->set_tiles_ref(art::fx_thorn.tiles_item(), (_thorn_t >> 4) & 1);
+            }
+
+            for(int n = 0; n < 2 && ! _thorns.full(); ++n)
+            {
+                bn::sprite_ptr sprite = bn::sprite_ptr::create(_thorn_center, art::fx_thorn.shape_size(), *_thorn_tiles,
+                                                               *_thorn_pal);
+                sprite.set_camera(_camera);
+                sprite.set_bg_priority(2);
+                sprite.set_z_order(9);
+                _thorns.push_back(bn::move(sprite));
+            }
+
+            if((_thorn_t & 1) == 0 || _thorn_t < 40)
+            {
+                for(int k = 0; k < _thorns.size(); ++k)
+                {
+                    _thorns[k].set_position(_thorn_center + angle_vector(k * 128) * radius);
+                }
+            }
+
+            if(_thorn_hurt_cd > 0)
+            {
+                --_thorn_hurt_cd;
+            }
+
+            int dx = to_int(_pos.x() - _thorn_center.x());
+            int dy = to_int(_pos.y() - _thorn_center.y());
+            int inner = radius - 8;
+
+            if(_thorn_hurt_cd == 0 && dx * dx + dy * dy > inner * inner)
+            {
+                _hurt_player(6);
+                _thorn_hurt_cd = 30;
+            }
+
+            test_thorn_radius = radius;
+        }
+
+        void _clear_treant_attacks()
+        {
+            _roots.clear();
+            _seeds.clear();
+            _thorns.clear();
+            _thorn_tiles.reset();
+            _thorn_pal.reset();
+            _thorn_t = -1;
+            _roots_pending = 0;
+            _seeds_pending = 0;
+        }
+
         void _boss_land(bool phase2)
         {
             _boss_state = 4;
@@ -4469,7 +5272,7 @@ namespace
         {
             _spawn_poof(_boss_pos, 6);
             _spawn_gem(_boss_pos, 25);
-            _spawn_pickup(_boss_pos + fixed_point(12, 0), pickup_coin, 10);
+            _spawn_pickup(_boss_pos + fixed_point(12, 0), pickup_coin, 10, gold_bosses);
             _boss.reset();
             _boss_shadow.reset();
             _boss_bar.clear();
@@ -4482,22 +5285,52 @@ namespace
             bn::sprites_mosaic::set_stretch(0);
             test_boss_ttk = _boss_fight_t / fps;
 
-            if(_boss_kind == 1)
+            if(_boss_kind == 2)
             {
-                // Block 2 ends at the Warchief (minutes 10-15 are block 3).
+                // E5.4: slow motion 30 f, white flash, every normal monster poofs (no XP), every gem flies to the
+                // wizard; then "STAGE CLEAR" 3 s with the jingle and the summary.
+                _spawn_particle(_boss_pos + fixed_point(0, -16), fixed_point(), art::treant, art::treant_death, 32, 8);
+                _clear_treant_attacks();
                 _boss_dead = true;
                 ++_bosses_killed;
-                test_events = test_events | 256;
-                _end_timer = 120;
+                test_events = test_events | (1 << 17);
+                _slowmo_t = 60;   // 30 logic frames at 1/2
+                _level_flash = 40;
+                _end_timer = 60 + 3 * fps;
+                bn::music::stop();
+
+                for(int i = _enemies.size() - 1; i >= 0; --i)
+                {
+                    if(i < 6)
+                    {
+                        _spawn_poof(_enemies[i].pos, 2);
+                    }
+
+                    _remove_enemy(i);
+                }
+
+                for(pickup& g : _pickups)
+                {
+                    g.flying = g.kind == pickup_gem || g.kind == pickup_coin;
+                }
+
                 return;
             }
 
-            // Boss chest (§C3 cartas): 1 (60 %), 3 (30 %) or 5 (10 %) upgrades; 8 s rest (E1); meadow music.
+            if(_boss_kind == 1)
+            {
+                test_events = test_events | 256;
+            }
+
+            // Boss chest (§C3 cartas): 1 (60 %), 3 (30 %) or 5 (10 %) upgrades; 8 s rest (E1); the boss jingle with
+            // the music stopped, then the meadow music.
             int roll = _random.get_int(10);
             _spawn_pickup(_boss_pos + fixed_point(-12, 0), pickup_chest, roll < 6 ? 1 : roll < 9 ? 3 : 5);
             ++_bosses_killed;
             _rest_t = 8 * fps;
-            art::music_meadow.play(fixed(art::music_volume_pct) / 100);
+            bn::music::stop();
+            _play(art::jingle_boss_down);
+            _music_resume_t = 3 * fps;
         }
 
         // -----------------------------------------------------------------------------------------------------
@@ -4557,7 +5390,7 @@ namespace
             return value >= 25 ? art::gem_red : value >= 5 ? art::gem_green : art::gem_blue;
         }
 
-        bool _spawn_pickup(const fixed_point& p, int kind, int value)
+        bool _spawn_pickup(const fixed_point& p, int kind, int value, int source = gold_drops)
         {
             if(_pickups.full())
             {
@@ -4566,9 +5399,9 @@ namespace
 
             bn::optional<bn::sprite_ptr> s;
 
-            if(kind == pickup_chest)
+            if(kind == pickup_chest || kind == pickup_cursed)
             {
-                s = art::chest.create_sprite_optional(p, 0);
+                s = art::chest.create_sprite_optional(p, kind == pickup_cursed ? art::chest_cursed_closed : 0);
             }
             else if(kind == pickup_heart)
             {
@@ -4591,6 +5424,7 @@ namespace
             g.pos = p;
             g.kind = uint8_t(kind);
             g.value = value;
+            g.source = uint8_t(source);
             g.speed = fixed(1.5);
             return true;
         }
@@ -4629,13 +5463,17 @@ namespace
                 int dy = to_int(_pos.y() - g.pos.y());
                 int d2 = dx * dx + dy * dy;
 
-                if(g.kind == pickup_chest || g.kind == pickup_heart)
+                if(g.kind == pickup_chest || g.kind == pickup_heart || g.kind == pickup_cursed)
                 {
                     if(d2 < 12 * 12)
                     {
                         if(g.kind == pickup_heart)
                         {
                             _player_hp = bn::min(_player_max_hp, _player_hp + g.value);
+                        }
+                        else if(g.kind == pickup_cursed)
+                        {
+                            _open_cursed_chest(g.pos);
                         }
                         else
                         {
@@ -4686,6 +5524,7 @@ namespace
             if(g.kind == pickup_coin)
             {
                 _gold += g.value;
+                _gold_from[g.source] += g.value;
                 _play(art::sfx_gem, fixed(0.5), fixed(0.8));
                 return;
             }
@@ -5054,6 +5893,51 @@ namespace
 
         void _hide_world_extras(bool hide)
         {
+            // Review block 2: combat effects never over the cards or the pause.
+            for(bn::sprite_ptr& f : _frost)
+            {
+                f.set_visible(! hide && _frost_t >= 0);
+            }
+
+            if(hide)
+            {
+                for(bn::sprite_ptr& c : _chain_sprites)
+                {
+                    c.set_visible(false);
+                }
+
+                for(ember_ball& b : _embers)
+                {
+                    b.sprite.set_visible(false);
+                }
+            }
+
+            for(fire_patch& f : _fires)
+            {
+                f.sprite.set_visible(! hide);
+            }
+
+            for(root_spike& r : _roots)
+            {
+                r.sprite.set_visible(! hide);
+            }
+
+            for(seed_shot& sd : _seeds)
+            {
+                sd.sprite.set_visible(! hide);
+            }
+
+            for(bn::sprite_ptr& t : _thorns)
+            {
+                t.set_visible(! hide);
+            }
+
+            // Banners (CURSED!, boss names) wait until the cards close.
+            for(bn::sprite_ptr& b : _boss_title)
+            {
+                b.set_visible(! hide);
+            }
+
             for(pickup& g : _pickups)
             {
                 g.sprite.set_visible(! hide);
@@ -5426,6 +6310,7 @@ namespace
 
             case up_gold:
                 _gold += 10;
+                _gold_from[gold_cards] += 10;
                 break;
 
             case up_heart:
@@ -5531,25 +6416,27 @@ namespace
 
         static constexpr int fx_rows = 11;
         static constexpr int debug_rows = 5;
-        static constexpr int dbg_start_count = 6;
-        static constexpr int dbg_force_count = 7;
+        static constexpr int dbg_start_count = 11;
+        static constexpr int dbg_force_count = 11;
 
         [[nodiscard]] static const char* _dbg_start_name(int i)
         {
-            constexpr const char* names[dbg_start_count] = { "4:30", "5:50", "7:00", "8:00", "9:00", "9:45" };
+            constexpr const char* names[dbg_start_count] = { "4:30", "5:50", "7:00", "8:00", "9:00", "9:45",
+                                                             "10:30", "11:50", "12:50", "13:50", "14:45" };
             return names[i];
         }
 
         [[nodiscard]] static int _dbg_start_second(int i)
         {
-            constexpr int seconds[dbg_start_count] = { 270, 350, 420, 480, 540, 585 };
+            constexpr int seconds[dbg_start_count] = { 270, 350, 420, 480, 540, 585, 630, 710, 770, 830, 885 };
             return seconds[i];
         }
 
         [[nodiscard]] static const char* _dbg_force_name(int i)
         {
             constexpr const char* names[dbg_force_count] = { "Treasure", "Split elite", "Wolves", "Warchief",
-                                                             "Wolf Pack", "Goblin Raid", "Big slime" };
+                                                             "Wolf Pack", "Goblin Raid", "Big slime", "Cursed chest",
+                                                             "Treant", "Elite pair", "Stampede" };
             return names[i];
         }
 
@@ -5557,6 +6444,13 @@ namespace
         // (about 2 levels per minute: Lv 20 at 10:00, DISENO_RUTA block 2). Past 5:00 the Slime King counts as killed.
         void _dbg_start_at(int second)
         {
+            // Review block 2: the tutorial hints count as seen.
+            _blink_hint_done = true;
+            _gem_hint_done = true;
+            _pick_hint_done = true;
+            _nova_hint_done = true;
+            _hint.clear();
+            _hint_t = 0;
             _t = second * fps;
             _spawn_cd = 0;
 
@@ -5566,9 +6460,22 @@ namespace
                 _bosses_killed = 1;
             }
 
-            if(_treasure_at >= 0 && _treasure_at < _t)
+            if(second > 600 && _bosses_killed == 1)
             {
-                _treasure_at = -1;
+                _bosses_killed = 2;   // past 10:00 the Warchief counts as killed too
+            }
+
+            for(int act = 0; act < 3; ++act)
+            {
+                if(_treasure_at[act] >= 0 && _treasure_at[act] < _t)
+                {
+                    _treasure_at[act] = -1;
+                }
+
+                if(_cursed_at[act] >= 0 && _cursed_at[act] < _t)
+                {
+                    _cursed_at[act] = -1;
+                }
             }
 
             constexpr uint8_t order[] = { up_spark, up_frost, up_rune, up_heart, up_ember, up_boots, up_spark,
@@ -5632,8 +6539,28 @@ namespace
             case 5:
                 _begin_swarm_warning(swarm_goblins, fps);
                 break;
-            default:
+            case 6:
                 _spawn_enemy(type_big_slime, _spawn_point(110, 130, true), 0);
+                break;
+            case 7:
+                // In front of the wizard so a test walking forward opens it.
+                _spawn_pickup(_pos + _facing * 32, pickup_cursed, 2);
+                break;
+            case 8:
+                _bosses_killed = 2;
+                _boss_spawned = true;
+
+                if(! _boss)
+                {
+                    _spawn_boss(2);
+                }
+                break;
+            case 9:
+                _spawn_elite_pair();
+                break;
+            default:
+                _begin_swarm_warning(swarm_stampede, 90);
+                _play(art::sfx_horn);
                 break;
             }
         }
@@ -5880,6 +6807,20 @@ namespace
             line = "Gold ";
             line.append(bn::to_string<6>(_gold));
             _text.generate(0, 4, line, _menu);
+
+            // E5.4: gold broken down by source.
+            line = "Drops ";
+            line.append(bn::to_string<6>(_gold_from[gold_drops]));
+            line.append("  Goblin ");
+            line.append(bn::to_string<6>(_gold_from[gold_treasure]));
+            _text.generate(0, 16, line, _menu);
+            line = "Bosses ";
+            line.append(bn::to_string<6>(_gold_from[gold_bosses]));
+            line.append("  Cards ");
+            line.append(bn::to_string<6>(_gold_from[gold_cards]));
+            _text.generate(0, 28, line, _menu);
+            test_gold_drops = _gold_from[gold_drops];
+            test_gold_bosses = _gold_from[gold_bosses];
 
             _summary_lock = 60;
             _wizard.set_visible(false);

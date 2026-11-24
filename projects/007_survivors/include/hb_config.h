@@ -51,6 +51,7 @@ namespace hb
     // Timeline (§6, §14)
     constexpr int boss_time = 5 * 60 * fps;      // Slime King
     constexpr int boss2_time = 10 * 60 * fps;    // Orc Warchief (DISENO_FASES E2)
+    constexpr int boss3_time = 15 * 60 * fps;    // Thornwood Treant (DISENO_FASES E2, block 3)
     constexpr int pre_boss_pause = 10 * fps;
     constexpr int shrine_period = 90 * fps;
     constexpr int blessing_frames = 60 * fps;

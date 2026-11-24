@@ -17,6 +17,10 @@
 #include "bn_sprite_items_goblin.h"
 #include "bn_sprite_items_orc.h"
 #include "bn_sprite_items_orc_warchief.h"
+#include "bn_sprite_items_treant.h"
+#include "bn_sprite_items_fx_root.h"
+#include "bn_sprite_items_fx_thorn.h"
+#include "bn_sprite_items_fx_seed.h"
 #include "bn_sprite_items_wolf.h"
 #include "bn_sprite_items_big_slime.h"
 #include "bn_sprite_items_fx_ember.h"
@@ -194,6 +198,19 @@ namespace hb::art
     constexpr anim warchief_horn = { 17, 2, 8 };
     constexpr int warchief_stunned = 14;
 
+    // Thornwood Treant 64x64 (block 3): idle 0-3, walk 4-7, slam 8-10, hurt 11, death 12-15.
+    inline constexpr const bn::sprite_item& treant = bn::sprite_items::treant;
+    constexpr anim treant_idle = { 0, 4, 10 };
+    constexpr anim treant_walk = { 4, 4, 10 };
+    constexpr anim treant_slam = { 8, 3, 10 };
+    constexpr int treant_hurt = 11;
+    constexpr anim treant_death = { 12, 4, 8 };
+    inline constexpr const bn::sprite_item& fx_root = bn::sprite_items::fx_root;     // 16x16, crack 0-1, spike 2-4
+    constexpr anim root_crack = { 0, 2, 8 };
+    constexpr anim root_spike = { 2, 3, 7 };
+    inline constexpr const bn::sprite_item& fx_thorn = bn::sprite_items::fx_thorn;   // 16x16, idle 0-1
+    inline constexpr const bn::sprite_item& fx_seed = bn::sprite_items::fx_seed;     // 8x8, fly 0-1
+
     // ---- Pickups.
     inline constexpr const bn::sprite_item& gems = bn::sprite_items::gems;
     constexpr int gem_blue = 0;      // 2 frames each
@@ -201,6 +218,8 @@ namespace hb::art
     constexpr int gem_red = 4;
     inline constexpr const bn::sprite_item& coin = bn::sprite_items::coin;
     inline constexpr const bn::sprite_item& chest = bn::sprite_items::chest;
+    constexpr int chest_cursed_closed = 2;
+    constexpr int chest_cursed_open = 3;
     inline constexpr const bn::sprite_item& heart = bn::sprite_items::heart;
     inline constexpr const bn::sprite_item& shrine = bn::sprite_items::shrine;   // 16x32
 
@@ -297,6 +316,14 @@ namespace hb::art
     inline constexpr const bn::sound_item& sfx_zap = bn::sound_items::sfx_zap;
     inline constexpr const bn::sound_item& sfx_chest = bn::sound_items::sfx_chest;
     inline constexpr const bn::sound_item& sfx_coin_burst = bn::sound_items::sfx_coin_burst;
+    inline constexpr const bn::sound_item& sfx_root_crack = bn::sound_items::sfx_root_crack;
+    inline constexpr const bn::sound_item& sfx_slam = bn::sound_items::sfx_slam;
+    inline constexpr const bn::sound_item& sfx_thorn = bn::sound_items::sfx_thorn;
+    inline constexpr const bn::sound_item& sfx_curse_sting = bn::sound_items::sfx_curse_sting;
+    // Jingles (music stopped first so they are heard).
+    inline constexpr const bn::sound_item& jingle_victory = bn::sound_items::jingle_victory;
+    inline constexpr const bn::sound_item& jingle_defeat = bn::sound_items::jingle_defeat;
+    inline constexpr const bn::sound_item& jingle_boss_down = bn::sound_items::jingle_boss_down;
 
     // ---- Music (looping .it modules), volume 0.5-0.6 so the effects stay audible.
     inline constexpr const bn::music_item& music_title = bn::music_items::music_title;

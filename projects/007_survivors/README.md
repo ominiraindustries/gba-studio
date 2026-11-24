@@ -74,6 +74,30 @@ SECONDS_RUN, SHOTS, PROF=1 para secciones). Imprime `test_tiles_used`, `test_cpu
 | Perfil C 4:30-10:10 (God) | 116 % → 95,3 % (formaciones entran 2 por frame, 2.ª bola de Ember 8 f después). **Objetivo 85 % aún no** |
 | Warchief, perfil C Lv 20 (God) | TTK 48 s con 1000 de vida (3000 daba ~130 s; regla R13 de E5) |
 
+## Bloque 3 (G-52): F1 completa, 10:00-15:00
+
+Minutos 11-15 de E2 (tope y mezcla por minuto, élites 1/20 y 1/15), Warchief deja cofre y 8 s de descanso, 12:00
+Double Bone Ring, 13:00 Elite Pair, 14:00 Stampede (lobos, orcos, lobos; cuerno), pausa 14:50, **Thornwood Treant**
+15:00 (raíces con grieta 40 f, muro de 16 zarzas r 150 -> 110 en 10 s bajo 66 %, semillas y 4 lobos cada 20 s bajo
+33 %), ira (Slime King y Warchief +30 % a 2:00; Treant a 3:00 "THE HEX MOON RISES" +50 % y tope 56), cofre maldito
+(1 ventana del 60 % por acto: 2 mejoras, "CURSED!", 20 s de élites, máx. 5), final E5.4 (cámara lenta, poof sin XP,
+gemas al mago, STAGE CLEAR 3 s + jingle, resumen con oro por origen). Jingles: jefe caído, victoria, derrota (la
+música se para antes). Lodestone >= 3: la Nova atrae todas las gemas. Copias Splitting al 50 % de tamaño lógico.
+
+DBG: Start at añade 10:30, 11:50, 12:50, 13:50, 14:45 (marca los tutoriales como vistos); Force añade Cursed chest
+(delante del mago), Treant, Elite pair, Stampede. "Stage N" y "Meta preset" quedan para el bloque 4 (no hay fases
+ni meta todavía).
+
+Revisión del bloque 2 (DISENO_RUTA.md) aplicada: correa del Warchief 100 -> 64 px, cargas sólo con el jefe en
+pantalla (`test_charge_offscreen`), "!" cada 12 px dentro de pantalla y parpadeo cada 4 f; lobo agachado parpadea
+rojo cada 4 f, máx. 3 agachados, embestida 8 de daño; tope x0,6 10 s tras 6:00/7:00/9:00; tipo retenido redibujado
+de la mezcla; Treasure Goblin lejos de eventos (6:25-6:50 o 7:20-7:50) con flecha en la paleta de la moneda;
+efectos de combate y rótulos ocultos con cartas/pausa; Slime King 450 de vida.
+
+Rendimiento (perfil C 4:30-10:10, peor frame): `_update_horde_frames` retargeteaba todas las artes en el mismo
+frame (632 ticks): ahora con desfase, sólo artes vivas y 2 por frame (222). Los grupos normales entran por la cola
+(2 por frame). `chunk_template` con caché de 16 entradas (lo llaman 2-3 veces por monstruo y frame).
+
 ## Provisionales
 
 - Sonidos `audio/tmp_*.wav` (`tests/gen_tmp_sfx.py`) y gráficos `graphics/tmp_fx` (chispa de estela), `tmp_wave`
