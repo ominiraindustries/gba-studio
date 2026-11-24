@@ -2527,6 +2527,12 @@ namespace
                 return nullptr;
             }
 
+            if(! (enemy_defs[type].stages & (1 << _stage)))
+            {
+                // Shared helpers (cursed wave, forced elites) ask for stage 1 types: their art holds no tiles here.
+                type = _stage ? int(type_skeleton2) : int(type_skeleton);
+            }
+
             if(type == type_archer && _type_alive[type_archer] >= 6)
             {
                 type = type_skeleton2;   // §C1: <= 6 shooters (queued groups and formations included)
@@ -2648,7 +2654,7 @@ namespace
                 }
 
                 int type = _pick_type();
-                type = enemy_defs[type].big ? int(type_orc) : type;
+                type = enemy_defs[type].big ? int(_stage ? type_brute : type_orc) : type;
                 _make_elite(_spawn_enemy(type, p, 0), 1 + _random.get_int(3));
             }
         }
@@ -5309,14 +5315,17 @@ namespace
             _make_room(12);
             test_f2_events = test_f2_events | 4;
             int offset = _random.get_int(128);
+            int staggered = 0;
 
             for(int i = 0; i < 16; ++i)
             {
                 fixed_point p = _pos + angle_vector(offset + i * 128) * 80;
 
-                if((i & 3) != 3 && ! _map.solid_at(to_int(p.x()), to_int(p.y())))
+                if((i & 3) != 3 && ! _map.solid_at(to_int(p.x()), to_int(p.y())) && ! _marks.full())
                 {
+                    // perf: 2 walkers come out per frame (12 new sprites in one frame cost ~60 % of it).
                     _begin_rise(type_walker, p);
+                    _marks.back().timer = int16_t(60 + (++staggered) / 2);
                 }
             }
         }
