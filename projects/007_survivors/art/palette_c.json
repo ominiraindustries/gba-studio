@@ -38,6 +38,23 @@
   "#abc4d2",
   "#ff9cf0",
   "#eecf74",
-  "#c8dfeb"
+  "#c8dfeb",
+  "#1a7f9c",
+  "#40e8f8",
+  "#c0fcff",
+  "#a06818",
+  "#ffc838",
+  "#fff4b0"
+ ],
+ "neons": [
+  "#1a7f9c",
+  "#40e8f8",
+  "#c0fcff",
+  "#a06818",
+  "#ffc838",
+  "#fff4b0",
+  "#fd3ffd",
+  "#e020c0",
+  "#ff9cf0"
  ]
 }
