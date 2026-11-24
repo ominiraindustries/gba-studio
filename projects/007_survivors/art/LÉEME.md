@@ -36,7 +36,7 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `goblin` | sprite | 16×16 | walk 0–5 | pieles verdes (bloque 2) |
 | `orc` | sprite | 32×32 | walk 0–5 | pieles verdes (bloque 2, provisional) |
 | `orc_warchief` | sprite | 64×64 | walk 0–5, attack 6–14 | propia (jefe bloque 2, provisional) |
-| `gems` | sprite | 8×8 | blue 0–1 (1 XP), green 2–3 (5 XP), red 4–5 (25 XP) | recogibles (fija) |
+| `gems` | sprite | 8×8 | cian pequeña 0–1 (1 XP), magenta con halo 2–3 (5 XP), oro grande 4–5 (25 XP); el 2.º frame de cada una es el destello | recogibles (fija) |
 | `coin` | sprite | 8×8 | spin 0–1 | recogibles |
 | `chest` | sprite | 16×16 | closed 0, open 1 | recogibles |
 | `heart` | sprite | 16×16 | idle 0 | recogibles |
@@ -168,7 +168,14 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
   04 (Wendel de lado), 06 (slime), 09 (murciélago), 12 (esqueleto), recortadas al tamaño del juego en
   `raw/style_c2/first/` y animadas con PixelLab (personajes con plantillas walking/breathing-idle/falling-back-death;
   slime y murciélago con animación v3; muertes de slime/murciélago y golpe de Wendel hechos por código con píxel duro).
-  Wendel lleva borde frío `#34466e` de 1 px (los clips de lado ya traen el borde claro de la muestra 04).
+  Wendel: un solo personaje PixelLab (`raw/style_c2/wendel_v3/`) en las 5 direcciones, misma altura (30–31 px) y el
+  mismo **borde claro `#8ca4b4` de 1 px** en todas (el frío `#34466e` no se veía sobre el suelo casi negro). S y N =
+  plantillas walking/breathing-idle; SE y NE = animación v3 desde sus rotaciones; E = v3 desde la rotación este con el
+  bastón dibujado a mano (`wendel_v3/Idle/east_staff.png`). Esqueleto `walk_e`: huesos engrosados 1 px (`thicken`) y
+  tela de la plantilla pasada al verde azulado de las costillas, para que pese como la vista frontal.
+- **Neones** (`python -I art/tools/neon_c.py`, PISA `gems.aseprite`): añade a `palette_c.json` cian `#1a7f9c #40e8f8
+  #c0fcff` y oro `#a06818 #ffc838 #fff4b0` (lista `neons`, con los magentas de la muestra). Recogibles: 2–3 cian, 4 oro
+  oscuro, 10 magenta `#fd3ffd`, 12–13 oro; FX: 7–9 hielo cian (Frost Ring, Blink).
 - Direcciones: dibujadas S, SE, E, NE, N; las de la izquierda se hacen con `set_horizontal_flip(true)`.
 - **Título**: el mago es `raw/style_c2/title/title_wizard.png` (PixelLab, estilo de la muestra 00, paleta maestra);
   `title_bg` se rehízo con `restyle_c.build_title` apuntando a esa carpeta y luego `snap_master.py`.

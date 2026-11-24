@@ -36,7 +36,7 @@ def hexc(h):
 MASTER = np.array([hexc(c) for c in json.load(open(os.path.join(ART, "palette_c.json")))["master"]], np.int32)
 
 
-RIM_WIZ = hexc("#34466e")   # cold 1 px rim around Wendel (master colour)
+RIM_WIZ = hexc(os.environ.get("WIZ_RIM", "#8ca4b4"))   # 1 px rim around Wendel, same in every direction
 
 
 def lum(c):
@@ -145,6 +145,19 @@ def vsquash(f, k, bottom=None):
     return o
 
 
+def thicken(f):
+    """Side-view bones are 1 px thin: grow every opaque run 1 px to the left (G-44 review: read like the front)."""
+    o = f.copy()
+    m = f[..., 3] >= 128
+    grow = ~m[:, :-1] & m[:, 1:]
+    src = f[:, 1:][grow].copy()
+    o[:, :-1][grow] = src            # bones twice as wide, same colour (the front view reads 2 px limbs)
+    rgb = o[..., :3].astype(np.int32)
+    purple = (o[..., 3] >= 128) & (rgb[..., 2] > rgb[..., 1] + 25) & (rgb.sum(-1) < 400)
+    o[purple, :3] = (75, 135, 135)   # template cloth -> the teal rib shade of the front view (#4b8787)
+    return o
+
+
 def flat(f, col):
     o = f.copy()
     m = o[..., 3] >= 128
@@ -192,26 +205,29 @@ def build():
     sub = subset_from([rgba(os.path.join(CS, "00.png")), rgba(os.path.join(CS, "02.png"))], 9)
     if RIM_WIZ not in sub:
         sub = sorted(sub + [RIM_WIZ], key=lum)
-    clips = [("idle", anim("wendel_c", "idle", "south"), 4, 180),
-             ("idle_side", anim("wendel_c", "idle_side_c", "east"), 4, 180),
-             ("walk_down", anim("wendel_c", "walk", "south"), 6, 100),
-             ("walk_side", anim("wendel_c", "walk_side_c", "east"), 6, 100),
-             ("walk_up", anim("wendel_c", "walk", "north"), 6, 100),
-             ("hurt", [np.roll(anim("wendel_c", "idle", "south")[0], k, 1) for k in (-1, 1)], 2, 80),
-             ("death", anim("wendel_c", "death", "south"), 7, 130),
+    # wendel_v3 = the same PixelLab character; S/N = template clips (full size), SE/NE = v3 clips from the rotations,
+    # E = v3 clips from the east rotation with the staff drawn in (raw/style_c2/wendel_v3/Idle/east_staff.png).
+    # Every direction has the same height (30-31 px) and gets the same 1 px rim.
+    W = "wendel_v3"
+    clips = [("idle", anim(W, "idle", "south"), 4, 180),
+             ("idle_side", anim(W, "idle_e_staff", "east"), 4, 180),
+             ("walk_down", anim(W, "walk", "south"), 6, 100),
+             ("walk_side", anim(W, "walk_e_staff", "east"), 6, 100),
+             ("walk_up", anim(W, "walk", "north"), 6, 100),
+             ("hurt", [np.roll(anim(W, "idle", "south")[0], k, 1) for k in (-1, 1)], 2, 80),
+             ("death", anim(W, "death", "south"), 7, 130),
              # 8-direction additions (appended so frames 0-34 keep their old meaning; W/SW/NW = horizontal flip)
-             ("idle_se", anim("wendel_c", "idle", "south-east"), 4, 180),
-             ("idle_ne", anim("wendel_c", "idle", "north-east"), 4, 180),
-             ("idle_n", anim("wendel_c", "idle", "north"), 4, 180),
-             ("walk_se", anim("wendel_c", "walk", "south-east"), 6, 100),
-             ("walk_ne", anim("wendel_c", "walk", "north-east"), 6, 100)]
+             ("idle_se", anim(W, "idle_v3", "south-east"), 4, 180),
+             ("idle_ne", anim(W, "idle_v3", "north-east"), 4, 180),
+             ("idle_n", anim(W, "idle", "north"), 4, 180),
+             ("walk_se", anim(W, "walk_v3", "south-east"), 6, 100),
+             ("walk_ne", anim(W, "walk_v3", "north-east"), 6, 100)]
     rename = {"idle": "idle_s", "idle_side": "idle_e", "walk_down": "walk_s", "walk_side": "walk_e",
               "walk_up": "walk_n"}
     frames, durs, tags = [], [], []
     for tag, fr, n, ms in clips:
         fr = fit(pick(fr, n), 32, 32, 30)
-        if tag not in ("idle_side", "walk_side"):   # the side clips (C sample 04) already carry their light rim
-            fr = [rim(f, RIM_WIZ) for f in fr]
+        fr = [rim(f, RIM_WIZ) for f in fr]
         tags.append((rename.get(tag, tag), len(frames), len(frames) + n - 1))
         frames += fr
         durs += [ms] * n
@@ -240,7 +256,7 @@ def build():
     bdeath = [flat(b0, light), np.roll(vsquash(b0, 0.5), 0, 0), scatter(vsquash(b0, 0.3), 0.4, 3)]
     out["bat"] = (fly + bdeath, [100] * 4 + [80] * 3, [("fly", 0, 3), ("death", 4, 6)], sub)
 
-    walk = fit(pick(anim("skel_c", "walk", "east"), 4), 16, 32, 31)
+    walk = fit([thicken(f) for f in pick(anim("skel_c", "walk", "east"), 4)], 16, 32, 31)
     sd = anim("skel_c", "death", "east")
     sd = fit(sd, 16, 32, 31)
     frames, tags = walk + sd, [("walk_e", 0, 3), ("death", 4, 7)]
