@@ -186,6 +186,115 @@ desbloqueos de armas/pasivas (§C4) · **Moon Lance**, **Lens of Reach**, **Ward
 | `icons` (+) | 16×16 | +moon_lance 10, +lens 11, +ward_stone 12, +starfall 13, +blizzard 14, +ward_of_ages 15, +locked 16 | — |
 | Audio | — | `music_title.xm`; sfx buy, refund, menu_move, evolve | — |
 
+### Revisión bloque 4 (gba-designer, ROM de 46fd80e, 2026-11-25)
+
+Cómo: copias de HEAD en el scratchpad (`git archive`), `gbarun.py` sin ventana, semillas 1–5, guardado nuevo (Novice,
+sin Ember/Chain). `dead_at` = reloj del juego (las cartas lo paran). Capturas de menús `meta1/2/3`, `reroll`, `die`.
+
+#### G-55.1 Tiempos (perfil C Novice no llega a 7:00): CAMBIAR el bot y dos números
+
+| Variante (perfil C, 5 semillas) | Muere a (s) | Media | Lectura |
+|---|---|---|---|
+| base (HEAD) | 141, 101, 136, 139, 160 | 135 | reproduce G-55 |
+| Ember + Chain desbloqueados desde el inicio | 114, 92, 119, 123, 120 | 114 | **no es la build**: con más armas muere antes |
+| tope min. 2–4: 26/32/38 → 20/26/34 | 141, 101, 140, 132, 150 | 133 | **no es la densidad**: semillas 1–2 idénticas |
+| `player_hp` 100 → 130 | 146, 117, 152, 154, 175 | 149 | +30 HP = +14 s: pierde ~2 HP/s |
+| bot con Blink cada 3 s (a ciegas) | 115, 115, 100, 129, 109 | 114 | el Blink a ciegas mete al mago en el grupo |
+| bot "K90" (8 dir. de 90 f, círculo r≈118, B cada 7 s) | 145, 183, 155 (3 sem.) | 161 | moverse más ayuda poco |
+| **perfil A** (cuadrado 90 f, B cada 7 s), semilla 1 | vivo a 2:02 con **62 HP** | — | el novato pasivo sigue vivo a 2:00 (§19.1 pide ≥ 20) y no es trivial (−38 HP) |
+
+Capturas (`shotC2`, 0:36–1:29): el mago pierde 90 HP con **3–6 enemigos en pantalla**, pegado a arcos y pilares del
+mapa (§C5), dando vueltas de r≈50 px sobre el mismo grupo de slimes y esqueletos. Un jugador que ve 5 enemigos los
+esquiva; el bot no mira. **Diagnóstico: el bot C no representa al jugador medio** (R13: la entrada reproducible debe
+medir lo que dice medir). Es un bucle ciego que choca con muros, deriva y vuelve al grupo. Ningún número razonable lo
+arregla: a ~2 HP/s harían falta ~600 HP más para llegar a 7:00, y eso volvería trivial el juego para un humano (flujo).
+
+**Decisión: (c) + un ajuste pequeño.**
+
+1. **Bot C reactivo en la ROM** (sólo con `debug_menu`): fila "DBG Bot C". Cada frame: vector de huida = suma de
+   (mago − enemigo)/d² de los enemigos a ≤ 96 px + repulsión de muros y zarzas a ≤ 24 px + tirón suave (peso 1/8)
+   hacia una órbita de r 80 alrededor del punto de inicio; se mueve en la más cercana de 8 direcciones; Blink (B) si
+   un enemigo está a ≤ 16 px y el Blink está listo; en cartas elige la **2.ª**; Nova en cuanto se llena. Es el
+   "kiter" de §E6 (C). Los perfiles ciegos A y B quedan como "novato".
+2. **Números** (aplicar junto con el bot, una sola vez):
+   - Bat `speed` **1.1 → 0.95** px/f: en los minutos 0–5 ningún monstruo corre más que el mago (1.0), quien se mueve
+     puede escapar (flujo, R5). El murciélago sigue pareciendo rápido por la onda.
+   - `player_hp` **100 → 120**: la build inicial es más pobre desde §C4 y +30 HP mide +14 s en el peor caso; 120 da
+     margen a un humano sin mover la curva (R2, perdona sin que se note).
+3. **Métricas** (el implementador mide y apunta en G-55.1): Tiempos con **Bot C**, semillas 1–5: llega a 7:00 en
+   **≥ 3/5** y C Novice **no** vence F1 en ≥ 4/5 (§E6 #3); perfil A ciego vivo a 2:00 con **≥ 20 HP** y muerto antes
+   de 5:00 en ≥ 3/5 (no trivial); perfil C ciego actual = "suelo del novato": ≥ 2:30 en ≥ 3/5.
+4. **Si Bot C no llega** (en este orden, una palanca cada vez, R13): daño de esqueleto 6 → 5 antes de 5:00;
+   `player_invulnerable_frames` 40 → 45. El tope por minuto no (medido: no cambia nada).
+
+#### Muro de zarzas: CAMBIAR diseño y métrica
+
+| Variante (Start at 14:45, God, Treant) | Golpes máx. por muro | Daño por muro |
+|---|---|---|
+| base 6 daño / 30 f / empuje 8 px, bot 40 f | **12** | 72 |
+| base, bot 20 f (círculo r≈26) | **12** | 72 |
+| **4 daño / 60 f / empuje 12 px**, bot 40 f | **7** | 28 |
+| idem, bot 20 f | **9** | 36 |
+
+Con un bucle de 26 px ya choca 12 veces: el bot ciego, frenado por la pared sólida, **deriva** hacia ella en cada
+vuelta. Un humano ve la pared y no la empuja, así que "≤ 2" era una métrica para alguien que mira (bot irreal). Pero el
+diseño también castigaba doble (sólido + ~9 HP/s apoyado), lo que va contra R10. **Decisión**: zarza **4 daño**,
+recarga **60 f**, empuje **12 px**. Métrica nueva: **Bot C ≤ 2 golpes por muro**; bot ciego ≤ 9 golpes y ≤ 36 HP por
+muro; `test_thorn_first_hurt` ≥ 60 (hoy 68, OK); TTK del Treant 61 s (OK, 60–120).
+
+#### Lobo: OK `wolf_pack_gap` = 75 f
+
+| Separación (8:00–9:00, God, perfil C) | Agachados | Embestidas | Golpes |
+|---|---|---|---|
+| **75 f** | 29 | 26 | **0** |
+| 45 f | 54 | 47 | 30 |
+| 30 f | 65 | 57 | 24 |
+
+75 f se queda (deja de ser provisional). Que no golpee a quien no para de moverse es justo lo que pide el lobo: la
+embestida castiga quedarse quieto (R5 anticipación, el aviso de 30 f se lee). Con 45 y 30 f se pasa del objetivo de
+25. Métrica de control: perfil A (ciego, God) 8:00–9:00 entre **5 y 25** golpes; si da < 5, bajar a 60 f.
+
+#### Jefes de F2 (G-56): OK 500 / 1100 / 3800
+
+Regla de E5 (HP = TTK × DPS medido): Colossus 800 HP → 56 s ⇒ 14 DPS ⇒ **500 ≈ 35 s** (rango 20–40); Banshee
+1400 → 60 s ⇒ 23 DPS ⇒ **1100 ≈ 47 s** (30–60); Lich **3800 = 87 s** medido (60–120). Aprobados. Re-medir los dos
+primeros con perfil C (God) en la próxima pasada; si salen del rango, corregir con la misma regla.
+
+#### Primer minuto de la meta (CL1M en menús): CAMBIAR detalles
+
+Flujo título → PLAY/SHOP/RECORDS → fase/personaje → partida → resumen → tienda: **se entiende** (rango n/5, precio,
+una línea de descripción del elegido, ayuda de botones abajo, REFUND con confirmación, resumen con oro por fuente y
+"NEW: ..."; A: RETRY en < 5 s, R10). Todos los textos caben en 240 px. Fallos:
+
+| Pantalla | Veredicto | Detalle |
+|---|---|---|
+| RECORDS | CAMBIAR | fases sin partidas muestran "Best 00:00/00:01 Kills 0 Lv 0/1"; deben mostrar "--" (R9) |
+| Título | CAMBIAR | con 4 cifras, "G 3000" arriba a la derecha pisa la "D" del logo (`meta1`); abajo a la derecha (`meta2`) está bien |
+| Tienda, fila de personaje | CAMBIAR | el retrato tapa el inicio de la descripción ("Cinda: ...") y la flecha; bloqueado muestra "?" pero la descripción lo revela todo |
+| Elegir fase | CAMBIAR | el retrato tapa "Best 00:01" |
+| Tienda | CAMBIAR | precios no asequibles iguales que los asequibles; 12 filas en 2 páginas de 6 sin indicador de "hay más" |
+| OPTIONS | FALTA | estaba en el bloque 4 y no está en el menú |
+| Cartas / Reroll | OK | "R: REROLL x1" visible; tras usarlo, "PICK ONE" |
+| Resumen | REVISAR | en `die` (Start at, DBG) salió "NEW: STORM CHAIN" sin matar al Slime King: Start at no debe acreditar desbloqueos |
+
+#### Lista para el implementador (por prioridad)
+
+1. **DBG Bot C** reactivo (arriba) + Tiempos con él; aplicar bat 0.95 y `player_hp` 120; apuntar resultados en G-55.1.
+2. Zarzas: 4 daño, 60 f, empuje 12 px; medir con Bot C (≤ 2) y con el bot ciego (≤ 9).
+3. RECORDS: "Best --  Kills --  Lv --" si la fase no tiene partidas.
+4. Título: oro siempre abajo a la derecha (nunca sobre el logo), también con 5 cifras.
+5. Tienda: retrato en su columna (texto desde x + 20); personaje bloqueado = **nombre + silueta oscura + condición**
+   ("Cinda — Clear stage 1"), no "?" (gradiente de meta: se persigue lo que tiene nombre).
+6. Tienda: precio en gris si no alcanza el oro; flechas ▲/▼ cuando hay filas fuera de la página; con 0 compras y
+   oro ≥ 30, una línea "Gold buys permanent upgrades" (R6: una línea en el momento).
+7. Elegir fase: retrato sin tapar texto (≥ 4 px de hueco).
+8. **OPTIONS**: Music vol, SFX vol, Screen shake ON/OFF, Flash ON/OFF, Erase save (mantener A 2 s). Qué efectos del
+   menú SELECT pasan a OPTIONS lo decide el usuario (design-question; por defecto, shake y flash).
+9. RECORDS: lista de desbloqueos con condición y progreso ("Lens of Reach — 500 kills (212/500)"); los bloqueados
+   muestran su condición, no "?".
+10. Publicación de F1: `debug_menu = false` en la build de itch.io, Start at sin escribir récords ni desbloqueos, y
+    repetir Tiempos + Equilibrio (C Medium vence F1 ≥ 3/5) con la ROM final.
+
 ### Bloque 5 — F2 Grim Graveyard
 
 **Entra**: paletas de suelo/atrezzo de F2 y pesos de trozos (§C5) · roster F2 (§C2) · arquetipos SHOOT, PHASE, BLINK,
