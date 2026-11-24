@@ -552,7 +552,12 @@ def _export_card(pal, fullpal, pix, w, h, fh):
     _json("card_base", {"type": "sprite", "height": 32})
 
 
-SPECIAL_EXPORT = {"title_bg": _export_title_bg, "logo": _export_logo, "card": _export_card}
+def _export_ending_bg(pal, fullpal, pix, w, h, fh):
+    write_bmp8(os.path.join(GFX, "ending_bg.bmp"), w, h, fullpal, pix)
+    _json("ending_bg", {"type": "regular_bg", "bpp_mode": "bpp_8"})
+
+
+SPECIAL_EXPORT = {"ending_bg": _export_ending_bg, "title_bg": _export_title_bg, "logo": _export_logo, "card": _export_card}
 
 
 def write_props_palette(pal):

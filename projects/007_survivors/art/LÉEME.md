@@ -297,3 +297,37 @@ python -I art/tools/build_block5.py seed [nombres] # crea los .aseprite que falt
   `log`). En código: `bg.set_palette(bn::bg_palette_items::ground_graveyard_palette.create_palette())` y
   `sprite.set_palette(bn::sprite_palette_items::rotten_palette.create_palette())` (probado en ROM).
 - Falta (no está en la tabla): hito **Crypt Gate** (§C5) como pieza de atrezzo propia.
+
+## Adelanto bloque 7: F3 Ashen Keep y final (G-51, `tools/build_block7.py`)
+
+```
+python -I art/tools/build_block7.py seed [nombres]  # paletas F3, fx_fireball, fx_breath, fx_slash, ember_dragon, ending_bg
+python -I art/tools/build_block7.py props           # añade 4 piezas F3 a props (copia en old_style/pre_g51/)
+```
+Fuentes PixelLab en `raw/keep/` (dragón: `raw/keep/dragon/`, piezas F3 y `ending.png`).
+
+| Fichero (código) | Tipo | Frame | Etiquetas | Paleta / notas |
+|---|---|---|---|---|
+| `ember_dragon` | sprite | 64×64 | idle 0–3, breath 4–6, fly 7–8, land 9, death 10–14 | propia (ceniza + brasa, borde frío); breath = la cabeza se calienta (aviso) y abre la boca; fly = 6 px más alto (la sombra la pone el código); land = polvo |
+| `fx_fireball` | sprite | 8×8 | fly 0–1 | fuego (= `fx_ember`): bola de los imps, vuela a la derecha |
+| `fx_breath` | sprite | 16×16 | burn 0–2 | fuego: trozo del cono de aliento (se encadenan hacia la derecha) |
+| `fx_slash` | sprite | 32×32 | arc 0–2 (500/60/80 ms) | fuego: tajo del Champion hacia la derecha; 0 = aviso (arco rojo tramado), 1 = tajo al rojo blanco, 2 = se apaga |
+| `props` (+) | regular_bg_tiles | — | brazier 0,136 32×32 · banner 32,136 16×32 · lava_crack 48,136 32×32 · broken_throne 80,136 64×64 | **props pasa a 256×200** (lo de arriba no se mueve); las piezas nuevas están cuantizadas pensando en `props_keep_palette` (fuego en los índices 8 y 14: brillo por ciclo de paleta) |
+| `ending_bg` | regular_bg **8 bpp** 256×256 | — | — | final: Wendel al amanecer frente al Keep en llamas; imagen en (0,0)–(239,159), `create_bg(8, 48)` como `title_bg`. Los créditos pueden ir encima (texto del generador) |
+
+Paletas F3 (sprite_palette; mismos tiles; brasa = `#e63c3c`/`#a06818`/`#ffc838`, el `#ff7a2a` del diseño no está en la
+paleta maestra):
+
+| Paleta (código) | Para | Sobre |
+|---|---|---|
+| `cinder_slime_palette` | Cinder Slime | `slime` |
+| `ash_bat_palette` | Ash Bat | `bat` |
+| `cultist_palette` | Cultist (túnica ceniza) | `goblin` |
+| `ash_knight_palette` | Ash Knight (acero, ojos cian) | `orc` |
+| `ember_warden_palette` | Ember Warden | `skeleton_big` |
+| `hellhound_palette` | Hellhound | `wolf` |
+| `iron_champion_palette` | Iron Champion (acero) | `orc_warchief` |
+| `ground_keep_palette` / `props_keep_palette` | suelo y atrezzo F3 | `ground` / `props` |
+
+Falta del bloque 7: hito **Broken Throne** usa la pieza `broken_throne`; pantalla de créditos sin arte propio (fondo
+`ending_bg` o negro + texto).
