@@ -3600,22 +3600,7 @@ namespace
             int r = (max_r * (_frost_t + 1)) / 24;
             int damage = _damage(lv >= 2 ? 9 : 6);
 
-            while(_frost.size() < frost_shards)
-            {
-                bn::optional<bn::sprite_ptr> s = art::fx_frost.create_sprite_optional(0, 0, 0);
-
-                if(! s)
-                {
-                    break;
-                }
-
-                s->set_camera(_camera);
-                s->set_bg_priority(2);
-                s->set_z_order(3);
-                s->set_blending_enabled(_fx.frost_translucent);
-                _frost.push_back(bn::move(*s));
-            }
-
+            _ensure_frost_shards();
             int frost_frame = bn::min(2, _frost_t / 8);
 
             for(int i = 0, n = _frost.size(); i < n; ++i)
@@ -3686,6 +3671,52 @@ namespace
                 {
                     shard.set_visible(false);
                 }
+            }
+        }
+
+        // perf (G-52): spark sprites for ~3 volleys in flight are created when Spark is levelled (a menu frame);
+        // creating them on the volley frame measured ~400 ticks each with the horde alive.
+        void _ensure_bolt_sprites()
+        {
+            int lv = _levels[up_spark];
+            int count = lv >= 4 ? 3 : lv >= 2 ? 2 : 1;
+            int wanted = bn::min(max_bolts, 3 * count);
+
+            while(_bolts.size() + _bolt_pool.size() < wanted)
+            {
+                bn::optional<bn::sprite_ptr> s = art::fx_spark.create_sprite_optional(0, 0, 0);
+
+                if(! s)
+                {
+                    break;
+                }
+
+                s->set_camera(_camera);
+                s->set_bg_priority(2);
+                s->set_z_order(3);
+                s->set_visible(false);
+                _bolt_pool.push_back(bn::move(*s));
+            }
+        }
+
+        // perf (G-52): the shards are created when Frost Ring is picked (a menu frame), not on its first pulse.
+        void _ensure_frost_shards()
+        {
+            while(_frost.size() < frost_shards)
+            {
+                bn::optional<bn::sprite_ptr> s = art::fx_frost.create_sprite_optional(0, 0, 0);
+
+                if(! s)
+                {
+                    break;
+                }
+
+                s->set_camera(_camera);
+                s->set_bg_priority(2);
+                s->set_z_order(3);
+                s->set_blending_enabled(_fx.frost_translucent);
+                s->set_visible(false);
+                _frost.push_back(bn::move(*s));
             }
         }
 
@@ -6321,6 +6352,15 @@ namespace
 
             default:
                 ++_levels[id];
+
+                if(id == up_frost)
+                {
+                    _ensure_frost_shards();
+                }
+                else if(id == up_spark)
+                {
+                    _ensure_bolt_sprites();
+                }
                 break;
             }
         }
@@ -6731,6 +6771,13 @@ namespace
                     _player_hp = _player_max_hp;
                     _nova = nova_max;   // test convenience: Nova ready at once
                     test_nova = _nova;
+                    // perf (G-52): a real build gets its weapons one card at a time, so their cooldowns never all
+                    // start on the same frame; stagger them here (all firing at once measured 130 %).
+                    _spark_cd = 7;
+                    _frost_cd = 23;
+                    _chain_cd = 41;
+                    _ensure_frost_shards();
+                    _ensure_bolt_sprites();
                 }
                 else if(_cursor == fx_rows + 2)
                 {
