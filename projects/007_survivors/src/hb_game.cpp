@@ -3922,11 +3922,61 @@ namespace
             return row < fx_rows ? flags[row] : nullptr;
         }
 
+        // The SELECT menu covers the whole screen: the HUD hides while it is open so the rows stay readable.
+        void _set_hud_visible(bool visible)
+        {
+            for(bn::sprite_ptr& s : _xp_bar)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _hud_frame)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _hud_level)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _hud_clock)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _hud_gold)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _nova_bar)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _nova_text)
+            {
+                s.set_visible(visible);
+            }
+
+            for(bn::sprite_ptr& s : _boss_bar)
+            {
+                s.set_visible(visible);
+            }
+
+            if(_hud_blessing)
+            {
+                _hud_blessing->set_visible(visible);
+            }
+        }
+
         void _open_fx_menu()
         {
             _mode = game_mode::fx_menu;
             _cursor = 0;
             _hide_world_extras(true);
+            _set_hud_visible(false);
             _draw_fx_menu();
         }
 
@@ -4023,6 +4073,7 @@ namespace
             {
                 _menu.clear();
                 _hide_world_extras(false);
+                _set_hud_visible(true);
                 _apply_fx_static();
 
                 for(bn::sprite_ptr& s : _frost)
