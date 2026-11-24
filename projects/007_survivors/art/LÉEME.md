@@ -36,11 +36,16 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `goblin` | sprite | **32×32** | walk_e 0–3, death 4–7, walk_s 8–11, walk_se 12–15, walk_ne 16–19, walk_n 20–23 (O/SO/NO = volteo; figura ~20 px, pies en la fila 30) | pieles verdes C (= orc) |
 | `orc` | sprite | 32×32 | igual que `goblin` (pies en la fila 31) | pieles verdes C (= goblin) |
 | `orc_warchief` | sprite | 64×64 | walk 0–5, attack 6–14, stomp 15–16, horn 17–18 | propia (jefe bloque 2): 14 polvo `#2a343d`, 15 rojo oscuro `#bc161b` |
+| `treant` | sprite | 64×64 | idle 0–3, walk 4–7, slam 8–10, hurt 11, death 12–15 | bosque (jefe bloque 3; de frente, sin volteo) |
+| `ghost` | sprite | 16×16 | float 0–3, fade 4–5, death 6–8 | fantasma (11–14 violeta/magenta libres para el wraith) |
+| `imp` | sprite | 16×16 | fly 0–3, cast 4, death 5–7 | imp (de frente) |
+| `gargoyle` | sprite | 32×32 | perch 0, fly 1–4, dive 5, death 6–8 | gárgola (de lado, mira a la **derecha**) |
+| `gargoyle_lord` | sprite | 64×64 | fly 0–3, dive 4, stone 5, death 6–9 | = `gargoyle` (sembrado ampliándolo 2×) |
 | `big_slime` | sprite | 32×32 | hop 0–3, death 4–7 (mismo orden que `slime`) | = `slime` (misma paleta) |
 | `wolf` | sprite | **32×16** | run 0–3, crouch 4 (ojos rojos: aviso), dash 5 (ojos rojos + estela), death 6–8 | lobo (mira a la **derecha**; pies en la fila 15) |
 | `gems` | sprite | 8×8 | cian pequeña 0–1 (1 XP), magenta con halo 2–3 (5 XP), oro grande 4–5 (25 XP); el 2.º frame de cada una es el destello | recogibles (fija) |
 | `coin` | sprite | 8×8 | spin 0–1 | recogibles |
-| `chest` | sprite | 16×16 | closed 0, open 1 | recogibles |
+| `chest` | sprite | 16×16 | closed 0, open 1, cursed_closed 2, cursed_open 3 (morado oscuro, flejes de pizarra, runa roja) | recogibles |
 | `heart` | sprite | 16×16 | idle 0 | recogibles |
 | `icons` | sprite | 16×16 | spark_bolt 0, rune_orbit 1, frost_ring 2, swift_boots 3, heart_amulet 4, magnet 5, spell_tome 6, star 7, ember_toss 8, storm_chain 9 | recogibles |
 | `shrine` | sprite | 16×32 | idle 0 | propia |
@@ -56,6 +61,9 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `fx_ember` | sprite | 8×8 | fly 0–1 (70 ms) | fuego: bola de Ember Toss |
 | `fx_explosion` | sprite | 32×32 | burst 0–4 (50–90 ms: destello, bola, anillo, humo, humo tramado) | fuego |
 | `fx_fire` | sprite | 16×16 | burn 0–3 (90 ms) | fuego: charco de llamas (lecho en filas 11–15) |
+| `fx_root` | sprite | 16×16 | crack 0–1 (grieta magenta, aviso), spike 2–4 | bosque |
+| `fx_thorn` | sprite | 16×16 | idle 0–1 | bosque: segmento del muro de zarzas (casa por los lados) |
+| `fx_seed` | sprite | 8×8 | fly 0–1 | bosque |
 | `fx_dust` | sprite | 8×8 | puff 0–2 | fuego (grises): pisotón/carga |
 | `fx_chain` | sprite | 8×8 | zap 0–2 (40 ms) | FX (= `fx_spark`): segmento horizontal de Storm Chain, se encadenan en fila |
 | `wizard_ghost` | sprite | 32×32 | mismas que `wizard` (59 frames) | silueta lila plana con borde claro para la estela del Blink (usar con transparencia) |
@@ -210,3 +218,20 @@ python -I art/tools/build_block2.py extend          # añade frames a orc_warchi
   al empezar a atacar); el hacha que tocaba el borde inferior lleva ahora contorno en vez de corte plano.
   stomp 15 = levanta (3 px arriba), 16 = golpe (aplastado 2 filas + polvo a los lados); horn 17 = cuerno de hueso
   a la boca, 18 = toque (ondas rojas neón).
+
+## Adelantos: bloque 3 y hordas de las fases 2–3 (G-50)
+
+```
+python -I art/tools/build_block3.py seed [nombres]  # fx_root, fx_thorn, fx_seed, treant (desde raw/treant/)
+python -I art/tools/build_block3.py extend          # chest + cursed_closed 2, cursed_open 3 (copia en old_style/pre_g50/)
+python -I art/tools/build_hordes.py seed [nombres]  # ghost, imp (código), gargoyle (raw/gargoyle/), gargoyle_lord (2×)
+```
+- **Paleta bosque** (`treant`, `fx_root`, `fx_thorn`, `fx_seed`): 1 negro, 2–4 corteza oscura, 5–8 verdes azulados,
+  9–10 claros, 11 vino, 12–14 magentas (ojos, grieta del pecho, aviso de raíz), 15 borde frío `#34466e`.
+- `treant`: personaje PixelLab (v3 64 px, de frente) con breathing-idle, walking (frames 0,1,3,4 de 6) y un golpe
+  v3 (frames 3,4,6 de `raw/treant/slam_src/`, recortados de 92 a 64: en el 10 las puntas de los brazos rozan el
+  borde); hurt = destello claro; death = se hunde y se deshace. Borde frío añadido por código.
+- `gargoyle`: personaje PixelLab (v3 32 px, de lado) + vuelo v3 de 4 frames; dive = vuelo girado 35° hacia abajo;
+  death = se vuelve piedra y se desmorona.
+- `ghost` (sábana con dobladillo ondulado, ojos cian) e `imp` (diablillo rojo de frente, alas de murciélago, `cast`
+  con bola de fuego sobre la cabeza) están dibujados en código.
