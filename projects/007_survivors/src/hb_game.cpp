@@ -19,6 +19,7 @@
 #include "bn_regular_bg_map_item.h"
 #include "bn_regular_bg_map_ptr.h"
 #include "bn_regular_bg_ptr.h"
+#include "bn_sound_handle.h"
 #include "bn_sprite_palette_item.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
@@ -48,6 +49,10 @@ volatile int test_cpu_max_enemies;
 volatile int test_projectiles;
 volatile int test_gems;
 volatile int test_frames;
+volatile int test_sounds;
+volatile int test_last_sound_frame;
+volatile int test_last_sound_id;
+volatile int test_last_sound_speed;
 
 namespace hb
 {
@@ -622,12 +627,16 @@ namespace
 
                 _update_screen_fade();
                 test_mode = int(_mode);
+                _tick_sounds();
+                bool measured = _mode == game_mode::play && _play_streak >= 2;
+                _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
                 bn::core::update();
 
+                // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
                 test_cpu = cpu;
 
-                if(_mode == game_mode::play && cpu > test_cpu_max)
+                if(measured && _mode == game_mode::play && cpu > test_cpu_max)
                 {
                     test_cpu_max = cpu;
                     test_cpu_max_enemies = _enemies.size();
@@ -654,9 +663,9 @@ namespace
         bn::vector<bn::sprite_ptr, 4> _hud_clock;
         bn::vector<bn::sprite_ptr, 4> _hud_gold;
         bn::optional<bn::sprite_ptr> _hud_blessing;
-        bn::vector<bn::sprite_ptr, 6> _hint;
-        bn::vector<bn::sprite_ptr, 6> _world_hint;
-        bn::vector<bn::sprite_ptr, 48> _menu;
+        bn::vector<bn::sprite_ptr, 8> _hint;
+        bn::vector<bn::sprite_ptr, 8> _world_hint;
+        bn::vector<bn::sprite_ptr, 96> _menu;
         bn::vector<bn::sprite_ptr, 4> _warnings;
 
         bn::vector<enemy, max_enemies> _enemies;
@@ -726,6 +735,8 @@ namespace
         int _last_level_shown = -1;
         int _last_gold_shown = -1;
         int _end_timer = 0;
+        int _play_streak = 0;
+        bool _summary_shown = false;
 
         // Menus
         int _cursor = 0;
@@ -755,7 +766,68 @@ namespace
         uint8_t _boss_frost_pulse = 0;
         int _boss_wave_t = 0;
         int _boss_title_t = 0;
-        bn::vector<bn::sprite_ptr, 4> _boss_title;
+        bn::vector<bn::sprite_ptr, 10> _boss_title;
+
+        // -----------------------------------------------------------------------------------------------------
+        // Sound: Maxmod queues a few commands per frame, so at most 2 new sounds per frame.
+
+        // Butano keeps a handle per playing sound (8 with 4 channels): track estimated lengths and keep <= 6 alive.
+        int _sounds_this_frame = 0;
+        int _sound_slots[6] = {};
+
+        void _tick_sounds()
+        {
+            _sounds_this_frame = 0;
+
+            for(int& slot : _sound_slots)
+            {
+                if(slot > 0)
+                {
+                    --slot;
+                }
+            }
+        }
+
+        void _play(const bn::sound_item& item, fixed volume = 1, fixed speed = 1)
+        {
+            if(_sounds_this_frame >= 2)
+            {
+                return;
+            }
+
+            int length = 10;
+
+            if(item == art::sfx_level)
+            {
+                length = 30;
+            }
+            else if(item == art::sfx_boss)
+            {
+                length = 36;
+            }
+            else if(item == art::sfx_hurt)
+            {
+                length = 14;
+            }
+
+            for(int& slot : _sound_slots)
+            {
+                if(slot == 0)
+                {
+                    slot = length;
+                    ++_sounds_this_frame;
+                    // Release at once: a finished Maxmod effect keeps its handle "active" until the channel is
+                    // reused, which fills Butano's 8 sound handles (crash seen at 4:54 in the god-mode run).
+                    test_sounds = test_sounds + 1;
+                    test_last_sound_frame = test_frames;
+                    test_last_sound_id = item.id();
+                    test_last_sound_speed = speed.data();
+                    bn::sound_handle handle = item.play(volume, speed, 0);
+                    handle.release();
+                    return;
+                }
+            }
+        }
 
         // -----------------------------------------------------------------------------------------------------
         // Setup helpers
@@ -905,7 +977,7 @@ namespace
                 _wizard.set_visible(true);
                 _death_anim = 0;
                 _end_timer = 60;
-                art::sfx_hurt.play();
+                _play(art::sfx_hurt);
             }
             else if(_pending_levels > 0 || _free_upgrades > 0)
             {
@@ -1065,7 +1137,7 @@ namespace
             _player_hp -= damage;
             _invulnerable = player_invulnerable_frames;
             _shake = 8;
-            art::sfx_hurt.play();
+            _play(art::sfx_hurt);
         }
 
         // -----------------------------------------------------------------------------------------------------
@@ -1822,7 +1894,7 @@ namespace
 
             if(_hit_sound_cd == 0)
             {
-                art::sfx_hit.play(fixed(0.6));
+                _play(art::sfx_hit, fixed(0.6));
                 _hit_sound_cd = 4;
             }
 
@@ -2098,7 +2170,7 @@ namespace
             _big_text.generate(0, -30, "SLIME KING", _boss_title);
             _boss_title_t = 2 * fps;
             _shake = 12;
-            art::sfx_boss.play();
+            _play(art::sfx_boss);
         }
 
         [[nodiscard]] bool _boss_box_hit(int x, int y, int half) const
@@ -2120,7 +2192,7 @@ namespace
 
             if(_hit_sound_cd == 0)
             {
-                art::sfx_hit.play(fixed(0.6));
+                _play(art::sfx_hit, fixed(0.6));
                 _hit_sound_cd = 4;
             }
 
@@ -2300,7 +2372,7 @@ namespace
             _boss_timer = 30;
             _boss->set_tiles(art::slime_king.tiles_item(), art::king_land.first);
             _shake = 16;
-            art::sfx_boss.play(fixed(0.7));
+            _play(art::sfx_boss, fixed(0.7));
 
             _boss_wave = _world_sprite(art::wave, _boss_pos + fixed_point(0, 8), 0, 29);
             _boss_wave->set_blending_enabled(true);
@@ -2340,7 +2412,7 @@ namespace
             _boss_hp = 0;
             _shake = 20;
             _level_flash = 20;
-            art::sfx_boss.play();
+            _play(art::sfx_boss);
             _end_timer = 120;
         }
 
@@ -2381,7 +2453,7 @@ namespace
                 }
                 else
                 {
-                    _xp += value;
+                    _add_xp(value);
                 }
 
                 return;
@@ -2455,7 +2527,7 @@ namespace
                     if(d2 < 12 * 12)
                     {
                         ++_free_upgrades;
-                        art::sfx_level.play(fixed(0.6));
+                        _play(art::sfx_level, fixed(0.6));
                         _pickups[i] = bn::move(_pickups.back());
                         _pickups.pop_back();
                         continue;
@@ -2499,15 +2571,20 @@ namespace
             if(g.kind == pickup_coin)
             {
                 _gold += g.value;
-                art::sfx_gem.play(fixed(0.5), fixed(0.8), 0);
+                _play(art::sfx_gem, fixed(0.5), fixed(0.8));
                 return;
             }
 
-            _xp += g.value;
-            fixed pitch = 1 + fixed(0.06) * bn::min(_gem_combo, 12);
-            art::sfx_gem.play(fixed(0.5), pitch, 0);
+            _add_xp(g.value);
+            fixed pitch = 1 + fixed(0.03) * bn::min(_gem_combo, 8);   // <= 1.24: higher rates corrupted memory
+            _play(art::sfx_gem, fixed(0.5), pitch);
             ++_gem_combo;
             _gem_combo_t = 30;
+        }
+
+        void _add_xp(int value)
+        {
+            _xp += value;
 
             while(_xp >= xp_needed(_level + _pending_levels))
             {
@@ -2545,7 +2622,7 @@ namespace
 
         void _spawn_poof(const fixed_point& p, int count)
         {
-            art::sfx_poof.play(fixed(0.4));
+            _play(art::sfx_poof, fixed(0.4));
 
             for(int i = 0; i < count; ++i)
             {
@@ -2748,6 +2825,12 @@ namespace
 
         void _update_screen_fade()
         {
+            if(_summary_shown)
+            {
+                bn::bg_palettes::set_fade(bn::color(0, 0, 0), fixed(0.6));
+                return;
+            }
+
             if(_level_flash > 0)
             {
                 --_level_flash;
@@ -2893,7 +2976,7 @@ namespace
             _mode = game_mode::level_up;
             _cursor = 0;
             _level_flash = 20;
-            art::sfx_level.play();
+            _play(art::sfx_level);
             _hide_world_extras(true);
             _draw_cards();
         }
@@ -2908,7 +2991,7 @@ namespace
             _mode = game_mode::shrine_pick;
             _cursor = 0;
             _level_flash = 12;
-            art::sfx_level.play(fixed(0.8));
+            _play(art::sfx_level, fixed(0.8));
             _hide_world_extras(true);
             _draw_cards();
         }
@@ -2978,13 +3061,13 @@ namespace
             if(bn::keypad::left_pressed() && _cursor > 0)
             {
                 --_cursor;
-                art::sfx_menu.play(fixed(0.5));
+                _play(art::sfx_menu, fixed(0.5));
                 _draw_cards();
             }
             else if(bn::keypad::right_pressed() && _cursor < _card_count - 1)
             {
                 ++_cursor;
-                art::sfx_menu.play(fixed(0.5));
+                _play(art::sfx_menu, fixed(0.5));
                 _draw_cards();
             }
             else if(bn::keypad::a_pressed())
@@ -3102,7 +3185,7 @@ namespace
             if(bn::keypad::up_pressed() || bn::keypad::down_pressed())
             {
                 _cursor = 1 - _cursor;
-                art::sfx_menu.play(fixed(0.5));
+                _play(art::sfx_menu, fixed(0.5));
                 _draw_pause();
             }
             else if(bn::keypad::a_pressed() || bn::keypad::start_pressed())
@@ -3230,7 +3313,7 @@ namespace
                     _stress = ! _stress;
                 }
 
-                art::sfx_menu.play(fixed(0.5));
+                _play(art::sfx_menu, fixed(0.5));
                 _draw_fx_menu();
             }
             else if(bn::keypad::select_pressed() || bn::keypad::b_pressed())
@@ -3256,6 +3339,16 @@ namespace
             bool won = _mode == game_mode::won;
             _menu.clear();
             _hide_world_extras(true);
+            _summary_shown = true;
+            _enemies.clear();
+            _bolts.clear();
+            _runes.clear();
+            _frost.clear();
+            _boss_bar.clear();
+            _boss_wave.reset();
+            _shrine.reset();
+            _shrine_arrow.reset();
+            _hud_blessing.reset();
             _hint.clear();
             _big_text.set_center_alignment();
             _big_text.generate(0, -44, won ? "STAGE CLEAR" : "YOU FELL", _menu);
