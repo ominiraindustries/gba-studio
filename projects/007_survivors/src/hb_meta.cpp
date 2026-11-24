@@ -366,13 +366,21 @@ namespace
             }
 
             sc.text(20, y, line);
-            line = "Best ";
-            append_time(line, r.best_time_s);
-            line.append("  Kills ");
-            line.append(bn::to_string<6>(int(r.best_kills)));
-            line.append("  Lv ");
-            line.append(bn::to_string<4>(int(r.best_level)));
-            sc.text(-104, y + 10, line);
+
+            if(r.best_time_s == 0 && r.best_kills == 0)
+            {
+                sc.text(-104, y + 10, "No runs yet");
+            }
+            else
+            {
+                line = "Best ";
+                append_time(line, r.best_time_s);
+                line.append("  Kills ");
+                line.append(bn::to_string<6>(int(r.best_kills)));
+                line.append("  Lv ");
+                line.append(bn::to_string<4>(int(r.best_level)));
+                sc.text(-104, y + 10, line);
+            }
         }
 
         bn::string<48> line("Runs ");
@@ -436,11 +444,18 @@ namespace
                 if(stage_open(stage))
                 {
                     const stage_record& r = save().records[stage];
-                    bn::string<32> line("Best ");
-                    append_time(line, r.best_time_s);
-                    line.append("  CLEAR x");
-                    line.append(bn::to_string<6>(int(r.clears)));
-                    sc.text(0, 37, line, false, true);
+                    if(r.best_time_s == 0 && r.best_kills == 0)
+                    {
+                        sc.text(0, 37, "No runs yet", false, true);
+                    }
+                    else
+                    {
+                        bn::string<32> line("Best ");
+                        append_time(line, r.best_time_s);
+                        line.append("  CLEAR x");
+                        line.append(bn::to_string<6>(int(r.clears)));
+                        sc.text(0, 37, line, false, true);
+                    }
                 }
                 else
                 {
