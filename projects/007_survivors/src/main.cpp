@@ -1,86 +1,91 @@
-// 007_survivors: Butano starter. A sprite moved with the d-pad over a background, text from Butano's
-// sprite text generator and a sound effect on A.
+// HEXBOUND (007_survivors): title screen and run loop. The run itself lives in hb_game.cpp.
 
+#include "bn_bg_palettes.h"
 #include "bn_core.h"
 #include "bn_keypad.h"
-#include "bn_regular_bg_ptr.h"
-#include "bn_sound_items.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
+#include "bn_string.h"
 #include "bn_vector.h"
 
-#include "bn_regular_bg_items_backdrop.h"
-#include "bn_sprite_items_hero.h"
-
 #include "common_variable_8x8_sprite_font.h"
+#include "common_variable_16x16_sprite_font.h"
 
-// Mirrors of the game state for headless tests (tools/scripts/gbarun.py --check test_player_x.32>=...).
-// Global, non-static and volatile so the symbol stays in the .elf and the stores are not optimised away.
-volatile int test_player_x;
-volatile int test_player_y;
-volatile int test_sounds_played;
+#include "hb_art.h"
+#include "hb_config.h"
+#include "hb_game.h"
+
+extern volatile int test_mode;
 
 namespace
 {
-    constexpr int min_x = -112;
-    constexpr int max_x = 112;
-    constexpr int min_y = -72;
-    constexpr int max_y = 72;
-
-    [[nodiscard]] constexpr int clamp(int value, int low, int high)
+    // Returns a seed taken from how long the player waited on the title (deterministic for the same input).
+    unsigned title_screen()
     {
-        return value < low ? low : (value > high ? high : value);
+        bn::bg_palettes::set_transparent_color(bn::color(4, 6, 5));
+        bn::sprite_text_generator big(common::variable_16x16_sprite_font);
+        bn::sprite_text_generator small(common::variable_8x8_sprite_font);
+        big.set_center_alignment();
+        small.set_center_alignment();
+
+        bn::vector<bn::sprite_ptr, 24> texts;
+        big.generate(0, -50, hb::game_title, texts);
+        bn::string<32> sub(hb::hero_name);
+        sub.append(" vs the horde");
+        small.generate(0, -30, sub, texts);
+        small.generate(0, 48, hb::stage_name, texts);
+
+        bn::sprite_ptr wizard = hb::art::wizard.create_sprite(0, 4, hb::art::wizard_idle.first);
+        bn::sprite_ptr slime_l = hb::art::slime.item->create_sprite(-40, 12, 0);
+        bn::sprite_ptr slime_r = hb::art::slime.item->create_sprite(40, 12, 0);
+        slime_r.set_horizontal_flip(true);
+
+        bn::vector<bn::sprite_ptr, 4> press;
+        unsigned frames = 0;
+        test_mode = 0;
+
+        while(! bn::keypad::start_pressed() && ! bn::keypad::a_pressed())
+        {
+            ++frames;
+
+            if(frames % 60 == 1)
+            {
+                press.clear();
+                small.generate(0, 30, "PRESS START", press);
+            }
+            else if(frames % 60 == 40)
+            {
+                press.clear();
+            }
+
+            int hop = (frames >> 3) & 3;
+            wizard.set_tiles(hb::art::wizard.tiles_item(), hb::art::wizard_idle.frame(int(frames), true));
+            slime_l.set_tiles(hb::art::slime.item->tiles_item(), hop);
+            slime_r.set_tiles(hb::art::slime.item->tiles_item(), (hop + 2) & 3);
+            bn::core::update();
+        }
+
+        hb::art::sfx_level.play(bn::fixed(0.6));
+        bn::core::update();   // consume the START press so the run does not open the pause menu
+        return frames;
     }
 }
 
 int main()
 {
     bn::core::init();
-
-    bn::regular_bg_ptr backdrop = bn::regular_bg_items::backdrop.create_bg(8, 48);
-    bn::sprite_ptr hero = bn::sprite_items::hero.create_sprite(0, 16);
-
-    bn::sprite_text_generator text_generator(common::variable_8x8_sprite_font);
-    text_generator.set_center_alignment();
-    bn::vector<bn::sprite_ptr, 32> text_sprites;
-    text_generator.generate(0, -64, "Hexbloom", text_sprites);
-    text_generator.generate(0, -48, "D-pad: move   A: sound", text_sprites);
+    hb::fx_settings fx;
+    unsigned seed = title_screen();
 
     while(true)
     {
-        int x = hero.x().right_shift_integer();
-        int y = hero.y().right_shift_integer();
+        hb::run_end end = hb::play_run(seed, fx);
+        ++seed;
 
-        if(bn::keypad::left_held())
+        if(end == hb::run_end::title)
         {
-            --x;
+            bn::core::update();
+            seed += title_screen();
         }
-        else if(bn::keypad::right_held())
-        {
-            ++x;
-        }
-
-        if(bn::keypad::up_held())
-        {
-            --y;
-        }
-        else if(bn::keypad::down_held())
-        {
-            ++y;
-        }
-
-        x = clamp(x, min_x, max_x);
-        y = clamp(y, min_y, max_y);
-        hero.set_position(x, y);
-
-        if(bn::keypad::a_pressed())
-        {
-            bn::sound_items::blip.play();
-            test_sounds_played = test_sounds_played + 1;
-        }
-
-        test_player_x = x;
-        test_player_y = y;
-        bn::core::update();
     }
 }
