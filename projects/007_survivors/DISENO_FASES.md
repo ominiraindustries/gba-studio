@@ -148,7 +148,30 @@ Vida: HP inicial y **TTK objetivo** (segundos para matarlo con el perfil C, §E6
 |---|---|---|---|---|---|---|
 | **Slime King** (5:00) — `slime_king` | 600 / 20–40 s | 12 · salta | salta hacia ti: **sombra 45 f** antes de caer, onda r 32 (12) (hecho) | < 50 %: al caer suelta 4 slimes | < 25 %: saltos cada 60 f, sombra 30 f | moverse a tiempo |
 | **Orc Warchief** (10:00) — `orc_warchief` | 3000 / 30–60 s | 15 · 0.5 | **Carga**: pisotones 40 f (polvo + línea de 4 "!" en su dirección), embiste a 3.5 px/f hasta 90 f; si choca con atrezzo queda **aturdido 60 f** (ventana); cada 4 s | < 60 %: **Cuerno** 45 f (temblor 1 px) → 8 goblins desde 2 lados; sigue cargando | < 30 %: **carga doble** (segundo aviso de 20 f, reorienta) | esquivar en línea, Blink, grupo |
-| **Thornwood Treant** (15:00) — `treant` nuevo | 7000 / 60–120 s | 16 · 0.25 | **Raíces**: 3 grietas bajo/junto al mago (**40 f**), púas r 12 durante 20 f (14); cada 150 f | < 66 %: **Muro de zarzas**: anillo de 16 sprites de espinas a r 150 del punto de entrada del jefe que se cierra a r 110 en 10 s (6 daño/30 f al tocar); se ve entero | < 33 %: **Semillas**: brilla 30 f → 8 semillas radiales a 1.2 px/f (8); cada 20 s llama 4 wolves; raíces cada 120 f | posicionarse en espacio reducido |
+| **Thornwood Treant** (15:00) — `treant` nuevo | 7000 / 60–120 s | 16 · 0.25 | **Raíces**: 3 grietas bajo/junto al mago (**40 f**), púas r 12 durante 20 f (14); cada 150 f | < 66 %: **Muro de zarzas** (G-52.1): cámara fija + elipse de 24 zarzas centrada en el mago, 104×56 → 88×48 en 10 s, brotes 60 f antes de dañar, sólido (6 daño/30 f + empuje); ver "Decisión G-52.1" | < 33 %: **Semillas**: brilla 30 f → 8 semillas radiales a 1.2 px/f (8); cada 20 s llama 4 wolves; raíces cada 120 f | posicionarse en espacio reducido |
+
+**Decisión G-52.1 — Muro de zarzas del Treant** (sustituye "r 150 → 110 del punto de entrada"):
+
+Problema medido: la pantalla es 240×160 y la barra superior del HUD ocupa ~24 px, así que con la cámara siguiendo al
+mago sólo quedan ~56 px visibles hacia arriba y 80 hacia abajo; un anillo de r 150/110 enseña 2–4 espinas con huecos
+de ~40 px (capturas `tr1`/`rg2`: el muro no se lee). Un peligro que no se ve rompe **R5** (todo peligro se ve antes de
+dañar) y **R9** (un estado del mundo siempre se ve). Opción elegida: mezcla de (a) y (c) con cámara fija.
+
+| Parámetro | Valor | Porqué (regla) |
+|---|---|---|
+| Centro | posición del **mago** al lanzar (no el punto de entrada) | nunca empieza fuera; elimina el caso "mago fuera" (R9) |
+| Cámara | durante el muro, se desliza en 20 f a (centro.x, centro.y − 12) y **queda fija**; vuelve a seguir al mago en 20 f al marchitarse | la arena entera en pantalla; el −12 centra la elipse en el área útil y = 24..160 (legibilidad) |
+| Forma | **elipse** rx 104 × ry 56 → se cierra a rx 88 × ry 48 en 600 f (10 s), lineal | borde exterior de las zarzas (r + 8) a ≥ 8 px del borde de pantalla y del HUD; 240×160 no admite un círculo legible |
+| Sprites | **24** zarzas 16×16 (+8 OAM sobre lo previsto); paso ~21 px al abrir, ~18 px cerrado | con 16 el hueco sería ~16 px y se leería como puntos sueltos; con 24 se lee como muro. Si OAM no da, 20 (mínimo) |
+| Aviso | **60 f** de brotes: 24 retoños pequeños parpadeando (sin daño) en las posiciones iniciales + temblor 1 px del Treant; luego crecen en 8 f y ya dañan | R5 + anticipación; igual que las grietas de raíces (40 f) pero más largo porque encierra |
+| Colisión mago | zarzas **sólidas** para el mago (se le limita a la elipse r − 8, incluido Blink); tocar = 6 daño/30 f + empuje 8 px hacia el centro | sin estado "fuera" ni softlock (R9); castigo pequeño (R10) |
+| Mago fuera | no puede ocurrir (centro en el mago + sólido); si por un fallo ocurre, se le recoloca dentro en 1 frame | defensa, no mecánica |
+| Monstruos y jefe | atraviesan las zarzas; el Treant (0.25 px/f) entra caminando; oleadas sin cambio | coste bajo; la presión viene de dentro |
+| Duración | 20 s (10 cerrándose + 10 fijo) → se marchita 30 f (parpadeo, sin daño) → 10 s libre → se repite mientras siga < 66 % y ≥ 33 %; al pasar a < 33 % se marchita en el acto | ritmo con silencios (R4); fase 3 cambia de idea (R11) |
+
+Métricas (R13, perfil C con `gbarun.py`): `test_wall_onscreen` = 24 zarzas dentro de 0..239 × 24..159 en todos los
+frames del muro; primer daño de zarza ≥ 60 f tras los brotes; golpes de zarza por muro ≤ 2 con el bot; TTK del Treant
+sigue en 60–120 s. Captura obligatoria con el muro cerrado para revisar que se lee como pared.
 
 ### E5.2 Fase 2
 
