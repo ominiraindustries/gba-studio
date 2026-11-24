@@ -151,7 +151,7 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
   (hielo, Blink); 11–14 lilas (runa, Nova); 15 sombra casi negra. `fx_nova`, `fx_nova_spark`, `fx_blink` la usan.
 - **enemigos**: cuerpo oscuro, ojos de color y borde frío `#3d5590` fuera de la silueta. Grupos con paleta común:
   **slime** (verde azulado oscuro, ojos lima) · **no-muertos** (huesos fríos casi blancos, alas moradas, ojos rojos)
-  · **pieles verdes** (piel azul noche, ojos amarillo neón) · **orc_warchief** (armadura oscura, rojo neón) ·
+  · **pieles verdes** (G-53: goblin verde, orco verde oliva; borde claro de 1 px; ojos amarillo neón) · **orc_warchief** (armadura oscura, rojo neón) ·
   **slime_king** (paleta propia) · **shrine** (piedra fría, runa magenta).
 - **suelo** `ground`: `#07060c` con manchas suaves `#0b0a15`/`#100f1e`, motas frías y grietas. Índice 0 = `#07060c`
   (color de fondo de la pantalla), no lo usa ningún píxel. Pocos tiles únicos (~130).
@@ -331,3 +331,16 @@ paleta maestra):
 
 Falta del bloque 7: hito **Broken Throne** usa la pieza `broken_throne`; pantalla de créditos sin arte propio (fondo
 `ending_bg` o negro + texto).
+
+## G-53: goblin, orco y lobo visibles sobre el suelo oscuro (opción A por defecto, falta que el usuario la confirme)
+
+- Antes eran gris azulado casi negro sobre el suelo `#07060c`. Ahora: **goblin** verde, **orco** verde oliva (con sus
+  correas rojas), **lobo** pardo claro. Borde exterior claro de 1 px como el esqueleto: índice 10 en goblin/orco
+  (`#98c88a` / `#cac68c`), índice 7 en el lobo (`#d2c2a2`). Ojos del goblin/orco: índice 14 `#ffc838`.
+- Los píxeles del índice de borde que quedaban dentro de la silueta pasaron al índice 9 (goblin/orco) o 6 (lobo):
+  así el borde sólo rodea. Mismos índices, tamaños, frames y etiquetas; `rotten_palette` sigue valiendo.
+- Luminancia media (suelo 9,7): goblin 53 → 105, orco 50 → 100, lobo 50 → 116; interior sin borde 48/45/40 → 80/74/81.
+- Colores nuevos en `palette_c.json` (`master` y `hordes`) para que `snap_master.py` no los quite.
+- Rehacer o retocar: `python -I art/tools/hordes_g53.py` (tabla `RECIPES`) y `build_art.py export`. Se pueden cambiar
+  los colores en Aseprite sin mover índices. Originales en `old_style/pre_g53/`. `orc_warchief` no comparte paleta y
+  no se tocó.
