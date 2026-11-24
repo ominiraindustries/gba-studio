@@ -97,7 +97,7 @@ class Canvas:
 
 
 # Only the graphics with no final art yet are written (the rest were replaced by gba-artist's set).
-KEEP = {"tmp_fx", "tmp_card", "tmp_wave", "tmp_xpbar", "tmp_hpbar", "tmp_bossbar"}
+KEEP = {"tmp_fx", "tmp_wave", "tmp_bossbar"}
 
 
 def write_bmp(name, canvas, pal, meta):

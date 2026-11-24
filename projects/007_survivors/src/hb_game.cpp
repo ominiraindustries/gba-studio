@@ -20,6 +20,7 @@
 #include "bn_regular_bg_map_ptr.h"
 #include "bn_regular_bg_ptr.h"
 #include "bn_sound_handle.h"
+#include "bn_sprite_palettes.h"
 #include "bn_sprite_palette_item.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
@@ -49,6 +50,9 @@ volatile int test_cpu_max_enemies;
 volatile int test_projectiles;
 volatile int test_gems;
 volatile int test_frames;
+volatile int test_nova;           // Hex Nova meter (0..nova_max)
+volatile int test_novas_cast;
+volatile int test_blinks;
 volatile int test_sounds;
 volatile int test_last_sound_frame;
 volatile int test_last_sound_id;
@@ -355,12 +359,12 @@ namespace
 
     // §9
     const upgrade_text upgrade_texts[up_count] = {
-        { "Spark Bolt", &art::icons, art::icon_spark_bolt, { "Auto bolt", "+1 bolt", "+3 damage", "+1 bolt", "Pierce 2" } },
-        { "Rune Orbit", &art::icons, art::icon_rune_orbit, { "Orbit runes", "+1 rune", "Wide orbit", "+1 rune", "Always on" } },
-        { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slow pulse", "+3 damage", "Big ring", "Fast pulse", "Freeze" } },
-        { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% speed", "+8% speed", "+8% speed", "+8% speed", "+8% speed" } },
-        { "Heart Amulet", &art::icons, art::icon_heart_amulet, { "+20 max HP", "+20 max HP", "+20 max HP", "+20 max HP", "+20 max HP" } },
-        { "Heal", &art::heart, 0, { "Heal 30 HP", "", "", "", "" } },
+        { "Spark Bolt", &art::icons, art::icon_spark_bolt, { "Auto bolt", "+1 bolt", "+3 dmg", "+1 bolt", "Pierce 2" } },
+        { "Rune Orbit", &art::icons, art::icon_rune_orbit, { "2 runes", "+1 rune", "Wider", "+1 rune", "Always on" } },
+        { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slow ring", "+3 dmg", "Big ring", "Faster", "Freeze" } },
+        { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% spd", "+8% spd", "+8% spd", "+8% spd", "+8% spd" } },
+        { "Heart Amulet", &art::icons, art::icon_heart_amulet, { "+20 HP", "+20 HP", "+20 HP", "+20 HP", "+20 HP" } },
+        { "Heal", &art::heart, 0, { "Heal 30", "", "", "", "" } },
         { "Gold", &art::coin, 0, { "+10 gold", "", "", "", "" } },
     };
 
@@ -375,10 +379,10 @@ namespace
 
     // §4 2a
     const upgrade_text blessing_texts[bless_count] = {
-        { "Fury", &art::icons, art::icon_star, { "+30% damage", "60 seconds", "", "", "" } },
-        { "Haste", &art::icons, art::icon_swift_boots, { "+30% speed", "60 seconds", "", "", "" } },
-        { "Magnet", &art::icons, art::icon_magnet, { "Pull all gems", "60 seconds", "", "", "" } },
-        { "Mend", &art::heart, 0, { "Heal 40 HP", "now", "", "", "" } },
+        { "Fury", &art::icons, art::icon_star, { "+30% dmg", "60 s", "", "", "" } },
+        { "Haste", &art::icons, art::icon_swift_boots, { "+30% spd", "60 s", "", "", "" } },
+        { "Magnet", &art::icons, art::icon_magnet, { "All gems", "60 s", "", "", "" } },
+        { "Mend", &art::heart, 0, { "Heal 40", "now", "", "", "" } },
     };
 
     // ---------------------------------------------------------------------------------------------------------
@@ -502,7 +506,7 @@ namespace
             _big_text(common::variable_16x16_sprite_font),
             _wizard(art::wizard.create_sprite(0, art::wizard_y_offset, art::wizard_idle.first)),
             _wizard_shadow(art::shadow_small.create_sprite(0, 5)),
-            _hp_bar(art::hp_bar.create_sprite(0, 12, art::bar_width))
+            _hp_bar(art::hp_bar.create_sprite(0, 12, art::hp_bar_frames))
         {
             _random = bn::random();
 
@@ -543,11 +547,24 @@ namespace
             _hp_bar.set_z_order(4);
             bn::blending::set_transparency_alpha(fixed(0.5));
 
-            for(int i = 0; i < 6; ++i)
+            // XP bar: 7 pieces from x = 4 plus end caps; clock plaque under the timer (art/LÉEME.md).
+            for(int i = 0; i < art::xp_pieces; ++i)
             {
-                bn::sprite_ptr bar = art::xp_bar.create_sprite(-80 + i * 32, -76, 0);
+                bn::sprite_ptr bar = art::xp_bar.create_sprite(-100 + i * 32, -76, 0);
                 bar.set_bg_priority(0);
                 _xp_bar.push_back(bn::move(bar));
+            }
+
+            for(int i = 0; i < 2; ++i)
+            {
+                bn::sprite_ptr cap = art::xp_cap.create_sprite(i ? 112 : -115, -76, i);
+                cap.set_bg_priority(0);
+                cap.set_z_order(-1);
+                _hud_frame.push_back(bn::move(cap));
+                bn::sprite_ptr plaque = art::plaque.create_sprite(i ? 16 : -16, -63, i);
+                plaque.set_bg_priority(0);
+                plaque.set_z_order(1);
+                _hud_frame.push_back(bn::move(plaque));
             }
 
             _levels[up_spark] = 1;
@@ -563,6 +580,7 @@ namespace
         ~game()
         {
             bn::bg_palettes::set_fade(bn::color(0, 0, 0), 0);
+            bn::sprite_palettes::set_fade(bn::color(0, 0, 0), 0);
             bn::sprites_mosaic::set_stretch(0);
         }
 
@@ -657,7 +675,10 @@ namespace
         bn::sprite_ptr _wizard;
         bn::sprite_ptr _wizard_shadow;
         bn::sprite_ptr _hp_bar;
-        bn::vector<bn::sprite_ptr, 6> _xp_bar;
+        bn::vector<bn::sprite_ptr, art::xp_pieces> _xp_bar;
+        bn::vector<bn::sprite_ptr, 4> _hud_frame;
+        bn::optional<bn::sprite_ptr> _burst;
+        int _burst_t = 0;
         bn::vector<bn::sprite_ptr, 6> _boss_bar;
         bn::vector<bn::sprite_ptr, 4> _hud_level;
         bn::vector<bn::sprite_ptr, 4> _hud_clock;
@@ -697,6 +718,20 @@ namespace
         int _walk_anim = 0;
         int _idle_anim = 0;
         int _death_anim = 0;
+        int _wizard_frame = 0;
+        bool _has_aim = false;
+        int _aim_dx = 0;
+        int _aim_dy = 0;
+        int _blink_cd = 0;
+        int _blink_invulnerable = 0;
+        bool _blink_hint_done = false;
+        static constexpr int nova_max = 150;   // ~50 s of early play (2 per kill, 1 per gem XP)
+        int _nova = 0;
+        int _nova_flash = 0;
+        bool _nova_hint_done = false;
+        int _last_nova_shown = -1;
+        bn::vector<bn::sprite_ptr, 2> _nova_bar;
+        bn::vector<bn::sprite_ptr, 2> _nova_text;
 
         // Weapons
         int _spark_cd = 30;
@@ -1031,10 +1066,168 @@ namespace
             return value;
         }
 
+        void _update_aim()
+        {
+            _has_aim = false;
+            int best = 200 * 200;
+
+            for(const enemy& e : _enemies)
+            {
+                int dx = to_int(e.pos.x() - _pos.x());
+                int dy = to_int(e.pos.y() - _pos.y());
+                int d = dx * dx + dy * dy;
+
+                if(d < best)
+                {
+                    best = d;
+                    _aim_dx = dx;
+                    _aim_dy = dy;
+                    _has_aim = true;
+                }
+            }
+
+            if(_boss && _boss_state != 3)
+            {
+                _aim_dx = to_int(_boss_pos.x() - _pos.x());
+                _aim_dy = to_int(_boss_pos.y() - _pos.y());
+                _has_aim = true;
+            }
+        }
+
+        // ---- B = Blink (user decision): ~40 px hop, 3 s cooldown, 10 f invulnerable, afterimages.
+        void _try_blink(int ax, int ay)
+        {
+            if(_blink_cd > 0)
+            {
+                return;
+            }
+
+            fixed_point dir = ax || ay ? (ax && ay ? fixed_point(diag * ax, diag * ay) : fixed_point(ax, ay)) : _facing;
+            fixed_point start = _pos;
+            fixed_point end = _pos;
+
+            for(int step = 1; step <= 5; ++step)
+            {
+                fixed_point p = start + dir * (step * 8);
+
+                if(_blocked(p.x(), p.y()))
+                {
+                    break;
+                }
+
+                end = p;
+            }
+
+            if(end == start)
+            {
+                return;
+            }
+
+            _pos = end;
+            _blink_cd = 3 * fps;
+            _blink_invulnerable = 10;
+            _play(art::sfx_menu, 1, fixed(0.7));
+            test_blinks = test_blinks + 1;
+
+            // PROVISIONAL afterimages (fx_blink pending): translucent copies of the current wizard frame.
+            for(int i = 1; i <= 3; ++i)
+            {
+                fixed_point p = start + (end - start) * i / 4;
+                _spawn_particle(fixed_point(p.x(), p.y() + art::wizard_y_offset), fixed_point(), art::wizard,
+                                { _wizard_frame, 1, 1 }, 6 + i * 3, 7, _wizard.horizontal_flip());
+
+                if(! _particles.empty())
+                {
+                    _particles.back().sprite.set_blending_enabled(true);
+                }
+            }
+        }
+
+        // ---- A = Hex Nova (user decision): meter from kills and gems, clears the screen when full.
+        void _add_nova(int amount)
+        {
+            if(_nova >= nova_max)
+            {
+                return;
+            }
+
+            _nova = bn::min(nova_max, _nova + amount);
+            test_nova = _nova;
+
+            if(_nova == nova_max && ! _nova_hint_done)
+            {
+                _nova_hint_done = true;
+                _show_hint("A: NOVA READY!", 3 * fps);
+            }
+        }
+
+        void _cast_nova()
+        {
+            _nova = 0;
+            test_nova = 0;
+            test_novas_cast = test_novas_cast + 1;
+            _nova_flash = 24;
+            _shake = 20;
+            _play(art::sfx_boss);
+            _play(art::sfx_level, 1, fixed(0.8));
+            int damage = _damage(40);
+
+            for(int i = 0; i < _enemies.size(); ++i)
+            {
+                int dx = to_int(_enemies[i].pos.x() - _pos.x());
+                int dy = to_int(_enemies[i].pos.y() - _pos.y());
+
+                if(abs_int(dx) > 136 || abs_int(dy) > 96)
+                {
+                    continue;
+                }
+
+                if(_hit_enemy(i, damage, _pos))
+                {
+                    --i;
+                }
+                else
+                {
+                    // Enemies fly out: a long, strong knockback.
+                    enemy& e = _enemies[i];
+                    e.knock = 16;
+                    e.knock_vel = unit(dx, dy) * 3;
+                }
+            }
+
+            if(_boss && _boss_state != 3)
+            {
+                _hit_boss(_damage(60));
+            }
+
+            _spawn_poof(_pos, 6);
+        }
+
         void _update_player()
         {
             int ax = int(bn::keypad::right_held()) - int(bn::keypad::left_held());
             int ay = int(bn::keypad::down_held()) - int(bn::keypad::up_held());
+            _update_aim();
+
+            if(_blink_cd > 0)
+            {
+                --_blink_cd;
+            }
+
+            if(_blink_invulnerable > 0)
+            {
+                --_blink_invulnerable;
+            }
+
+            if(bn::keypad::b_pressed())
+            {
+                _try_blink(ax, ay);
+            }
+
+            if(bn::keypad::a_pressed() && _nova >= nova_max)
+            {
+                _cast_nova();
+            }
             fixed speed = player_speed * _speed_multiplier();
             fixed tx = speed * ax;
             fixed ty = speed * ay;
@@ -1083,30 +1276,37 @@ namespace
             int frame;
             ++_idle_anim;
 
-            if(ax)
+            // User decision: Wendel faces where he shoots (nearest target), not where he walks; with no target he
+            // faces the movement direction. Walking backwards plays the walk cycle of the aim side.
+            int look_x = ax;
+            int look_y = ay;
+
+            if(! moving)
             {
-                frame = art::wizard_walk_side.frame(_walk_anim, true);
-                _wizard.set_horizontal_flip(ax < 0);
+                look_x = _facing.x() > 0 ? 1 : _facing.x() < 0 ? -1 : 0;
+                look_y = _facing.y() > 0 ? 1 : _facing.y() < 0 ? -1 : 0;
             }
-            else if(ay < 0)
+
+            if(_has_aim)
             {
-                frame = art::wizard_walk_up.frame(_walk_anim, true);
+                int adx = abs_int(_aim_dx);
+                int ady = abs_int(_aim_dy);
+                look_x = adx * 2 >= ady ? (_aim_dx < 0 ? -1 : 1) : 0;
+                look_y = look_x ? 0 : (_aim_dy < 0 ? -1 : 1);
             }
-            else if(ay > 0)
+
+            if(look_x)
             {
-                frame = art::wizard_walk_down.frame(_walk_anim, true);
+                frame = moving ? art::wizard_walk_side.frame(_walk_anim, true) : art::wizard_idle_side.frame(_idle_anim, true);
+                _wizard.set_horizontal_flip(look_x < 0);
             }
-            else if(_facing.y() < 0 && _facing.x() == 0)
+            else if(look_y < 0)
             {
-                frame = art::wizard_idle_up.frame(_idle_anim, true);
-            }
-            else if(_facing.x() != 0)
-            {
-                frame = art::wizard_idle_side.frame(_idle_anim, true);
+                frame = moving ? art::wizard_walk_up.frame(_walk_anim, true) : art::wizard_idle_up.frame(_idle_anim, true);
             }
             else
             {
-                frame = art::wizard_idle.frame(_idle_anim, true);
+                frame = moving ? art::wizard_walk_down.frame(_walk_anim, true) : art::wizard_idle.frame(_idle_anim, true);
             }
 
             if(_invulnerable > 20)
@@ -1114,12 +1314,13 @@ namespace
                 frame = art::wizard_hurt.frame(player_invulnerable_frames - _invulnerable, true);
             }
 
+            _wizard_frame = frame;
             _wizard.set_tiles(art::wizard.tiles_item(), frame);
             _wizard.set_position(_pos.x(), _pos.y() + art::wizard_y_offset);
             _wizard.set_visible(_invulnerable == 0 || (_invulnerable & 2) == 0);
             _wizard_shadow.set_position(_pos.x(), _pos.y() + 5);
             _hp_bar.set_position(_pos.x(), _pos.y() + 12);
-            _hp_bar.set_tiles(art::hp_bar.tiles_item(), (_player_hp * art::bar_width + _player_max_hp - 1) / _player_max_hp);
+            _hp_bar.set_tiles(art::hp_bar.tiles_item(), (_player_hp * art::hp_bar_frames + _player_max_hp - 1) / _player_max_hp);
 
             if(_invulnerable > 0)
             {
@@ -1129,9 +1330,15 @@ namespace
 
         void _hurt_player(int damage)
         {
-            if(_invulnerable > 0 || _fx.god_mode)
+            if(_invulnerable > 0 || _blink_invulnerable > 0 || _fx.god_mode)
             {
                 return;
+            }
+
+            if(! _blink_hint_done)
+            {
+                _blink_hint_done = true;
+                _show_hint("B: BLINK", 3 * fps);
             }
 
             _player_hp -= damage;
@@ -1439,7 +1646,7 @@ namespace
             {
                 int wx = dx[side] ? dx[side] * 112 : i * 40;
                 int wy = dy[side] ? dy[side] * 64 : i * 30;
-                bn::sprite_ptr w = art::tmp_fx.create_sprite(wx, wy, art::tmp_warning);
+                bn::sprite_ptr w = art::alert.create_sprite(wx, wy, 0);
                 w.set_bg_priority(0);
                 _warnings.push_back(bn::move(w));
             }
@@ -1451,7 +1658,7 @@ namespace
 
             for(bn::sprite_ptr& w : _warnings)
             {
-                w.set_visible(visible);
+                w.set_tiles(art::alert.tiles_item(), visible ? 0 : 1);
             }
         }
 
@@ -1930,6 +2137,7 @@ namespace
             enemy& e = _enemies[i];
             fixed_point p = e.pos;
             ++_kills;
+            _add_nova(2);
 
             const art::monster_art& look = *enemy_defs[e.type].look;
             const art::anim& death = look.death;
@@ -2576,6 +2784,7 @@ namespace
             }
 
             _add_xp(g.value);
+            _add_nova(1);
             fixed pitch = 1 + fixed(0.03) * bn::min(_gem_combo, 8);   // <= 1.24: higher rates corrupted memory
             _play(art::sfx_gem, fixed(0.5), pitch);
             ++_gem_combo;
@@ -2717,7 +2926,7 @@ namespace
         {
             _shrine_pos = _spawn_point(160, 220, false);
             _shrine = _world_sprite(art::shrine, _shrine_pos, 0, 12);
-            bn::sprite_ptr arrow = art::tmp_fx.create_sprite(0, 0, art::tmp_arrow_right);
+            bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
             arrow.set_bg_priority(0);
             _shrine_arrow = bn::move(arrow);
             _shrine_touch = 0;
@@ -2741,24 +2950,24 @@ namespace
                 if(! on_screen)
                 {
                     // Edge arrow: clamp the direction to the screen border, pick one of 8 frames.
-                    int sx = bn::max(-112, bn::min(112, dx));
-                    int sy = bn::max(-72, bn::min(72, dy));
+                    int sx = bn::max(-110, bn::min(110, dx));
+                    int sy = bn::max(-58, bn::min(70, dy));
                     int adx = abs_int(dx);
                     int ady = abs_int(dy);
-                    int frame = art::tmp_arrow_down_right;
+                    int frame = art::arrow_north_east;
 
                     if(adx > ady * 2)
                     {
-                        frame = art::tmp_arrow_right;
+                        frame = art::arrow_east;
                     }
                     else if(ady > adx * 2)
                     {
-                        frame = art::tmp_arrow_down;
+                        frame = art::arrow_north;
                     }
 
-                    _shrine_arrow->set_tiles(art::tmp_fx.tiles_item(), frame);
+                    _shrine_arrow->set_tiles(art::edge_arrow.tiles_item(), frame);
                     _shrine_arrow->set_horizontal_flip(dx < 0);
-                    _shrine_arrow->set_vertical_flip(dy < 0);
+                    _shrine_arrow->set_vertical_flip(dy > 0);
                     _shrine_arrow->set_position(sx, sy);
                 }
             }
@@ -2825,6 +3034,17 @@ namespace
 
         void _update_screen_fade()
         {
+            if(_nova_flash > 0)
+            {
+                --_nova_flash;
+                fixed intensity = _fx.level_flash ? fixed(_nova_flash) / 30 : fixed(0);
+                bn::bg_palettes::set_fade(bn::color(28, 22, 31), intensity);
+                bn::sprite_palettes::set_fade(bn::color(31, 28, 31), intensity / 2);
+                return;
+            }
+
+            bn::sprite_palettes::set_fade(bn::color(0, 0, 0), 0);
+
             if(_summary_shown)
             {
                 bn::bg_palettes::set_fade(bn::color(0, 0, 0), fixed(0.6));
@@ -2857,11 +3077,45 @@ namespace
         void _refresh_hud(bool force)
         {
             int need = xp_needed(_level);
-            int fill = (bn::min(_xp, need) * 192) / need;
+            int fill = (bn::min(_xp, need) * 32 * art::xp_pieces) / need;
 
-            for(int i = 0; i < 6; ++i)
+            for(int i = 0; i < art::xp_pieces; ++i)
             {
-                _xp_bar[i].set_tiles(art::xp_bar.tiles_item(), bn::max(0, bn::min(32, fill - i * 32)));
+                _xp_bar[i].set_tiles(art::xp_bar.tiles_item(), bn::max(0, bn::min(32, fill - i * 32)) / 2);
+            }
+
+            if(_nova_bar.empty())
+            {
+                for(int i = 0; i < 2; ++i)
+                {
+                    bn::sprite_ptr bar = art::xp_bar.create_sprite(-96 + i * 32, 72, 0);
+                    bar.set_bg_priority(0);
+                    _nova_bar.push_back(bn::move(bar));
+                }
+            }
+
+            int nova_px = (_nova * 64) / nova_max;
+
+            for(int i = 0; i < 2; ++i)
+            {
+                _nova_bar[i].set_tiles(art::xp_bar.tiles_item(), bn::max(0, bn::min(32, nova_px - i * 32)) / 2);
+            }
+
+            bool ready = _nova >= nova_max;
+            int nova_state = ready ? 1 + ((_t >> 4) & 1) : 0;
+
+            if(force || nova_state != _last_nova_shown)
+            {
+                _last_nova_shown = nova_state;
+                _nova_text.clear();
+                _text.set_left_alignment();
+
+                if(nova_state == 1)
+                {
+                    _text.set_palette_item(art::text_gold);
+                    _text.generate(-56, 72, "A", _nova_text);
+                    _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+                }
             }
 
             int s = _t / fps;
@@ -2879,7 +3133,7 @@ namespace
                 clock.push_back(char('0' + sec % 10));
                 _hud_clock.clear();
                 _text.set_center_alignment();
-                _text.generate(0, -66, clock, _hud_clock);
+                _text.generate(0, -64, clock, _hud_clock);
             }
 
             if(force || _level != _last_level_shown)
@@ -2889,7 +3143,7 @@ namespace
                 lv.append(bn::to_string<4>(_level));
                 _hud_level.clear();
                 _text.set_left_alignment();
-                _text.generate(-116, -66, lv, _hud_level);
+                _text.generate(-116, -64, lv, _hud_level);
             }
 
             if(force || _gold != _last_gold_shown)
@@ -2899,7 +3153,7 @@ namespace
                 g.append(bn::to_string<6>(_gold));
                 _hud_gold.clear();
                 _text.set_right_alignment();
-                _text.generate(116, -66, g, _hud_gold);
+                _text.generate(116, -64, g, _hud_gold);
             }
         }
 
@@ -2978,7 +3232,11 @@ namespace
             _level_flash = 20;
             _play(art::sfx_level);
             _hide_world_extras(true);
-            _draw_cards();
+            _menu.clear();
+
+            // Burst behind the wizard for 24 frames, then the cards (§10 "subida de nivel vistosa").
+            _burst = _world_sprite(art::level_burst, _pos + fixed_point(0, -8), 0, 6);
+            _burst_t = 0;
         }
 
         void _open_shrine_pick()
@@ -3006,36 +3264,77 @@ namespace
             _menu.clear();
             bool shrine = _mode == game_mode::shrine_pick;
             _big_text.set_center_alignment();
-            _big_text.generate(0, -54, shrine ? "SHRINE" : "LEVEL UP!", _menu);
+            _big_text.set_palette_item(art::text_gold);
+            _big_text.generate(0, -56, shrine ? "SHRINE" : "LEVEL UP!", _menu);
+            _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
             _text.set_center_alignment();
 
             if(shrine)
             {
-                _text.generate(0, -40, "Pick a blessing", _menu);
+                _text.generate(0, 72, "Pick a blessing: D-PAD + A", _menu);
             }
             else if(! _pick_hint_done)
             {
-                _text.generate(0, -40, "PICK ONE", _menu);
+                _text.generate(0, 72, "PICK ONE: D-PAD + A", _menu);
             }
+
+            for(bn::sprite_ptr& s_hud : _hud_frame)
+            {
+                s_hud.set_visible(false);
+            }
+
+            for(bn::sprite_ptr& s_hud : _hud_clock)
+            {
+                s_hud.set_visible(false);
+            }
+
+            // Card = card (64x64) + card_base (64x32) 48 px lower; texts inside the parchment (art/LÉEME.md).
+            _text.set_palette_item(art::text_ink);
 
             for(int i = 0; i < _card_count; ++i)
             {
                 int x = _card_x(i);
-                int y = i == _cursor ? 6 : 10;
-                bn::sprite_ptr c = art::card.create_sprite(x, y, i == _cursor ? 1 : 0);
+                bool selected = i == _cursor;
+                int cy = selected ? -8 : -4;
+                bn::sprite_ptr c = art::card.create_sprite(x, cy, selected ? 1 : 0);
                 c.set_bg_priority(1);
                 _menu.push_back(bn::move(c));
+                bn::sprite_ptr base = art::card_base.create_sprite(x, cy + 48, selected ? 1 : 0);
+                base.set_bg_priority(1);
+                _menu.push_back(bn::move(base));
 
                 const upgrade_text& u = shrine ? blessing_texts[_card_ids[i]] : upgrade_texts[_card_ids[i]];
-                bn::sprite_ptr icon = u.icon_item->create_sprite(x, y - 18, u.icon);
+                bn::sprite_ptr icon = u.icon_item->create_sprite(x, cy - 14, u.icon);
                 icon.set_bg_priority(0);
                 _menu.push_back(bn::move(icon));
-                _text.generate(x, y - 2, u.name, _menu);
+
+                // Name in two lines (the parchment is ~48 px wide).
+                bn::string_view name(u.name);
+                int space = -1;
+
+                for(int c_i = 0, n = name.size(); c_i < n; ++c_i)
+                {
+                    if(name[c_i] == ' ')
+                    {
+                        space = c_i;
+                        break;
+                    }
+                }
+
+                if(space >= 0)
+                {
+                    _text.generate(x, cy, name.substr(0, space), _menu);
+                    _text.generate(x, cy + 9, name.substr(space + 1), _menu);
+                }
+                else
+                {
+                    _text.generate(x, cy + 4, name, _menu);
+                }
 
                 if(shrine)
                 {
-                    _text.generate(x, y + 10, u.desc[0], _menu);
-                    _text.generate(x, y + 20, u.desc[1], _menu);
+                    _text.generate(x, cy + 22, u.desc[1], _menu);
+                    _text.generate(x, cy + 31, u.desc[0], _menu);
                 }
                 else
                 {
@@ -3046,18 +3345,40 @@ namespace
                     {
                         bn::string<8> l("Lv ");
                         l.append(bn::to_string<2>(lv + 1));
-                        _text.generate(x, y + 10, lv == 0 ? bn::string<8>("NEW") : l, _menu);
+                        _text.generate(x, cy + 22, lv == 0 ? bn::string<8>("NEW!") : l, _menu);
                     }
 
-                    _text.generate(x, y + 20, u.desc[lv], _menu);
+                    _text.generate(x, cy + 31, u.desc[lv], _menu);
                 }
             }
 
-            _text.generate(0, 66, "D-PAD + A", _menu);
-        }
+            _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
 
+            if(_pick_hint_done && ! shrine)
+            {
+                _text.generate(0, 72, "D-PAD + A", _menu);
+            }
+        }
         void _update_cards()
         {
+            if(_burst)
+            {
+                ++_burst_t;
+                int frame = _burst_t < 6 ? _burst_t / 2 : 2 + ((_burst_t >> 2) & 1);
+                _burst->set_tiles(art::level_burst.tiles_item(), frame);
+
+                if(_burst_t < 24)
+                {
+                    return;
+                }
+
+                if(_burst_t == 24)
+                {
+                    _draw_cards();
+                    return;
+                }
+            }
+
             if(bn::keypad::left_pressed() && _cursor > 0)
             {
                 --_cursor;
@@ -3093,6 +3414,13 @@ namespace
                 }
 
                 _menu.clear();
+                _burst.reset();
+                _burst_t = 0;
+
+                for(bn::sprite_ptr& s_hud : _hud_frame)
+                {
+                    s_hud.set_visible(true);
+                }
                 _hide_world_extras(false);
                 _mode = game_mode::play;
                 _refresh_hud(true);
@@ -3158,9 +3486,9 @@ namespace
         {
             _menu.clear();
             _big_text.set_center_alignment();
-            _big_text.generate(0, -60, "PAUSED", _menu);
+            _big_text.generate(0, -64, "PAUSED", _menu);
             _text.set_left_alignment();
-            int y = -38;
+            int y = -42;
 
             for(int i = 0; i < weapon_or_passive_count; ++i)
             {
@@ -3169,15 +3497,21 @@ namespace
                     continue;
                 }
 
+                // Slots (hud_slots) live in the pause screen only, to keep the combat HUD within the sprite budget.
+                int slot_frame = (i < up_boots ? art::slot_weapon_first : art::slot_passive_first) + upgrade_texts[i].icon;
+                bn::sprite_ptr slot = art::slots.create_sprite(-72, y, slot_frame);
+                slot.set_bg_priority(0);
+                _menu.push_back(bn::move(slot));
+
                 bn::string<24> line(upgrade_texts[i].name);
                 line.append("  Lv ");
                 line.append(bn::to_string<2>(_levels[i]));
-                _text.generate(-60, y, line, _menu);
-                y += 11;
+                _text.generate(-58, y, line, _menu);
+                y += 17;
             }
 
-            _text.generate(-60, 36, _cursor == 0 ? "> Resume" : "  Resume", _menu);
-            _text.generate(-60, 48, _cursor == 1 ? "> Quit" : "  Quit", _menu);
+            _text.generate(-60, 50, _cursor == 0 ? "> Resume" : "  Resume", _menu);
+            _text.generate(-60, 62, _cursor == 1 ? "> Quit" : "  Quit", _menu);
         }
 
         bool _update_pause()

@@ -28,11 +28,23 @@
 #include "bn_sprite_items_shadow_small.h"
 #include "bn_sprite_items_shadow_big.h"
 #include "bn_sprite_items_tmp_fx.h"
-#include "bn_sprite_items_tmp_card.h"
 #include "bn_sprite_items_tmp_wave.h"
-#include "bn_sprite_items_tmp_xpbar.h"
-#include "bn_sprite_items_tmp_hpbar.h"
 #include "bn_sprite_items_tmp_bossbar.h"
+#include "bn_sprite_items_hud_xp.h"
+#include "bn_sprite_items_hud_xp_cap.h"
+#include "bn_sprite_items_hud_hp.h"
+#include "bn_sprite_items_hud_plaque.h"
+#include "bn_sprite_items_hud_slots.h"
+#include "bn_sprite_items_hud_arrow.h"
+#include "bn_sprite_items_hud_alert.h"
+#include "bn_sprite_items_fx_levelup.h"
+#include "bn_sprite_items_card.h"
+#include "bn_sprite_items_card_base.h"
+#include "bn_sprite_items_logo.h"
+#include "bn_regular_bg_items_title_bg.h"
+#include "bn_sprite_palette_items_text_ink.h"
+#include "bn_sprite_palette_items_text_gold.h"
+#include "bn_sprite_palette_items_text_red.h"
 #include "bn_sound_items.h"
 
 namespace hb::art
@@ -154,18 +166,35 @@ namespace hb::art
     inline constexpr const bn::sprite_item& shadow_small = bn::sprite_items::shadow_small;   // 16x8
     inline constexpr const bn::sprite_item& shadow_big = bn::sprite_items::shadow_big;       // 32x16
 
-    // PROVISIONAL (no final art yet): edge arrow, "!" warning, gem trail spark, card, shockwave, bars.
+    // ---- UI (art/LÉEME.md "Bloque 2").
+    inline constexpr const bn::sprite_item& xp_bar = bn::sprite_items::hud_xp;       // 32x8, frame k = 2k px (0-16)
+    inline constexpr const bn::sprite_item& xp_cap = bn::sprite_items::hud_xp_cap;   // 8x8, left 0, right 1
+    constexpr int xp_pieces = 7;
+    inline constexpr const bn::sprite_item& hp_bar = bn::sprite_items::hud_hp;       // 32x8, fill 0-9
+    constexpr int hp_bar_frames = 9;
+    inline constexpr const bn::sprite_item& plaque = bn::sprite_items::hud_plaque;   // 32x16, left 0, right 1
+    inline constexpr const bn::sprite_item& slots = bn::sprite_items::hud_slots;     // 16x16, weapon 1-8, passive 10-17
+    constexpr int slot_weapon_first = 1;
+    constexpr int slot_passive_first = 10;
+    inline constexpr const bn::sprite_item& edge_arrow = bn::sprite_items::hud_arrow; // gold E/NE/N 0-2, red 3-5
+    constexpr int arrow_east = 0;
+    constexpr int arrow_north_east = 1;
+    constexpr int arrow_north = 2;
+    inline constexpr const bn::sprite_item& alert = bn::sprite_items::hud_alert;     // 16x16, blink 0-1
+    inline constexpr const bn::sprite_item& level_burst = bn::sprite_items::fx_levelup;   // 64x64, 0-2 grow, 2<->3 loop
+    inline constexpr const bn::sprite_item& card = bn::sprite_items::card;           // 64x64 top, 0 normal 1 selected
+    inline constexpr const bn::sprite_item& card_base = bn::sprite_items::card_base; // 64x32 at y + 48
+    inline constexpr const bn::sprite_item& logo = bn::sprite_items::logo;           // 6 cells of 64x32
+    inline constexpr const bn::regular_bg_item& title_bg = bn::regular_bg_items::title_bg;
+    inline constexpr const bn::sprite_palette_item& text_ink = bn::sprite_palette_items::text_ink;
+    inline constexpr const bn::sprite_palette_item& text_gold = bn::sprite_palette_items::text_gold;
+    inline constexpr const bn::sprite_palette_item& text_red = bn::sprite_palette_items::text_red;
+
+    // PROVISIONAL (no final art yet): gem trail spark, shockwave ring, boss bar.
     inline constexpr const bn::sprite_item& tmp_fx = bn::sprite_items::tmp_fx;
     constexpr int tmp_trail = 5;
-    constexpr int tmp_arrow_right = 6;
-    constexpr int tmp_arrow_down = 7;
-    constexpr int tmp_arrow_down_right = 8;
-    constexpr int tmp_warning = 9;
-    inline constexpr const bn::sprite_item& card = bn::sprite_items::tmp_card;   // 64x64, 0 normal, 1 selected
-    inline constexpr const bn::sprite_item& wave = bn::sprite_items::tmp_wave;   // 64x64, 2 frames
-    inline constexpr const bn::sprite_item& xp_bar = bn::sprite_items::tmp_xpbar;   // 32x8, frame N = N px filled
-    inline constexpr const bn::sprite_item& hp_bar = bn::sprite_items::tmp_hpbar;
-    inline constexpr const bn::sprite_item& boss_bar = bn::sprite_items::tmp_bossbar;
+    inline constexpr const bn::sprite_item& wave = bn::sprite_items::tmp_wave;          // 64x64, 2 frames
+    inline constexpr const bn::sprite_item& boss_bar = bn::sprite_items::tmp_bossbar;   // 32x8, frame N = N px
     constexpr int bar_width = 32;
 
     // ---- Sounds (PROVISIONAL tmp_* from tests/gen_tmp_sfx.py).
