@@ -78,6 +78,62 @@ todavía) · menú DBG "Start at mm:ss" · música de F1 y de jefe.
 | `hud_bossbar` | 32×8 | fill 0–16, notch 17 | sustituye `tmp_bossbar` |
 | Audio | — | `music_meadow.xm`, `music_boss.xm`; sfx howl, horn, stomp, explosion, zap, chest, coin_burst | — |
 
+### Revisión bloque 2 (gba-designer, ROM de d4f24d6, 2026-11-24)
+
+Cómo: `gbarun.py` sin ventana, perfil C (`tests/b2run.py`), DBG Start at 4:30 / 5:50 / 7:00 / 8:00 / 9:00 / 9:45
+con y sin God, Force Treasure y Split elite, Stress 56; capturas cada 1–5 s y ráfagas cada 4 f (agacharse del lobo)
+y cada 45 f (Warchief), revisadas a 1x y 2x.
+
+| Punto | Veredicto | Medida / qué se ve |
+|---|---|---|
+| Presentación de goblin (6:00) | OK | pareja sola tras el descanso del Slime King; pero el Treasure Goblin salió a las 6:02 (ver 4) |
+| Presentación de wolf (7:00) | CAMBIAR | aullido OK, pero de 7:01 a 7:10 la mezcla sustituye al lobo por esqueleto (≈ 50 % esqueletos): a 7:08 hay ~30 esqueletos y la pareja de lobos no se distingue (R3) |
+| Presentación de orc (9:00) | CAMBIAR | no se identifica en ninguna captura de 9:00–9:14: el orco es gris oscuro entre lobos gris oscuro (R5, lenguaje de color) |
+| Aviso del lobo | CAMBIAR | 30 f de agacharse + ojos rojos existen, pero en la ráfaga del frame 858 el lobo agachado (gris casi negro sobre fondo azul noche) no se lee a 1x; ojos de 1 px. 8:00–9:00: 73 golpes de embestida/min (God, perfil C) × 10 de daño |
+| Wolf Pack 8:00 / Goblin Raid 9:15 | OK con 2 y 3 | llegan, se leen como masa; la Raid se lee mejor que el Pack. Raid = peor frame 107,7 % CPU |
+| Orc Warchief | CAMBIAR | rótulo y barra OK; TTK 52 s (God) / 47 s (sin God, sobrevive): **justo**, dentro de 30–60 (R11). Pero el jefe sólo está entero en pantalla en 3 de 40 capturas (7,5 %) y **ninguna** de 40 capturas a 45 f muestra la línea de 4 "!" (con una carga de aviso 40 f cada 4 s deberían salir ~6): carga desde fuera de pantalla (R5) |
+| Treasure Goblin | CAMBIAR (menor) | rótulo, huida y desaparición OK; la flecha de borde se ve blanca/gris, no dorada; su ventana del acto 2 cayó en 6:02, encima de la presentación del goblin |
+| Élite Splitting | OK | copias rosas visibles a 5:51–5:52 |
+| Cartas nuevas | OK | Ember Toss / Storm Chain / Spell Tome en 2 líneas, Lodestone en 1 cabe en el pergamino; descripciones ≤ 7 ("+1 jump" = 7) |
+| Efectos sobre las cartas | CAMBIAR | con cartas abiertas siguen visibles encima: estallido de Frost Ring, chispas de Storm Chain, fuego de Ember (Stress, 9:16, 10:24) |
+| ≤ 4 muertes/poof/gema nuevas por frame | OK | ningún hueco visible en capturas de 56 enemigos |
+| Storm Chain 1 salto/frame | OK | 5 saltos = 83 ms: se lee como rayo que viaja |
+| Animación sincronizada por arte | OK | filas de esqueletos marchan al paso: se lee como "ejército", no molesta; no vale VRAM separarlas (pico ya > 900) |
+| Técnica | CAMBIAR (G-52) | `test_tiles_used` 941 (4:30–7:00), 924 (Warchief + cartas), 905 (7:00) > 900; CPU 107,7 % en 9:00–10:00 |
+| Slime King (Start at 4:30) | CAMBIAR | TTK 47 s, objetivo 20–40 |
+
+**Arreglos priorizados** (para el implementador; cada uno con su métrica):
+
+1. **Warchief a la vista** (R5, R11). Correa: si distancia > 100 px, velocidad ×3 hasta 64 px (antes 160/120). La
+   carga sólo empieza con el centro del jefe dentro de ±96 × ±56 px de la cámara; si no, camina 1 s más y reintenta.
+   Los 4 "!" a 12 px de separación, recortados dentro de pantalla, paleta roja/amarilla que parpadea cada 4 f.
+   Métrica: jefe entero en ≥ 30 % de capturas cada 45 f (hoy 7,5 %); `test_charge_offscreen` = 0; ≥ 1 captura con
+   los "!" por cada 3 cargas. TTK debe seguir en 30–60 s (hoy 47–52).
+2. **Aviso del lobo legible** (R5, anticipación). Durante los 30 f de agacharse, alternar paleta roja/normal cada 4 f
+   (como el destello de daño del mago, una paleta compartida); máx. 3 lobos agachados a la vez; tras embestir, 150 f
+   sin volver a agacharse; daño de embestida 10 → 8. Métrica: captura del frame de agacharse con silueta roja a 1x;
+   `test_wolf_dash_hits` ≤ 25 en 8:00–9:00 perfil C God (hoy 73).
+3. **Contraste de goblin, wolf y orc** (lenguaje de color: enemigo = valor medio-alto sobre fondo oscuro). Subir el
+   valor del cuerpo para que la luminancia media del sprite sea ≥ 2× la del suelo y añadir 1 px de borde claro como el
+   esqueleto. Tono de cada uno: pregunta de arte al usuario (G-53, `design-question`); si no contesta, por defecto goblin verde, wolf
+   gris pardo claro, orco verde oliva. Métrica: los 3 tipos se distinguen en una captura 1x de 9:30 (revisión).
+4. **Presentaciones limpias** (R3, una idea por tramo). (a) Durante 10 s tras cada presentación (6:00, 7:00, 9:00),
+   objetivo de enemigos vivos ×0,6. (b) El tipo retenido se sustituye por otro de la mezcla del minuto según su peso,
+   no siempre por esqueleto. (c) Treasure Goblin nunca a ±20 s de 6:00, 7:00, 8:00, 9:00, 9:15: ventana del acto 2 =
+   6:25–6:50 o 7:20–7:50. (d) Flecha del Treasure Goblin en dorado (paleta de la moneda). Métrica: en 7:00–7:10 los 2
+   lobos visibles en ≥ 3 capturas de 5 con ≤ 15 enemigos más en pantalla.
+5. **Ocultar efectos de combate con cartas y pausa abiertas** (escarcha, cadena, ascuas, fuego, explosión). Métrica:
+   0 sprites de efecto en las capturas de cartas de Stress y de 9:15.
+6. **Técnica (ya en G-52)**: tiles ≤ 900 en Start at 4:30 y Warchief + cartas (hoy 941/924); CPU ≤ 100 % en la Raid
+   (hoy 107,7 %) antes de bajar el perfil C a 85 %.
+7. **Slime King HP 600 → 450** (R13: DPS medido 600/47 = 12,8 → TTK ≈ 35 s). Métrica: TTK 20–40 en Start at 4:30.
+8. **DBG Start at marca los tutoriales como vistos** ("D-PAD: MOVE", "GRAB GEMS", "B: BLINK" reaparecen a 5:50–9:45).
+   Sólo depuración, pero ensucia las capturas de revisión.
+
+Dato suelto: perfil C **sin God** desde Start at 5:50 muere a las **6:52** (1 semilla; minuto 6 con goblins y big
+slimes), es decir, la prueba Tiempos (llegar a 7:00 en ≥ 3/5) está en riesgo: medirla en G-52 **antes** de tocar
+números y, si falla, palanca 1 (tope del minuto 6: 36 → 32). Pendiente también: muertes por lobo sin God desde 7:00.
+
 ### Bloque 3 — F1 completa (10:00–15:00)
 
 **Entra**: minutos 10–15 de §E2 · formaciones Double Bone Ring y ELITE PAIR · **Thornwood Treant** · ira de jefe
