@@ -179,6 +179,11 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
 - **Paleta maestra**: `palette_c.json` (38 colores sacados de `style_samples/style_C.png`). Todo `.aseprite` usa sólo
   esos colores: `python -I art/tools/snap_master.py [nombres]` ajusta la paleta de cada fichero al color maestro más
   cercano (no toca índices ni frames). Si pintas a mano, elige de esa lista; nada de tonos nuevos.
+- **Wendel más claro que las hordas (G-54)**: `python -I art/tools/wizard_bright.py` cambia sólo la paleta de `wizard`,
+  `wizard_cinda_palette` y `wizard_morrow_palette` (mismos índices: 1 línea interior, 4/6 túnica, 8 cristal, 9 borde
+  claro `#c8b8f8`). Luminancia interior media (Rec.601, sin el borde): Wendel 112,8 / Cinda 112,6 / Morrow 110,1 frente
+  a lobo 81,6, goblin 76,3, orco 74,0 (≥ 1,3x). Si se regenera `wizard` con `build_chars_c.py`, vuelve a pasar este
+  script. Originales en `old_style/pre_wizbright/`.
 - **Personajes**: `python -I art/tools/build_chars_c.py` rehace `wizard`, `wizard_ghost`, `slime`, `bat`, `skeleton`
   desde `raw/style_c2/` (PISA esos cinco: no lo uses si los has retocado). Origen: las muestras `C_chars` 00 (Wendel),
   04 (Wendel de lado), 06 (slime), 09 (murciélago), 12 (esqueleto), recortadas al tamaño del juego en
@@ -260,8 +265,8 @@ python -I art/tools/build_block4.py extend          # icons +10..16; oro en la p
 
 | Paleta (código) | Para | Sobre | Idea |
 |---|---|---|---|
-| `wizard_cinda_palette` | Cinda | `wizard` | brasa/rojo, cristal oro-naranja, borde cálido `#eecf74` |
-| `wizard_morrow_palette` | Morrow | `wizard` | azul noche/verde mar, cristal cian, borde `#abc4d2` |
+| `wizard_cinda_palette` | Cinda | `wizard` | brasa/rojo (túnica `#f06048`), cristal oro-naranja, borde cálido `#eecf74` (G-54: más claro) |
+| `wizard_morrow_palette` | Morrow | `wizard` | verde mar (túnica `#4a9cb0`), cristal cian, borde `#c0d8e4` (G-54: más claro) |
 | `rotten_palette` | Ghoul, Grave Brute | `goblin`, `orc` | piel verde azulada podrida, ojos rojos |
 | `crow_palette` | Crow | `bat` | negro, ojos y pico oro |
 | `grey_flesh_palette` | Grave Walker | `skeleton` | carne gris, ojos magenta |
