@@ -35,12 +35,14 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `skeleton_big` | sprite | 32×32 | walk 0–5, death 6–12 | no-muertos (bloque 2 / élite) |
 | `goblin` | sprite | **32×32** | walk_e 0–3, death 4–7, walk_s 8–11, walk_se 12–15, walk_ne 16–19, walk_n 20–23 (O/SO/NO = volteo; figura ~20 px, pies en la fila 30) | pieles verdes C (= orc) |
 | `orc` | sprite | 32×32 | igual que `goblin` (pies en la fila 31) | pieles verdes C (= goblin) |
-| `orc_warchief` | sprite | 64×64 | walk 0–5, attack 6–14 | propia (jefe bloque 2, provisional) |
+| `orc_warchief` | sprite | 64×64 | walk 0–5, attack 6–14, stomp 15–16, horn 17–18 | propia (jefe bloque 2): 14 polvo `#2a343d`, 15 rojo oscuro `#bc161b` |
+| `big_slime` | sprite | 32×32 | hop 0–3, death 4–7 (mismo orden que `slime`) | = `slime` (misma paleta) |
+| `wolf` | sprite | **32×16** | run 0–3, crouch 4 (ojos rojos: aviso), dash 5 (ojos rojos + estela), death 6–8 | lobo (mira a la **derecha**; pies en la fila 15) |
 | `gems` | sprite | 8×8 | cian pequeña 0–1 (1 XP), magenta con halo 2–3 (5 XP), oro grande 4–5 (25 XP); el 2.º frame de cada una es el destello | recogibles (fija) |
 | `coin` | sprite | 8×8 | spin 0–1 | recogibles |
 | `chest` | sprite | 16×16 | closed 0, open 1 | recogibles |
 | `heart` | sprite | 16×16 | idle 0 | recogibles |
-| `icons` | sprite | 16×16 | spark_bolt 0, rune_orbit 1, frost_ring 2, swift_boots 3, heart_amulet 4, magnet 5, spell_tome 6, star 7 | recogibles |
+| `icons` | sprite | 16×16 | spark_bolt 0, rune_orbit 1, frost_ring 2, swift_boots 3, heart_amulet 4, magnet 5, spell_tome 6, star 7, ember_toss 8, storm_chain 9 | recogibles |
 | `shrine` | sprite | 16×32 | idle 0 | propia |
 | `fx_spark` | sprite | 8×8 | loop 0–1 (Spark Bolt) | FX (fija) |
 | `fx_rune` | sprite | 8×8 | loop 0–1 (Rune Orbit) | FX |
@@ -51,6 +53,11 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `fx_nova` | sprite | 64×64 | burst 0–7 (50 ms) | FX: anillo de Hex Nova que crece (0–1 destello central, 4–7 se deshace en tramado) |
 | `fx_nova_spark` | sprite | 8×8 | twinkle 0–3 (60 ms) | FX: chispa suelta de la Nova |
 | `fx_blink` | sprite | 32×32 | blink 0–5 (50 ms) | FX: 0–2 implosión (salida), 3–5 destello (llegada) |
+| `fx_ember` | sprite | 8×8 | fly 0–1 (70 ms) | fuego: bola de Ember Toss |
+| `fx_explosion` | sprite | 32×32 | burst 0–4 (50–90 ms: destello, bola, anillo, humo, humo tramado) | fuego |
+| `fx_fire` | sprite | 16×16 | burn 0–3 (90 ms) | fuego: charco de llamas (lecho en filas 11–15) |
+| `fx_dust` | sprite | 8×8 | puff 0–2 | fuego (grises): pisotón/carga |
+| `fx_chain` | sprite | 8×8 | zap 0–2 (40 ms) | FX (= `fx_spark`): segmento horizontal de Storm Chain, se encadenan en fila |
 | `wizard_ghost` | sprite | 32×32 | mismas que `wizard` (59 frames) | silueta lila plana con borde claro para la estela del Blink (usar con transparencia) |
 | `shadow_small` / `shadow_big` | sprite | 16×8 / 32×16 | idle 0 (sombra; usar con transparencia; el rey la usa de aviso de caída) | FX |
 | `ground` | regular_bg 512×512 | — | — | suelo (se repite sin costura: el borde derecho casa con el izquierdo y el de abajo con el de arriba) |
@@ -85,6 +92,7 @@ Texto: `text_ink` = blanco frío sobre el panel oscuro de la carta, `text_gold` 
 | `hud_arrow` | sprite | 16×16 | gold 0–2, red 3–5 (este, noreste, norte) | flecha de borde; resto de direcciones con `set_horizontal_flip`/`set_vertical_flip` |
 | `hud_nova` | sprite | 16×16 | charge 0–4, full 5–6 (150 ms) | medidor de Hex Nova: hexágono que se llena de magenta (0 vacío … 4 lleno); 5↔6 brillo de "lista" |
 | `hud_alert` | sprite | 16×16 | blink 0–1 (150 ms) | "!" de aviso de oleada (rombo rojo; frame 1 = destello) |
+| `hud_bossbar` | sprite | 32×8 | fill 0–16 (frame k = 2·k px llenos, igual que `hud_xp`), notch 17 | barra de jefe en rojo; `notch` = muesca blanca en las columnas 15–16 (centro del frame) para marcar fases; sustituye `tmp_bossbar` |
 | `fx_levelup` | sprite | 64×64 | burst 0–3 (60 ms; 0–2 crece, 3 girado) | rayos detrás del mago al subir de nivel; alternar 2↔3 en bucle |
 | `card` + `card_base` | sprite | 64×64 + 64×32 | normal 0, selected 1 | carta 64×80 = `card` en (x,y) + `card_base` en (x,y+48) (se solapan 16 filas idénticas) |
 | `logo` | sprite | 64×32 | 6 celdas | logo HEXBOUND 192×64: celda k en (24 + (k%3)·64, 4 + (k/3)·32) |
@@ -152,8 +160,8 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
 
 - Mago: diseño pedía 16×32; es 32×32 (la figura con bastón mide 20 px de ancho).
 - `skeleton` es 16×32 (la figura mide 11×22) y la muerte se recorta a 16 px de ancho.
-- `orc` y `orc_warchief` (bloque 2) son provisionales: el orco parece encapuchado y el jefe se sale del lienzo al atacar.
-- Faltan: wolf, Big Slime, charca con bordes. (HUD, carta, flecha, "!" y título: bloque 2, arriba.)
+- `orc` es provisional (parece encapuchado). El hacha del jefe ya no se corta: ver bloque 2 de enemigos abajo.
+- Falta: charca con bordes. (HUD, carta, flecha, "!" y título: bloque 2, arriba.)
 - Élite: `fx_aura` + paleta tintada en código (`set_fade` a rojo/oro) en vez de contorno de color dibujado.
 - Estilo C: los enemigos y el mago conservan las animaciones del set anterior recoloreadas (mismas siluetas); si se
   quiere más detalle "oscuro", rehacer animaciones con PixelLab sobre la misma rejilla de frames.
@@ -184,3 +192,21 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
 - **Título**: el mago es `raw/style_c2/title/title_wizard.png` (PixelLab, estilo de la muestra 00, paleta maestra);
   `title_bg` se rehízo con `restyle_c.build_title` apuntando a esa carpeta y luego `snap_master.py`.
 - Versión anterior (recoloreado) en `old_style/recolor_c/`.
+
+## Bloque 2 de enemigos y FX (G-50, `tools/build_block2.py`)
+
+```
+python -I art/tools/build_block2.py seed [nombres]  # crea big_slime, wolf, fx_ember/explosion/fire/chain/dust, hud_bossbar si faltan
+python -I art/tools/build_block2.py extend          # añade frames a orc_warchief e icons (copia previa en old_style/pre_g50/;
+                                                    # no hace nada si ya tienen las etiquetas nuevas)
+```
+- `big_slime`: `slime` ampliado 2× (vecino más cercano) con el borde dorado afinado a 1 px, brillo y burbujas.
+- `wolf`: dibujado por código (silueta propia; PixelLab sólo dio la referencia `raw/wolf/east.png`). Paleta: 1 negro,
+  2–6 cuerpo oscuro y lomo, 7 borde frío `#34466e`, 8 garras/pelo claro, 9 colmillo, 10–11 rojo de ojos/boca,
+  12 orejas, 13 ojo dorado normal. En `crouch` y `dash` el ojo pasa a rojo con halo (aviso de embestida).
+- **Paleta fuego** (`fx_ember`, `fx_explosion`, `fx_fire`, `fx_dust`, la misma en los 4): 1 negro, 2 morado oscuro,
+  3 vino, 4–5 rojos, 6 ámbar, 7–8 oros, 9 blanco frío, 10–12 humo/polvo, 13–15 magentas (libres para variantes).
+- `orc_warchief`: el ataque (6–14) bajado 2 px para que los pies pisen la última fila como en `walk` (antes saltaba
+  al empezar a atacar); el hacha que tocaba el borde inferior lleva ahora contorno en vez de corte plano.
+  stomp 15 = levanta (3 px arriba), 16 = golpe (aplastado 2 filas + polvo a los lados); horn 17 = cuerno de hueso
+  a la boca, 18 = toque (ondas rojas neón).
