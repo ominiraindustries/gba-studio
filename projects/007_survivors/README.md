@@ -42,6 +42,9 @@ Peor frame medido con `test_cpu_max` (1/10000 de frame) y por secciones en `test
 | Frame de la Nova | 159 % | 88 % |
 | Partida normal 4:30-5:10 (God + Skip) | 76 % | 78 % |
 
+Tras cablear 8 direcciones + fx_nova/fx_blink/hud_nova (0805ce2): Max power + Stress 56 = 97,7 %, frame de la Nova
+= 90,3 %, 4:30-5:06 = 77,1 % (todos <= 100 %).
+
 Qué se hizo: tiles y paletas de enemigos cacheados (`sprite_tiles_ptr`/`sprite_palette_ptr`), sprites de chispa, runas
 y escarcha reutilizados (crear un sprite cuesta ~5-10 % de frame con 150 vivos), cubos espaciales de 32 px para
 armas y separación, golpes de la Nova repartidos en 6 frames (anillo que crece), `_update_enemies` en ARM/IWRAM
@@ -51,8 +54,9 @@ armas y separación, golpes de la Nova repartidos en 6 frames (anillo que crece)
 
 - Sonidos `audio/tmp_*.wav` (`tests/gen_tmp_sfx.py`) y gráficos `graphics/tmp_fx` (chispa de estela), `tmp_wave`
   (onda del rey) y `tmp_bossbar` (`tests/gen_tmp_gfx.py`). Todo el arte se elige en `include/hb_art.h`.
-- Medidor de Nova = 2 piezas de `hud_xp` + "A" dorada; estela de Blink = copias translúcidas del mago (faltan
-  `fx_nova` / `fx_blink`).
+- Mirada en 8 direcciones (`art::dir_*` en `include/hb_art.h`): el mago gira 45° cada 3 frames hacia el apuntado; los
+  monstruos con `walk_dirs = 5` (esqueleto; goblin/orco cuando tengan walk_s..walk_n) miran al mago. `test_wizard_dir`.
+- DBG Max power también llena la Nova (para probar la Nova sin esperar).
 - Título en pantalla: `hb::game_title` (`include/hb_config.h`) y el logo pintado (`art/logo.aseprite`); ROM: `ROMTITLE`.
 - Ranuras de armas (`hud_slots`) sólo en la pausa, para no gastar sprites en combate.
 
