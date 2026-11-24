@@ -27,11 +27,11 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 
 | Fichero | Tipo Butano | Frame | Etiquetas (frames) | Paleta |
 |---|---|---|---|---|
-| `wizard` (Wendel) | sprite | 32×32 | idle 0–3, idle_side 4–7, walk_down 8–13, walk_side 14–19, walk_up 20–25, hurt 26–27, death 28–34 | mago (fija) |
-| `slime` | sprite | 16×16 | hop 0–3, death 4–7 | slime+rey |
+| `wizard` (Wendel) | sprite | 32×32 | idle_s 0–3, idle_e 4–7, walk_s 8–13, walk_e 14–19, walk_n 20–25, hurt 26–27, death 28–34, idle_se 35–38, idle_ne 39–42, idle_n 43–46, walk_se 47–52, walk_ne 53–58 (O/SO/NO = volteo horizontal; 0–34 igual que antes) | mago (10 colores del maestro) |
+| `slime` | sprite | 16×16 | hop 0–3, death 4–7 | propia (7 colores del maestro) |
 | `slime_king` | sprite | 64×64 | idle 0–3, crouch 4, air 5–6, land 7–8 | slime+rey |
-| `bat` | sprite | **32×16** | fly 0–3, death 4–6 | no-muertos |
-| `skeleton` | sprite | **16×32** | walk 0–3, death 4–7 | no-muertos |
+| `bat` | sprite | **32×16** | fly 0–3, death 4–6 | no-muertos C (= skeleton) |
+| `skeleton` | sprite | **16×32** | walk_e 0–3, death 4–7, walk_s 8–11, walk_se 12–15, walk_ne 16–19, walk_n 20–23 (O/SO/NO = volteo) | no-muertos C (= bat) |
 | `skeleton_big` | sprite | 32×32 | walk 0–5, death 6–12 | no-muertos (bloque 2 / élite) |
 | `goblin` | sprite | 16×16 | walk 0–5 | pieles verdes (bloque 2) |
 | `orc` | sprite | 32×32 | walk 0–5 | pieles verdes (bloque 2, provisional) |
@@ -51,7 +51,7 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `fx_nova` | sprite | 64×64 | burst 0–7 (50 ms) | FX: anillo de Hex Nova que crece (0–1 destello central, 4–7 se deshace en tramado) |
 | `fx_nova_spark` | sprite | 8×8 | twinkle 0–3 (60 ms) | FX: chispa suelta de la Nova |
 | `fx_blink` | sprite | 32×32 | blink 0–5 (50 ms) | FX: 0–2 implosión (salida), 3–5 destello (llegada) |
-| `wizard_ghost` | sprite | 32×32 | mismas que `wizard` (35 frames) | silueta lila plana con borde claro para la estela del Blink (usar con transparencia) |
+| `wizard_ghost` | sprite | 32×32 | mismas que `wizard` (59 frames) | silueta lila plana con borde claro para la estela del Blink (usar con transparencia) |
 | `shadow_small` / `shadow_big` | sprite | 16×8 / 32×16 | idle 0 (sombra; usar con transparencia; el rey la usa de aviso de caída) | FX |
 | `ground` | regular_bg 512×512 | — | — | suelo (se repite sin costura: el borde derecho casa con el izquierdo y el de abajo con el de arriba) |
 | `props` + `props_palette` | regular_bg_tiles + bg_palette | — | ver tabla de atrezzo | atrezzo |
@@ -157,3 +157,19 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
 - Élite: `fx_aura` + paleta tintada en código (`set_fade` a rojo/oro) en vez de contorno de color dibujado.
 - Estilo C: los enemigos y el mago conservan las animaciones del set anterior recoloreadas (mismas siluetas); si se
   quiere más detalle "oscuro", rehacer animaciones con PixelLab sobre la misma rejilla de frames.
+
+## Paleta maestra y personajes desde las muestras C (G-44, revisión "NES oscuro mágico")
+
+- **Paleta maestra**: `palette_c.json` (38 colores sacados de `style_samples/style_C.png`). Todo `.aseprite` usa sólo
+  esos colores: `python -I art/tools/snap_master.py [nombres]` ajusta la paleta de cada fichero al color maestro más
+  cercano (no toca índices ni frames). Si pintas a mano, elige de esa lista; nada de tonos nuevos.
+- **Personajes**: `python -I art/tools/build_chars_c.py` rehace `wizard`, `wizard_ghost`, `slime`, `bat`, `skeleton`
+  desde `raw/style_c2/` (PISA esos cinco: no lo uses si los has retocado). Origen: las muestras `C_chars` 00 (Wendel),
+  04 (Wendel de lado), 06 (slime), 09 (murciélago), 12 (esqueleto), recortadas al tamaño del juego en
+  `raw/style_c2/first/` y animadas con PixelLab (personajes con plantillas walking/breathing-idle/falling-back-death;
+  slime y murciélago con animación v3; muertes de slime/murciélago y golpe de Wendel hechos por código con píxel duro).
+  Wendel lleva borde frío `#34466e` de 1 px (los clips de lado ya traen el borde claro de la muestra 04).
+- Direcciones: dibujadas S, SE, E, NE, N; las de la izquierda se hacen con `set_horizontal_flip(true)`.
+- **Título**: el mago es `raw/style_c2/title/title_wizard.png` (PixelLab, estilo de la muestra 00, paleta maestra);
+  `title_bg` se rehízo con `restyle_c.build_title` apuntando a esa carpeta y luego `snap_master.py`.
+- Versión anterior (recoloreado) en `old_style/recolor_c/`.
