@@ -19,7 +19,10 @@ que salta a sí mismo, así que nunca se redispara nada. Es "WAV en bucle" dentr
 |---|---|---|---|---|
 | `music_title` | pantalla de título (misterioso) | 47,3 s @ 15 768 Hz | 90,1 s @ 11 630 Hz | 1,80 MB |
 | `music_meadow` | partida, fase 1 (cementerio nocturno, 132 BPM) | 35,9 s @ 15 768 Hz | 68,2 s @ 15 370 Hz | 1,62 MB |
-| `music_boss` | jefe (156 BPM) | 29,3 s @ 15 768 Hz | 88,7 s @ 11 820 Hz | 1,51 MB |
+| `music_boss` | jefe, **todas las fases** (156 BPM) | 29,3 s @ 15 768 Hz | 88,7 s @ 11 820 Hz | 1,51 MB |
+| `music_graveyard` | fase 2 Grim Graveyard (campanas, coro lejano, 120 BPM) | 47,6 s @ 15 768 Hz | 88,0 s @ 11 910 Hz | 1,80 MB |
+| `music_keep` | fase 3 Ashen Keep (marcial, 150 BPM) | 34,3 s @ 15 768 Hz | 57,7 s @ 15 768 Hz | 1,45 MB |
+| `music_shop` | tienda / menú meta (tranquila, 96 BPM) | 27,8 s @ 15 768 Hz | 52,9 s @ 15 768 Hz | 1,27 MB |
 
 Cómo sonarla: `bn::music_items::music_meadow.play(bn::fixed(0.5));` (bucle por defecto; `bn::music::stop()` al
 salir). Volumen sugerido 0,5–0,6 para que los efectos se oigan encima. Cambiar de pista = `play()` de la otra.
@@ -27,7 +30,7 @@ salir). Volumen sugerido 0,5–0,6 para que los efectos se oigan encima. Cambiar
 - La frecuencia del bucle baja en `title` y `boss` porque el mezclador de Maxmod guarda la posición en 20.12 bits:
   una muestra no puede pasar de 2^20 ≈ 1 048 576 frames (66 s a 15 768 Hz). Suena algo más apagada (~6 kHz de
   banda) que la intro.
-- Probado en ROM (gbarun): `bn::music::playing()` = 1 desde el frame 1 y a los 48 s el módulo ya está en el orden
+- Probado en ROM (gbarun; graveyard/keep/shop también, G-48): `bn::music::playing()` = 1 desde el frame 1 y a los 48 s el módulo ya está en el orden
   de reposo (pasó de la intro al bucle sin pararse).
 
 ## Efectos (`bn::sound_items::<nombre>`)
@@ -55,12 +58,40 @@ WAV mono 8 bits 16 kHz, silencio final recortado, 10 ms de fundido y normalizado
 | `sfx_zap` | Storm Chain (bloque 2) | 0,46 s | 0,5 |
 | `sfx_chest` | abrir cofre (bloque 2) | 1,03 s | 0,9 |
 | `sfx_coin_burst` | lluvia de monedas (bloque 2) | 1,02 s | 0,7 |
+| `sfx_root_crack` | raíces del treant salen del suelo (bloque 3) | 1,13 s | 0,8 |
+| `sfx_slam` | golpe al suelo del treant (bloque 3) | 0,91 s | 0,9 |
+| `sfx_thorn` | espina disparada (bloque 3) | 0,52 s | 0,4 |
+| `sfx_curse_sting` | cofre maldito / maldición (bloque 3) | 0,83 s | 0,8 |
+| `sfx_buy` | compra en la tienda (bloque 4) | 0,74 s | 0,7 |
+| `sfx_refund` | devolver mejora (bloque 4) | 0,56 s | 0,6 |
+| `sfx_menu_move` | mover el cursor del menú (bloque 4) | 0,15 s | 0,3 |
+| `sfx_error` | no hay oro / acción no válida (bloque 4) | 0,46 s | 0,6 |
+| `sfx_evolve` | evolución de arma (bloque 4) | 1,40 s | 1 |
+| `sfx_wail` | grito de la banshee (bloque 5) | 1,49 s | 0,8 |
+| `sfx_arrow` | flecha enemiga (bloque 5; uno por andanada) | 0,38 s | 0,3 |
+| `sfx_rise` | tumba que se abre, RISE / GRAVE RING (bloque 5) | 1,02 s | 0,7 |
+| `sfx_skull` | calavera lanzada (bloque 5) | 0,74 s | 0,5 |
+| `sfx_teleport` | teletransporte del lich (bloque 5) | 0,83 s | 0,8 |
+| `sfx_bone` | hueso lanzado (bloque 5; uno por andanada) | 0,43 s | 0,3 |
 
-Total efectos: ~290 KB.
+## Jingles (`bn::sound_items::<nombre>`, sin bucle)
+
+Mismo tratamiento que los efectos (WAV mono 8 bits 16 kHz). Son efectos, no música: para que se oigan solos,
+`bn::music::stop()` (o `set_volume` bajo) antes de `play()`, y volver a la música después.
+
+| Item | Para | Dur. | Vol. sugerido |
+|---|---|---|---|
+| `jingle_victory` | STAGE CLEAR | 2,52 s | 1 |
+| `jingle_defeat` | YOU FELL | 2,97 s | 1 |
+| `jingle_unlock` | desbloqueo en la tienda | 1,12 s | 0,8 |
+| `jingle_boss_down` | jefe derrotado | 2,80 s | 1 |
+
+Total efectos: ~520 KB; jingles: ~150 KB.
 
 ## Coste
 
-- ROM: música 4,9 MB + efectos 0,29 MB. La ROM de prueba pasó de 0,45 MB a 5,5 MB (límite GBA 32 MB).
+- ROM: música 9,45 MB (6 pistas) + efectos y jingles 0,67 MB = ~10,1 MB de audio (ROM de prueba sólo con el
+  audio: 10,13 MB). El juego pasa de ~5,5 MB a ~10,7 MB (límite GBA 32 MB).
 - CPU: la música ocupa 1 canal del mezclador (2 en el instante del paso intro→bucle, 20 ms). Medido con la misma
   entrada (Max power + Stress 56, 60 s): peor frame 122,3 % sin música → 124,9 % con música (+2,7 puntos); frame
   de la Nova 87,9 % → 90,1 %. OJO: el peor caso ya pasaba de 100 % sin música con el código actual (README decía

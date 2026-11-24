@@ -33,11 +33,19 @@ MUSIC = {
     "title": ("music/title_loop.mp3", None, None, 16000),
     "meadow": ("music/stage1_loop.mp3", None, None, 16000),
     "boss": ("music/boss_loop.mp3", None, None, 16000),
+    "graveyard": ("music/graveyard_loop.mp3", None, None, 16000),
+    "keep": ("music/keep_loop.mp3", None, None, 16000),
+    "shop": ("music/shop_loop.mp3", None, None, 16000),
 }
 LOOPS_FILE = HERE / "music" / "loops.txt"   # lines: name loop_start loop_end (seconds, from get_music)
 
 SFX = ["spark", "hit", "poof", "gem", "levelup", "card", "blink", "nova", "hurt", "wave", "boss",
-       "howl", "horn", "stomp", "explosion", "zap", "chest", "coin_burst"]
+       "howl", "horn", "stomp", "explosion", "zap", "chest", "coin_burst",
+       # blocks 3-5
+       "root_crack", "slam", "thorn", "curse_sting", "buy", "refund", "menu_move", "error", "evolve",
+       "wail", "arrow", "rise", "skull", "teleport", "bone"]
+# Short one-shot jingles (no loop): same processing as SFX, saved as audio/<name>.wav (no sfx_ prefix).
+JINGLES = ["jingle_victory", "jingle_defeat", "jingle_unlock", "jingle_boss_down"]
 SFX_RATE = 16000
 
 
@@ -53,7 +61,7 @@ def to_s8(x, peak=0.97):
     return np.clip(np.round(x * 127.0), -128, 127).astype(np.int8)
 
 
-def convert_sfx(name):
+def convert_sfx(name, out_name=None):
     x = decode(HERE / "sfx" / f"{name}.wav", SFX_RATE)
     thr = 10 ** (-42 / 20) * float(np.max(np.abs(x)))
     idx = np.nonzero(np.abs(x) > thr)[0]
@@ -66,7 +74,7 @@ def convert_sfx(name):
     ref = max(float(np.percentile(np.abs(x), 99.9)), 1e-6)
     x = np.tanh(x * (1.1 / ref)) / np.tanh(1.1)
     s8 = to_s8(x, 0.92)
-    dst = AUDIO / f"sfx_{name}.wav"
+    dst = AUDIO / f"{out_name or 'sfx_' + name}.wav"
     with wave.open(str(dst), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(1)
@@ -163,6 +171,10 @@ def main():
             continue
         dst, secs = convert_sfx(n)
         print(f"{dst.name}: {secs:.2f} s, {dst.stat().st_size} B")
+    for n in JINGLES:
+        if (HERE / "sfx" / f"{n}.wav").exists():
+            dst, secs = convert_sfx(n, n)
+            print(f"{dst.name}: {secs:.2f} s, {dst.stat().st_size} B")
     loops = {}
     if LOOPS_FILE.exists():
         for line in LOOPS_FILE.read_text().split("\n"):
