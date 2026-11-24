@@ -580,6 +580,15 @@ namespace
         int hp;       // 0: the type's scaled HP
     };
 
+    struct queued_spawn
+    {
+        fixed_point pos;
+        fixed_point vel;
+        int16_t life;
+        uint8_t type;
+        uint8_t mode;
+    };
+
     enum swarm_kind : uint8_t
     {
         swarm_bats,
@@ -666,9 +675,6 @@ namespace
             for(int t = 0; t < type_count; ++t)
             {
                 const art::monster_art& look = *enemy_defs[t].look;
-                _type_pal[t] = t == type_treasure ?
-                            bn::sprite_palette_item(_elite_colors[t][3], bn::bpp_mode::BPP_4).create_palette() :
-                            look.item->palette_item().create_palette();
                 int slot = -1;
 
                 for(int o = 0; o < _horde_art_count; ++o)
@@ -851,6 +857,7 @@ namespace
 
                 _update_screen_fade();
                 test_mode = int(_mode);
+                test_tiles_used = bn::max(int(test_tiles_used), bn::sprite_tiles::used_tiles_count());   // cards too
                 _tick_sounds();
                 bool measured = _mode == game_mode::play && _play_streak >= 2;
                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
@@ -944,6 +951,7 @@ namespace
         int _horde_frame[max_horde_arts] = {};
         int _horde_art_count = 0;
         uint8_t _type_slot[type_count] = {};
+        int _type_alive[type_count] = {};
 
         // Player
         fixed_point _pos;
@@ -1018,6 +1026,8 @@ namespace
         bool _treasure_alive = false;
         bn::optional<bn::sprite_ptr> _treasure_arrow;
         bn::vector<split_request, 8> _splits;
+        bn::vector<queued_spawn, 24> _spawn_queue;
+        int _spawn_queue_age = 0;
         fixed_point _swarm_dir;
         fixed_point _swarm_origin;
         bool _stress = false;
@@ -1972,6 +1982,16 @@ namespace
             }
 
             const enemy_def& def = enemy_defs[type];
+            // Palettes are held only while a monster of the type is alive (16 sprite palettes in total; holding all
+            // 8 types from the start ran out of palettes during the Slime King).
+            if(! _type_pal[type])
+            {
+                _type_pal[type] = type == type_treasure ?
+                            bn::sprite_palette_item(_elite_colors[type][3], bn::bpp_mode::BPP_4).create_palette() :
+                            def.look->item->palette_item().create_palette();
+            }
+
+            ++_type_alive[type];
             const bn::sprite_tiles_ptr& tiles = _horde_tiles[_type_slot[type]][def.look->walk_dirs > 1 ? 2 : 0];
             bn::sprite_ptr sprite = bn::sprite_ptr::create(p, def.look->item->shape_size(), tiles, *_type_pal[type]);
             sprite.set_camera(_camera);
@@ -2165,6 +2185,13 @@ namespace
 
         void _remove_enemy(int i)
         {
+            int type = _enemies[i].type;
+
+            if(--_type_alive[type] == 0)
+            {
+                _type_pal[type].reset();
+            }
+
             int last = _enemies.size() - 1;
             _grid_relink(i, -1);
 
@@ -2246,6 +2273,7 @@ namespace
             }
 
             _spawn_pending_splits();
+            _spawn_queued();
 
             // Shrines every 90 s (§4 2a, E2): not with a boss alive, not at 5:00 / 6:00 (boss and rest).
             if(second && s > 0 && s % 90 == 0 && s != 360 && _t < boss2_time && ! _boss && ! _shrine)
@@ -2400,6 +2428,37 @@ namespace
 
                 _spawn_enemy(_pick_type(), p, s < 300 ? 40 : 30);
             }
+        }
+
+        // perf: formations are queued and enter 2 per frame (20 goblins in one frame measured 2173 ticks, 50 %).
+        void _queue_spawn(int type, const fixed_point& p, int mode, const fixed_point& vel, int life)
+        {
+            if(! _spawn_queue.full())
+            {
+                _spawn_queue.push_back({ p, vel, int16_t(life), uint8_t(type), uint8_t(mode) });
+            }
+        }
+
+        void _spawn_queued()
+        {
+            int n = bn::min(2, _spawn_queue.size());
+
+            for(int k = 0; k < n; ++k)
+            {
+                const queued_spawn& q = _spawn_queue[k];
+                // Moving formations advance while they wait so the line keeps its shape.
+                fixed_point p = q.pos + q.vel * _spawn_queue_age;
+
+                if(enemy* e = _spawn_enemy(q.type, p, 0))
+                {
+                    e->mode = q.mode;
+                    e->vel = q.vel;
+                    e->life = q.life;
+                }
+            }
+
+            _spawn_queue.erase(_spawn_queue.begin(), _spawn_queue.begin() + n);
+            _spawn_queue_age = _spawn_queue.empty() ? 0 : _spawn_queue_age + 1;
         }
 
         // Splits are queued (from kills inside weapon loops) and spawned here, with a poof and 20 safe frames.
@@ -2582,7 +2641,7 @@ namespace
                 for(int i = 0; i < 20; ++i)
                 {
                     fixed_point p = origin + fixed_point(_random.get_int(-28, 29), _random.get_int(-28, 29));
-                    _spawn_enemy(type_goblin, p, 0);
+                    _queue_spawn(type_goblin, p, mode_chase, fixed_point(), 0);
                 }
 
                 return;
@@ -2594,12 +2653,7 @@ namespace
             {
                 fixed_point p = origin + perp * ((i - 6) * 14) - _swarm_dir * (i & 1) * 10;
 
-                if(enemy* e = _spawn_enemy(type_bat, p, 0))
-                {
-                    e->mode = mode_swarm;
-                    e->vel = _swarm_dir * enemy_defs[type_bat].speed;
-                    e->life = 420;
-                }
+                _queue_spawn(type_bat, p, mode_swarm, _swarm_dir * enemy_defs[type_bat].speed, 420);
             }
         }
 
@@ -2611,10 +2665,7 @@ namespace
             {
                 fixed_point p = _pos + angle_vector(i * 128) * 150;
 
-                if(enemy* e = _spawn_enemy(type_skeleton, p, 0))
-                {
-                    e->mode = mode_ring;
-                }
+                _queue_spawn(type_skeleton, p, mode_ring, fixed_point(), 0);
             }
         }
 
@@ -2641,7 +2692,14 @@ namespace
             for(int k = 0; k < _embers.size();)
             {
                 ember_ball& b = _embers[k];
-                ++b.t;
+                if(++b.t <= 0)
+                {
+                    b.sprite.set_visible(false);
+                    ++k;
+                    continue;
+                }
+
+                b.sprite.set_visible(true);
                 b.pos += b.vel;
                 int height = (bn::lut_sin((b.t * 512) / 40).data() * 18) >> 12;
                 b.sprite.set_position(b.pos.x(), b.pos.y() - height);
@@ -2710,6 +2768,7 @@ namespace
                 ember_ball& b = _embers.emplace_back(bn::move(s));
                 b.pos = _pos;
                 b.vel = d * fixed(1.6);
+                b.t = -8 * i;   // perf: the second ball lands 8 f later (two explosions in one frame)
             }
         }
 
@@ -4344,7 +4403,8 @@ namespace
                     for(int k = 0; k < 8; ++k)
                     {
                         fixed_point base = _pos + side * (k < 4 ? 140 : -140);
-                        _spawn_enemy(type_goblin, base + fixed_point(_random.get_int(-20, 21), _random.get_int(-20, 21)), 0);
+                        _queue_spawn(type_goblin, base + fixed_point(_random.get_int(-20, 21), _random.get_int(-20, 21)),
+                                     mode_chase, fixed_point(), 0);
                     }
 
                     _boss_state = wc_walk;

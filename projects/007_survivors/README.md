@@ -18,7 +18,7 @@ B: Blink (salto corto, 3 s de recarga). START: pausa (armas y pasivas, Resume / 
 
 ## Depuración (menú SELECT, `hb::debug_menu` en `include/hb_config.h`)
 
-Filas `DBG`: **God mode** (sin daño), **Max power** (todo a Nv5), **Skip to 4:30** (salta el reloj; el jefe sale a
+Filas `DBG` (ver "Bloque 2"): **God mode**, **Max power**, **Start at**, **Stress 56**, **Force**. Antes: **Skip to 4:30** (el jefe sale a
 5:00), **Stress 56** (mantiene 56 enemigos para medir). Poner `debug_menu = false` para la versión publicada.
 
 ## Probar sin ventana (Mesen 2 headless)
@@ -49,6 +49,30 @@ Qué se hizo: tiles y paletas de enemigos cacheados (`sprite_tiles_ptr`/`sprite_
 y escarcha reutilizados (crear un sprite cuesta ~5-10 % de frame con 150 vivos), cubos espaciales de 32 px para
 armas y separación, golpes de la Nova repartidos en 6 frames (anillo que crece), `_update_enemies` en ARM/IWRAM
 (`HB_HOT`), 1 número de daño nuevo por frame y Stress repone 4 por frame.
+
+## Bloque 2 (G-49): F1 acto 2, 5:00-10:00
+
+Goblin (flanco ±30°), Wolf (DASH: se agacha 30 f con ojos rojos sólo en pantalla, embiste 20 f a 3 px/f), Orc (TANK),
+Big Slime (HOP + SPLIT en 2 slimes), Treasure Goblin (FLEE 20 s, flecha dorada, 30-60 oro + corazón), élite Splitting
+(3 copias al 30 %), Wolf Pack 8:00, Goblin Raid 9:15, Orc Warchief 10:00 (carga con 4 "!", aturdido al chocar con
+atrezzo, cuerno con 8 goblins < 60 %, carga doble < 30 %), cofre de jefe 1/3/5, Ember Toss, Storm Chain, Spell Tome,
+Lodestone, 4 huecos de arma + 4 de pasiva, vida por minuto (§C1), música (título, prado, jefe) y efectos finales.
+Al matar al Warchief: STAGE CLEAR (los minutos 10-15 son el bloque 3).
+
+Menú SELECT, filas DBG: God mode, Max power (4 armas sin Ember + pasivas a Nv5), **Start at** (izq./der.: 4:30,
+5:50, 7:00, 8:00, 9:00, 9:45; nivel y armas de un perfil C a ese minuto), Stress 56 (mezcla de todos los monstruos),
+**Force** (izq./der.: Treasure, Split elite, Wolves, Warchief, Wolf Pack, Goblin Raid, Big slime).
+
+Pruebas: `python -I projects/007_survivors/tests/b2run.py stress|start <salida>` (variables START_AT, FORCE, GOD,
+SECONDS_RUN, SHOTS, PROF=1 para secciones). Imprime `test_tiles_used`, `test_cpu_max`, `test_boss_ttk`, `test_events`
+(bits en `src/hb_game.cpp`), `test_wolf_*`.
+
+| Medida (G-49) | Resultado |
+|---|---|
+| VRAM de sprites, Stress 56 mezclado + cartas | pico 797 tiles con cartas abiertas, 501 en juego (≤ 900): un bloque por dirección y arte, recargado con `set_tiles_ref` |
+| Stress 56 + Max power, con música | 118 % → 97,9 % (cadena de un salto por frame, presupuesto de 4 sprites de muerte/poof/gema por frame, relleno de Stress 2 por frame) |
+| Perfil C 4:30-10:10 (God) | 116 % → 95,3 % (formaciones entran 2 por frame, 2.ª bola de Ember 8 f después). **Objetivo 85 % aún no** |
+| Warchief, perfil C Lv 20 (God) | TTK 48 s con 1000 de vida (3000 daba ~130 s; regla R13 de E5) |
 
 ## Provisionales
 
