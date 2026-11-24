@@ -78,6 +78,7 @@ def main():
             rows.append((ROW_FORCE, "a", int(force)))
         menu(inp, rows)
         inp.kite(seconds * 60)
+    print("kite_start", inp.f - seconds * 60)
     frames = inp.f + 30
     shots = os.environ.get("SHOTS") or ",".join(str(x) for x in range(inp.f - seconds * 60 + 120, frames, 600))
     cmd = [sys.executable, "-I", os.path.join(ROOT, "tools", "scripts", "gbarun.py"), ROM, "--frames", str(frames),
@@ -85,7 +86,7 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(14)]

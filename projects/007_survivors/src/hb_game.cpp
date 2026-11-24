@@ -80,6 +80,8 @@ volatile int test_boss_phase;
 volatile int test_dead_at;            // second of death (0 alive)
 volatile int test_prof_ember;         // worst ticks of Ember Toss / Storm Chain updates
 volatile int test_prof_chain;
+volatile int test_boss_ttk;           // seconds from the boss entrance to its death
+volatile int test_first_crouch_frame; // test_frames of the first wolf crouch (for a capture)
 volatile int test_tiles_used;         // peak bn::sprite_tiles::used_tiles_count() during play (§C6: <= 900)
 
 // perf: the hottest per-frame loops run as ARM code from IWRAM (measured in G-45; see README "Rendimiento").
@@ -911,7 +913,7 @@ namespace
         bn::vector<bn::sprite_ptr, 4> _hud_frame;
         bn::optional<bn::sprite_ptr> _burst;
         int _burst_t = 0;
-        bn::vector<bn::sprite_ptr, 6> _boss_bar;
+        bn::vector<bn::sprite_ptr, 8> _boss_bar;   // 6 pieces + 2 phase notches
         bn::vector<bn::sprite_ptr, 4> _hud_level;
         bn::vector<bn::sprite_ptr, 4> _hud_clock;
         bn::vector<bn::sprite_ptr, 4> _hud_gold;
@@ -1142,7 +1144,7 @@ namespace
         // DBG menu values
         int _dbg_start = 0;
         int _dbg_force = 0;
-        bn::vector<bn::sprite_ptr, 10> _boss_title;
+        bn::vector<bn::sprite_ptr, 12> _boss_title;
 
         // -----------------------------------------------------------------------------------------------------
         // Sound: Maxmod queues a few commands per frame, so at most 2 new sounds per frame.
@@ -3646,15 +3648,20 @@ namespace
                         }
 
                         if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase &&
-                           abs_int(dx) <= 96 && abs_int(dy) <= 96 && dx * dx + dy * dy <= 96 * 96)
+                           abs_int(dx) <= 100 && abs_int(dy) <= 60 && dx * dx + dy * dy <= 96 * 96)
                         {
-                            // Direction fixed when the warning starts.
+                            // Direction fixed when the warning starts; only on screen (the crouch is the warning).
                             e.state = 1;
                             e.timer = 30;
                             e.vel = unit(dx, dy) * 3;
                             e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_crouch);
                             e.sprite.set_horizontal_flip(dx < 0);
                             test_wolf_crouches = test_wolf_crouches + 1;
+
+                            if(test_first_crouch_frame == 0)
+                            {
+                                test_first_crouch_frame = test_frames;
+                            }
                         }
 
                         if(e.slow > 0)
@@ -4104,7 +4111,8 @@ namespace
 
         // ---- Orc Warchief (DISENO_FASES E5.1): charges (40 f stomp + line of "!", 3.5 px/f up to 90 f, stunned
         // 60 f when he hits a prop), horn below 60 % (8 goblins from 2 sides), double charge below 30 %.
-        static constexpr int warchief_hp = 3000;
+        // E5.1 starts at 3000; R13 rule HP = TTK target x measured DPS: profile C (God, Lv 20) did ~22 dps -> 45 s.
+        static constexpr int warchief_hp = 1000;
         enum warchief_state
         {
             wc_walk = 11,
@@ -4412,11 +4420,13 @@ namespace
             _level_flash = 20;
             _play(art::sfx_explosion);
             bn::sprites_mosaic::set_stretch(0);
+            test_boss_ttk = _boss_fight_t / fps;
 
             if(_boss_kind == 1)
             {
                 // Block 2 ends at the Warchief (minutes 10-15 are block 3).
                 _boss_dead = true;
+                ++_bosses_killed;
                 test_events = test_events | 256;
                 _end_timer = 120;
                 return;
