@@ -269,3 +269,31 @@ python -I art/tools/build_block4.py extend          # icons +10..16; oro en la p
 | `violet_palette` | Wraith | `ghost` | sábana magenta/violeta, ojos cian |
 | `ground_graveyard_palette` / `props_graveyard_palette` | F2 | `ground` / `props` (bg_palette) | verde musgo frío, brillos magenta |
 | `ground_keep_palette` / `props_keep_palette` | F3 (adelanto) | `ground` / `props` | ceniza y brasa, brillos oro |
+
+## Bloque 5: F2 Grim Graveyard (G-51, `tools/build_block5.py`)
+
+```
+python -I art/tools/build_block5.py fetch          # baja banshee y lich de PixelLab a raw/banshee, raw/lich
+python -I art/tools/build_block5.py seed [nombres] # crea los .aseprite que falten (nunca pisa)
+```
+
+| Fichero (código) | Tipo | Frame | Etiquetas | Paleta / notas |
+|---|---|---|---|---|
+| `ghost` | sprite | 16×16 | float 0–3, fade 4–5, death 6–8 (ya hecho en G-50) | wraith = `violet_palette` |
+| `banshee` | sprite | 64×64 | float 0–3, wail 4–5, vanish 6–7, death 8–11 | propia: sábana fría, ojos cian; wail con anillos magenta alrededor de la cabeza; vanish = tramado → contorno cian; muerte = sube y se deshace en cian. PixelLab v3 (de frente) |
+| `bone_colossus` | sprite | 64×64 | walk 0–5, throw 6–7, collapse 8–10, death 11–15 | = `skeleton_big` (sembrado ampliándolo 2×, borde afinado a 1 px). throw 6 = agachado con el hueso sobre la cabeza, 7 = lanza a la derecha; collapse = primeros frames de la muerte del esqueleto grande (se rearma en código); mira a la **derecha** |
+| `lich` | sprite | 64×64 | idle 0–3, cast 4–6, teleport 7–9, death 10–14 | propia: túnica violeta, hueso, orbe cian, chispas magenta al lanzar; teleport = se estrecha en columna magenta; muerte = se hunde y se deshace. PixelLab v3 (de frente) |
+| `fx_arrow` | sprite | 8×8 | e 0, ne 1 (resto con volteo) | **proyectiles F2**: flecha de hueso con plumas rojas y borde vino |
+| `fx_bone` | sprite | 8×8 | spin 0–3 | proyectiles F2: hueso girando con borde rojo (se lee como peligro) |
+| `fx_skull` | sprite | 8×8 | fly 0–1 | proyectiles F2: calavera con llama magenta (vuela hacia la derecha; volteo para la izquierda) |
+| `fx_grave` | sprite | 16×16 | crack 0–2 (200 ms) | proyectiles F2: aviso RISE, montículo + grieta magenta (como `fx_root`); 2 = asoman dedos de hueso |
+
+- **Paleta proyectiles F2** (`fx_arrow`, `fx_bone`, `fx_skull`, `fx_grave`, la misma en los 4): 1 negro, 2 gris,
+  3–4 hueso, 5–6 rojos, 7–8 magentas, 9 violeta, 10–11 cian, 12 rosa, 13–14 oros, 15 vino (borde).
+- Monstruos F2 = tiles de F1 con paleta (tabla de `*_palette` arriba): Ghoul y Grave Brute `rotten_palette` sobre
+  `goblin`/`orc`; Crow `crow_palette` sobre `bat`; Grave Walker `grey_flesh_palette` y Bone Archer
+  `red_bone_palette` sobre `skeleton`; Wraith `violet_palette` sobre `ghost`; Bone Knight = `skeleton_big` tal cual.
+- Suelo y atrezzo F2: `ground` + `ground_graveyard_palette`, `props` + `props_graveyard_palette` (las lápidas son
+  `log`). En código: `bg.set_palette(bn::bg_palette_items::ground_graveyard_palette.create_palette())` y
+  `sprite.set_palette(bn::sprite_palette_items::rotten_palette.create_palette())` (probado en ROM).
+- Falta (no está en la tabla): hito **Crypt Gate** (§C5) como pieza de atrezzo propia.

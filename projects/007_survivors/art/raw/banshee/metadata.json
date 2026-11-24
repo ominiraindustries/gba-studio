@@ -1,0 +1,53 @@
+{
+  "group_id": "aef3c015-aeee-46b0-82bb-2dae35a76d6a",
+  "states": [
+    {
+      "character": {
+        "id": "b6fa4e23-05c0-4135-8fc6-6c37aa593dff",
+        "name": "Idle",
+        "prompt": "banshee ghost woman boss, floating tattered pale grey-blue burial shroud, long flowing white hair, gaunt dark face with glowing cyan eyes, open screaming mouth, skeletal hands raised, lower body fades into wispy torn cloth, dark fantasy NES style, cold limited palette with neon cyan and magenta glow",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-24T17:45:54.678947+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "wail": {
+            "south": [
+              "Idle/animations/wail/south/frame_000.png",
+              "Idle/animations/wail/south/frame_001.png",
+              "Idle/animations/wail/south/frame_002.png",
+              "Idle/animations/wail/south/frame_003.png"
+            ]
+          },
+          "float": {
+            "south": [
+              "Idle/animations/float/south/frame_000.png",
+              "Idle/animations/float/south/frame_001.png",
+              "Idle/animations/float/south/frame_002.png",
+              "Idle/animations/float/south/frame_003.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-11-24T17:53:12.285594"
+}
