@@ -37,6 +37,8 @@ namespace hb
     constexpr int knockback_frames = 6;
     constexpr bn::fixed knockback_speed = bn::fixed(4) / 6; // 4 px in 6 frames
     constexpr int hit_flash_frames = 4;
+    constexpr int separation_distance = 12;                 // neighbours closer than this (px, per axis) push apart
+    constexpr bn::fixed separation_push = bn::fixed(0.3);  // px per axis and neighbour (max 3) per frame
 
     // Pools (§13)
     constexpr int max_bolts = 12;

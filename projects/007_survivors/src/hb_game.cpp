@@ -22,9 +22,12 @@
 #include "bn_sound_handle.h"
 #include "bn_sprite_palettes.h"
 #include "bn_sprite_palette_item.h"
+#include "bn_sprite_palette_ptr.h"
+#include "bn_sprite_tiles_ptr.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_sprites_mosaic.h"
+#include "bn_timer.h"
 #include "bn_string.h"
 #include "bn_unique_ptr.h"
 #include "bn_vector.h"
@@ -57,6 +60,18 @@ volatile int test_sounds;
 volatile int test_last_sound_frame;
 volatile int test_last_sound_id;
 volatile int test_last_sound_speed;
+volatile int test_cpu_nova_max;   // worst frame in which a Hex Nova was cast
+// Section ticks (bn::timer, 1/ticks_per_frame of a frame) of the current and of the worst measured frame.
+// 0 player, 1 director, 2 spark, 3 runes, 4 frost, 5 bolts, 6 enemies, 7 boss, 8 pickups, 9 particles,
+// 10 rest of the logic, 11 engine (bn::core::update until the next frame starts), 12 ticks inside _kill_enemy,
+// 13 kills in the frame.
+volatile int test_prof[14];
+volatile int test_prof_worst[14];     // worst frame without a Nova cast
+volatile int test_prof_nova[14];      // worst Nova frame
+volatile int test_cpu_max_plain;      // worst frame without a Nova cast
+
+// perf: the hottest per-frame loops run as ARM code from IWRAM (measured in G-45; see README "Rendimiento").
+#define HB_HOT __attribute__((section(".iwram"), target("arm"), noinline))
 
 namespace hb
 {
@@ -413,6 +428,7 @@ namespace
         uint8_t shield = 0;
         uint8_t rune_cd = 0;
         uint8_t frost_pulse = 0;
+        uint8_t nova = 0;       // 1: caught by a Hex Nova, hit in a later frame (perf: spread over frames)
         int16_t slow = 0;
         int16_t freeze = 0;
 
@@ -516,7 +532,20 @@ namespace
             }
 
             _map.init(seed * 2654435761u + 1);
+            _grid_clear();
             _build_palettes();
+            _white_pal = _white_palette().create_palette();
+
+            for(int t = 0; t < type_count; ++t)
+            {
+                const art::monster_art& look = *enemy_defs[t].look;
+                _type_pal[t] = look.item->palette_item().create_palette();
+
+                for(int f = 0; f < look.move.count; ++f)
+                {
+                    _move_tiles[t].push_back(look.item->tiles_item().create_tiles(look.move.first + f));
+                }
+            }
 
             // Props first with tile offset disabled so the dynamic cells index the tile set directly.
             bn::bg_tiles::set_allow_offset(false);
@@ -648,7 +677,13 @@ namespace
                 _tick_sounds();
                 bool measured = _mode == game_mode::play && _play_streak >= 2;
                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
+                bool nova_frame = _nova_cast_frame;
+                _nova_cast_frame = false;
+                _prof_timer.restart();
                 bn::core::update();
+                test_prof[11] = _prof_timer.elapsed_ticks();
+                test_prof[12] = 0;
+                test_prof[13] = 0;
 
                 // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
@@ -658,6 +693,28 @@ namespace
                 {
                     test_cpu_max = cpu;
                     test_cpu_max_enemies = _enemies.size();
+                }
+
+                if(measured && _mode == game_mode::play)
+                {
+                    if(nova_frame && cpu > test_cpu_nova_max)
+                    {
+                        test_cpu_nova_max = cpu;
+
+                        for(int k = 0; k < 14; ++k)
+                        {
+                            test_prof_nova[k] = test_prof[k];
+                        }
+                    }
+                    else if(! nova_frame && cpu > test_cpu_max_plain)
+                    {
+                        test_cpu_max_plain = cpu;
+
+                        for(int k = 0; k < 14; ++k)
+                        {
+                            test_prof_worst[k] = test_prof[k];
+                        }
+                    }
                 }
             }
         }
@@ -691,6 +748,7 @@ namespace
 
         bn::vector<enemy, max_enemies> _enemies;
         bn::vector<bolt, max_bolts> _bolts;
+        bn::vector<bn::sprite_ptr, max_bolts> _bolt_pool;   // hidden spark sprites ready for reuse
         bn::vector<bn::sprite_ptr, max_runes> _runes;
         bn::vector<bn::sprite_ptr, frost_shards> _frost;
         bn::vector<pickup, max_gems + 4> _pickups;
@@ -700,6 +758,11 @@ namespace
         bn::array<bn::color, 16> _white_colors;
         bn::array<bn::color, 16> _elite_colors[type_count][2];
         bn::array<bn::color, 16> _boss_white_colors;
+
+        // Hot-path caches (perf): enemies swap palettes and animation frames by handle, without a VRAM lookup.
+        bn::optional<bn::sprite_palette_ptr> _white_pal;
+        bn::optional<bn::sprite_palette_ptr> _type_pal[type_count];
+        bn::vector<bn::sprite_tiles_ptr, 8> _move_tiles[type_count];
 
         // Player
         fixed_point _pos;
@@ -755,6 +818,22 @@ namespace
         fixed_point _swarm_dir;
         fixed_point _swarm_origin;
         bool _stress = false;
+        bool _nova_cast_frame = false;
+        int _nova_pending = 0;
+
+        // Spatial buckets (perf + separation): enemies linked by index into 32 px cells of a wrapped 16x16
+        // window (512x512 px; enemies live within 260 px of the wizard). Kept valid on spawn, move and remove.
+        static constexpr int grid_shift = 5;
+        static constexpr int grid_size = 16;
+        int8_t _grid_head[grid_size * grid_size];
+        int8_t _grid_next[max_enemies];
+        uint8_t _grid_cell[max_enemies];
+        int _number_frame = -1;
+        int _nova_step = 0;
+        int _nova_damage = 0;
+        static constexpr int nova_hit_frames = 6;
+        static constexpr int nova_hits_per_frame = 12;
+        bn::timer _prof_timer;
 
         // Feel
         int _shake = 0;
@@ -906,6 +985,23 @@ namespace
             return bn::sprite_palette_item(_white_colors, bn::bpp_mode::BPP_4);
         }
 
+        void _flash_white(enemy& e)
+        {
+            e.sprite.set_palette(*_white_pal);
+        }
+
+        void _restore_palette(enemy& e)
+        {
+            if(e.elite)
+            {
+                e.sprite.set_palette(_enemy_palette(e));
+            }
+            else
+            {
+                e.sprite.set_palette(*_type_pal[e.type]);
+            }
+        }
+
         [[nodiscard]] bn::sprite_palette_item _enemy_palette(const enemy& e) const
         {
             if(e.elite)
@@ -970,13 +1066,20 @@ namespace
             }
 
             ++_t;
+            _prof_timer.restart();
             _update_player();
+            _prof(0);
             _update_director();
+            _prof(1);
             _update_weapons();
             _update_enemies();
+            _prof(6);
             _update_boss();
+            _prof(7);
             _update_pickups();
+            _prof(8);
             _update_particles();
+            _prof(9);
             _update_shrine();
             _update_timers();
 
@@ -1026,8 +1129,14 @@ namespace
             test_kills = _kills;
             test_gold = _gold;
             test_boss_hp = _boss_hp;
-            test_projectiles = _bolts.size() + _runes.size() + _frost.size();
+            test_projectiles = _bolts.size() + _runes.size() + (_frost_t >= 0 ? _frost.size() : 0);
             test_gems = _pickups.size();
+            _prof(10);
+        }
+
+        void _prof(int section)
+        {
+            test_prof[section] = _prof_timer.elapsed_ticks_with_restart();
         }
 
         [[nodiscard]] fixed _speed_multiplier() const
@@ -1166,34 +1275,28 @@ namespace
             _nova = 0;
             test_nova = 0;
             test_novas_cast = test_novas_cast + 1;
+            _nova_cast_frame = true;
             _nova_flash = 24;
             _shake = 20;
             _play(art::sfx_boss);
             _play(art::sfx_level, 1, fixed(0.8));
-            int damage = _damage(40);
+            _nova_damage = _damage(40);
+            _nova_pending = 0;
 
-            for(int i = 0; i < _enemies.size(); ++i)
+            // Targets are fixed now (on screen at the cast); the hits land in _update_nova, nearest first.
+            for(enemy& e : _enemies)
             {
-                int dx = to_int(_enemies[i].pos.x() - _pos.x());
-                int dy = to_int(_enemies[i].pos.y() - _pos.y());
+                int dx = to_int(e.pos.x() - _pos.x());
+                int dy = to_int(e.pos.y() - _pos.y());
 
-                if(abs_int(dx) > 136 || abs_int(dy) > 96)
+                if(abs_int(dx) <= 136 && abs_int(dy) <= 96)
                 {
-                    continue;
-                }
-
-                if(_hit_enemy(i, damage, _pos))
-                {
-                    --i;
-                }
-                else
-                {
-                    // Enemies fly out: a long, strong knockback.
-                    enemy& e = _enemies[i];
-                    e.knock = 16;
-                    e.knock_vel = unit(dx, dy) * 3;
+                    e.nova = 1;
+                    ++_nova_pending;
                 }
             }
+
+            _nova_step = 0;
 
             if(_boss && _boss_state != 3)
             {
@@ -1201,6 +1304,68 @@ namespace
             }
 
             _spawn_poof(_pos, 6);
+        }
+
+        // Hex Nova hits, a few per frame (perf): the cast frame used to resolve up to 56 hits and kills at once.
+        // Each frame takes the pending enemies inside a growing ring, so the blast still spreads from the wizard
+        // and every target is hit within nova_hit_frames frames.
+        void _update_nova()
+        {
+            if(_nova_pending <= 0)
+            {
+                return;
+            }
+
+            ++_nova_step;
+
+            int ring = (_nova_step * 160) / nova_hit_frames;
+            bool last = _nova_step >= nova_hit_frames;
+            int hits = 0;
+
+            for(int i = 0; i < _enemies.size() && hits < nova_hits_per_frame; ++i)
+            {
+                enemy& e = _enemies[i];
+
+                if(! e.nova)
+                {
+                    continue;
+                }
+
+                int dx = to_int(e.pos.x() - _pos.x());
+                int dy = to_int(e.pos.y() - _pos.y());
+
+                if(! last && abs_int(dx) + abs_int(dy) > ring)
+                {
+                    continue;
+                }
+
+                e.nova = 0;
+                --_nova_pending;
+                ++hits;
+
+                if(_hit_enemy(i, _nova_damage, _pos))
+                {
+                    --i;
+                }
+                else
+                {
+                    // Enemies fly out: a long, strong knockback.
+                    enemy& o = _enemies[i];
+                    o.knock = 16;
+                    o.knock_vel = unit(dx, dy) * 3;
+                }
+            }
+
+            if(last && hits < nova_hits_per_frame)
+            {
+                // Anything left (recycled or out of reach) is dropped.
+                for(enemy& e : _enemies)
+                {
+                    e.nova = 0;
+                }
+
+                _nova_pending = 0;
+            }
         }
 
         void _update_player()
@@ -1415,8 +1580,14 @@ namespace
             }
 
             const enemy_def& def = enemy_defs[type];
-            enemy& e = _enemies.emplace_back(_world_sprite(*def.look->item, p, def.look->move.first, 10));
+            bn::sprite_ptr sprite = bn::sprite_ptr::create(p, def.look->item->shape_size(), _move_tiles[type][0],
+                                                           *_type_pal[type]);
+            sprite.set_camera(_camera);
+            sprite.set_bg_priority(2);
+            sprite.set_z_order(10);
+            enemy& e = _enemies.emplace_back(bn::move(sprite));
             e.pos = p;
+            _grid_link(_enemies.size() - 1);
             e.type = uint8_t(type);
             e.hp = def.hp;
             e.uid = _next_uid++;
@@ -1469,10 +1640,110 @@ namespace
             }
         }
 
+        [[nodiscard]] static int _grid_cell_of(int x, int y)
+        {
+            return ((y >> grid_shift) & (grid_size - 1)) * grid_size + ((x >> grid_shift) & (grid_size - 1));
+        }
+
+        void _grid_clear()
+        {
+            for(int8_t& head : _grid_head)
+            {
+                head = -1;
+            }
+        }
+
+        void _grid_link(int i)
+        {
+            const enemy& e = _enemies[i];
+            int cell = _grid_cell_of(to_int(e.pos.x()), to_int(e.pos.y()));
+            _grid_cell[i] = uint8_t(cell);
+            _grid_next[i] = _grid_head[cell];
+            _grid_head[cell] = int8_t(i);
+        }
+
+        // Replaces index "from" by "to" in its bucket (to < 0 unlinks it).
+        void _grid_relink(int from, int to)
+        {
+            int8_t* link = &_grid_head[_grid_cell[from]];
+
+            while(*link != from)
+            {
+                link = &_grid_next[*link];
+            }
+
+            if(to < 0)
+            {
+                *link = _grid_next[from];
+            }
+            else
+            {
+                *link = int8_t(to);
+                _grid_next[to] = _grid_next[from];
+                _grid_cell[to] = _grid_cell[from];
+            }
+        }
+
+        void _grid_refresh(int i)
+        {
+            const enemy& e = _enemies[i];
+
+            if(_grid_cell_of(to_int(e.pos.x()), to_int(e.pos.y())) != _grid_cell[i])
+            {
+                _grid_relink(i, -1);
+                _grid_link(i);
+            }
+        }
+
+        // Indices of the enemies whose centre is inside the box (x +- r, y +- r, exclusive), sorted from high to low
+        // so the caller can remove the one it is processing (_remove_enemy moves the last enemy into its slot).
+        int _grid_query(int x, int y, int r, int8_t* out) const
+        {
+            int count = 0;
+            int cx0 = (x - r) >> grid_shift;
+            int cx1 = (x + r) >> grid_shift;
+            int cy0 = (y - r) >> grid_shift;
+            int cy1 = (y + r) >> grid_shift;
+
+            for(int cy = cy0; cy <= cy1; ++cy)
+            {
+                for(int cx = cx0; cx <= cx1; ++cx)
+                {
+                    int cell = (cy & (grid_size - 1)) * grid_size + (cx & (grid_size - 1));
+
+                    for(int i = _grid_head[cell]; i >= 0; i = _grid_next[i])
+                    {
+                        const enemy& e = _enemies[i];
+
+                        if(abs_int(to_int(e.pos.x()) - x) >= r || abs_int(to_int(e.pos.y()) - y) >= r)
+                        {
+                            continue;
+                        }
+
+                        int k = count++;
+
+                        while(k > 0 && out[k - 1] < i)
+                        {
+                            out[k] = out[k - 1];
+                            --k;
+                        }
+
+                        out[k] = int8_t(i);
+                    }
+                }
+            }
+
+            return count;
+        }
+
         void _remove_enemy(int i)
         {
-            if(i != _enemies.size() - 1)
+            int last = _enemies.size() - 1;
+            _grid_relink(i, -1);
+
+            if(i != last)
             {
+                _grid_relink(last, i);
                 _enemies[i] = bn::move(_enemies.back());
             }
 
@@ -1590,8 +1861,8 @@ namespace
 
             if(_stress)
             {
-                group = 8;
-                _spawn_cd = 2;
+                group = 4;   // perf: 4 per frame refills as fast as 8 every 2 frames, with half the peak
+                _spawn_cd = 1;
             }
             else if(s < 30)
             {
@@ -1706,10 +1977,15 @@ namespace
 
         void _update_weapons()
         {
+            _update_nova();
             _update_spark();
+            _prof(2);
             _update_runes();
+            _prof(3);
             _update_frost();
+            _prof(4);
             _update_bolts();
+            _prof(5);
         }
 
         void _update_spark()
@@ -1793,16 +2069,30 @@ namespace
                     break;
                 }
 
-                bn::optional<bn::sprite_ptr> s = art::fx_spark.create_sprite_optional(_pos.x(), _pos.y() - 6, 0);
+                // perf: creating a sprite costs ~5-10 % of a frame with 150 sprites alive; reuse hidden ones.
+                bn::optional<bn::sprite_ptr> s;
 
-                if(! s)
+                if(! _bolt_pool.empty())
                 {
-                    break;
+                    s = bn::move(_bolt_pool.back());
+                    _bolt_pool.pop_back();
+                    s->set_position(_pos.x(), _pos.y() - 6);
+                    s->set_visible(true);
+                }
+                else
+                {
+                    s = art::fx_spark.create_sprite_optional(_pos.x(), _pos.y() - 6, 0);
+
+                    if(! s)
+                    {
+                        break;
+                    }
+
+                    s->set_camera(_camera);
+                    s->set_bg_priority(2);
+                    s->set_z_order(3);
                 }
 
-                s->set_camera(_camera);
-                s->set_bg_priority(2);
-                s->set_z_order(3);
                 bolt& b = _bolts.emplace_back(bn::move(*s));
                 b.pos = fixed_point(_pos.x(), _pos.y() - 6);
                 b.vel = dir * 3;
@@ -1822,8 +2112,12 @@ namespace
                 int bx = to_int(b.pos.x());
                 int by = to_int(b.pos.y());
 
-                for(int i = 0, n = _enemies.size(); i < n && ! dead; ++i)
+                int8_t near[max_enemies];
+                int near_count = dead ? 0 : _grid_query(bx, by, enemy_half_box + 3, near);
+
+                for(int k = 0; k < near_count && ! dead; ++k)
                 {
+                    int i = near[k];
                     enemy& e = _enemies[i];
                     int dx = to_int(e.pos.x()) - bx;
                     int dy = to_int(e.pos.y()) - by;
@@ -1835,17 +2129,13 @@ namespace
                             continue;
                         }
 
+                        uint16_t uid = e.uid;
                         _spawn_hit_spark(b.pos);
-
-                        if(_hit_enemy(i, b.damage, b.pos))
-                        {
-                            --n;
-                            --i;
-                        }
+                        _hit_enemy(i, b.damage, b.pos);
 
                         if(b.pierce > 0)
                         {
-                            b.last_hit[b.pierce % 3] = e.uid;
+                            b.last_hit[b.pierce % 3] = uid;
                             --b.pierce;
                         }
                         else
@@ -1864,6 +2154,9 @@ namespace
 
                 if(dead)
                 {
+                    b.sprite.set_visible(false);
+                    _bolt_pool.push_back(bn::move(b.sprite));
+
                     if(bi != _bolts.size() - 1)
                     {
                         _bolts[bi] = bn::move(_bolts.back());
@@ -1902,7 +2195,12 @@ namespace
 
             if(! active)
             {
-                _runes.clear();
+                // perf: hidden, not destroyed (re-creating them costs more than the whole rune update).
+                for(bn::sprite_ptr& rune : _runes)
+                {
+                    rune.set_visible(false);
+                }
+
                 return;
             }
 
@@ -1928,11 +2226,16 @@ namespace
             {
                 fixed_point p = _pos + fixed_point(0, -4) + angle_vector(base + (r * 2048) / rn) * radius;
                 _runes[r].set_position(p);
+                _runes[r].set_visible(true);
                 int rx = to_int(p.x());
                 int ry = to_int(p.y());
 
-                for(int i = 0, n = _enemies.size(); i < n; ++i)
+                int8_t near[max_enemies];
+                int near_count = _grid_query(rx, ry, enemy_half_box + 4, near);
+
+                for(int k = 0; k < near_count; ++k)
                 {
+                    int i = near[k];
                     enemy& e = _enemies[i];
 
                     if(e.rune_cd)
@@ -1946,12 +2249,7 @@ namespace
                     if(abs_int(dx) < enemy_half_box + 4 && abs_int(dy) < enemy_half_box + 4)
                     {
                         e.rune_cd = 20;
-
-                        if(_hit_enemy(i, damage, p))
-                        {
-                            --n;
-                            --i;
-                        }
+                        _hit_enemy(i, damage, p);
                     }
                 }
 
@@ -2015,6 +2313,11 @@ namespace
             {
                 _frost[i].set_position(_pos + angle_vector(i * 256 + _frost_t * 8) * r);
 
+                if(_frost_t == 0)
+                {
+                    _frost[i].set_visible(true);
+                }
+
                 if(_frost_t % 8 == 0)
                 {
                     _frost[i].set_tiles(art::fx_frost.tiles_item(), frost_frame);
@@ -2067,8 +2370,13 @@ namespace
 
             if(++_frost_t >= 24)
             {
+                // perf: hidden, not destroyed; the next pulse shows them again.
                 _frost_t = -1;
-                _frost.clear();
+
+                for(bn::sprite_ptr& shard : _frost)
+                {
+                    shard.set_visible(false);
+                }
             }
         }
 
@@ -2084,13 +2392,13 @@ namespace
 
                 if(_fx.hit_flash)
                 {
-                    e.sprite.set_palette(_white_palette());
+                    _flash_white(e);
                 }
 
                 if(e.shield == 0)
                 {
                     e.elite = 0;
-                    e.sprite.set_palette(_enemy_palette(e));
+                    _restore_palette(e);
                     e.elite = 2;
                 }
 
@@ -2120,7 +2428,7 @@ namespace
 
             if(_fx.hit_flash)
             {
-                e.sprite.set_palette(_white_palette());
+                _flash_white(e);
             }
 
             if(_fx.knockback && e.mode != mode_swarm)
@@ -2133,6 +2441,14 @@ namespace
         }
 
         void _kill_enemy(int i)
+        {
+            bn::timer kill_timer;
+            _kill_enemy_impl(i);
+            test_prof[12] = test_prof[12] + kill_timer.elapsed_ticks();
+            test_prof[13] = test_prof[13] + 1;
+        }
+
+        void _kill_enemy_impl(int i)
         {
             enemy& e = _enemies[i];
             fixed_point p = e.pos;
@@ -2174,12 +2490,11 @@ namespace
         // -----------------------------------------------------------------------------------------------------
         // Enemies
 
-        void _update_enemies()
+        HB_HOT void _update_enemies()
         {
             int px = to_int(_pos.x());
             int py = to_int(_pos.y());
             int n = _enemies.size();
-            int sep_offset = 1 + (_t % 5);
 
             for(int i = 0; i < n;)
             {
@@ -2197,7 +2512,7 @@ namespace
 
                 if(e.flash && --e.flash == 0)
                 {
-                    e.sprite.set_palette(_enemy_palette(e));
+                    _restore_palette(e);
                 }
 
                 if(e.mode == mode_swarm)
@@ -2216,6 +2531,7 @@ namespace
                     if(e.mode == mode_chase && abs_int(dx) + abs_int(dy) > recycle_distance)
                     {
                         e.pos = _spawn_point(spawn_min_distance, spawn_max_distance, true);
+                        _grid_refresh(i);
                         ++i;
                         continue;
                     }
@@ -2275,36 +2591,86 @@ namespace
                     }
                     else
                     {
-                        fixed nx = e.pos.x() + step.x();
-
-                        if(! _map.solid_at(to_int(nx), ey))
+                        if(step.x() != 0)
                         {
-                            e.pos.set_x(nx);
+                            fixed nx = e.pos.x() + step.x();
+
+                            if(! _map.solid_at(to_int(nx), ey))
+                            {
+                                e.pos.set_x(nx);
+                            }
                         }
 
-                        fixed ny = e.pos.y() + step.y();
-
-                        if(! _map.solid_at(to_int(e.pos.x()), to_int(ny)))
+                        if(step.y() != 0)
                         {
-                            e.pos.set_y(ny);
+                            fixed ny = e.pos.y() + step.y();
+
+                            if(! _map.solid_at(to_int(e.pos.x()), to_int(ny)))
+                            {
+                                e.pos.set_y(ny);
+                            }
                         }
                     }
                 }
 
-                // Separation: one neighbour per frame, rotating (§13).
-                if(n > 1)
+                // Separation (§13): pushed away from up to 3 overlapping neighbours of the nearby buckets, so a
+                // crowd spreads into a ring instead of one ball. Swarm bats keep their formation.
+                if(e.mode != mode_swarm)
                 {
-                    enemy& o = _enemies[(i + sep_offset) % n];
-                    int sx = to_int(e.pos.x() - o.pos.x());
-                    int sy = to_int(e.pos.y() - o.pos.y());
+                    int ex2 = to_int(e.pos.x());
+                    int ey2 = to_int(e.pos.y());
+                    int pushes = 0;
+                    int probes = 0;
+                    fixed_point push;
+                    int cx0 = (ex2 - separation_distance) >> grid_shift;
+                    int cy0 = (ey2 - separation_distance) >> grid_shift;
+                    int cx1 = (ex2 + separation_distance) >> grid_shift;
+                    int cy1 = (ey2 + separation_distance) >> grid_shift;
 
-                    if(abs_int(sx) < 10 && abs_int(sy) < 10)
+                    // Bounded work in a dense crowd: at most 3 pushes and 10 neighbours looked at.
+                    for(int cy = cy0; cy <= cy1 && pushes < 3 && probes < 10; ++cy)
                     {
-                        fixed_point push(sx >= 0 ? fixed(0.5) : fixed(-0.5), sy >= 0 ? fixed(0.5) : fixed(-0.5));
-                        e.pos += push;
-                        o.pos -= push;
+                        for(int cx = cx0; cx <= cx1 && pushes < 3 && probes < 10; ++cx)
+                        {
+                            int cell = (cy & (grid_size - 1)) * grid_size + (cx & (grid_size - 1));
+
+                            for(int j = _grid_head[cell]; j >= 0 && pushes < 3 && probes < 10; j = _grid_next[j])
+                            {
+                                if(j == i)
+                                {
+                                    continue;
+                                }
+
+                                ++probes;
+                                const enemy& o = _enemies[j];
+                                int sx = ex2 - to_int(o.pos.x());
+                                int sy = ey2 - to_int(o.pos.y());
+
+                                if(abs_int(sx) < separation_distance && abs_int(sy) < separation_distance)
+                                {
+                                    // Identical spots split by uid so two stacked enemies do not move together.
+                                    fixed side = e.uid > o.uid ? separation_push : -separation_push;
+                                    push += fixed_point(sx > 0 ? separation_push : sx < 0 ? -separation_push : side,
+                                                        sy > 0 ? separation_push : sy < 0 ? -separation_push : side);
+                                    ++pushes;
+                                }
+                            }
+                        }
+                    }
+
+                    if(pushes)
+                    {
+                        fixed nx = e.pos.x() + push.x();
+                        fixed ny = e.pos.y() + push.y();
+
+                        if(def.flying || ! _map.solid_at(to_int(nx), to_int(ny)))
+                        {
+                            e.pos = fixed_point(nx, ny);
+                        }
                     }
                 }
+
+                _grid_refresh(i);
 
                 // Contact damage (§7).
                 if(abs_int(dx) < player_half_box + 6 && abs_int(dy) < player_half_box + 6)
@@ -2326,7 +2692,7 @@ namespace
 
                 if(((_t + e.uid) % move_anim.frame_time) == 0)
                 {
-                    e.sprite.set_tiles(def.look->item->tiles_item(), move_anim.frame(_t + e.uid, true));
+                    e.sprite.set_tiles(_move_tiles[e.type][move_anim.frame(_t + e.uid, true) - move_anim.first]);
                 }
 
                 if(e.aura)
@@ -2896,10 +3262,13 @@ namespace
 
         void _spawn_damage_number(const fixed_point& p, int value)
         {
-            if(_numbers.full())
+            // perf: text generation is the most expensive part of a hit; at most one new number per frame.
+            if(_numbers.full() || _number_frame == _t)
             {
                 return;
             }
+
+            _number_frame = _t;
 
             damage_number& d = _numbers.emplace_back();
             _text.set_center_alignment();
@@ -3675,7 +4044,9 @@ namespace
             _hide_world_extras(true);
             _summary_shown = true;
             _enemies.clear();
+            _grid_clear();
             _bolts.clear();
+            _bolt_pool.clear();
             _runes.clear();
             _frost.clear();
             _boss_bar.clear();
@@ -3715,6 +4086,8 @@ namespace
 run_end play_run(unsigned seed, fx_settings& fx)
 {
     test_cpu_max = 0;
+    test_cpu_nova_max = 0;
+    test_cpu_max_plain = 0;
     bn::unique_ptr<game> g(new game(seed, fx));
     return g->run();
 }
