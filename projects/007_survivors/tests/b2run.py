@@ -75,10 +75,19 @@ def main():
         idx = int(os.environ.get("START_AT", "0"))
         rows = [(ROW_GOD,)] if os.environ.get("GOD", "1") == "1" else []
         rows.append((ROW_START, "a", idx))
+        if os.environ.get("MAX") == "1":
+            rows.append((ROW_MAX,))
+        if os.environ.get("META") == "1":
+            rows.append((ROW_FORCE + 1,))       # DBG Meta preset (+ Moon Lance Nv5)
         force = os.environ.get("FORCE")
         if force is not None:
             rows.append((ROW_FORCE, "a", int(force)))
         menu(inp, rows)
+        inp.kite(seconds * 60)
+    elif case == "times":
+        # Tiempos (DISENO_RUTA block 2): profile C, no God, from 0:00, SEED 1-5 = frames waited on the title.
+        inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))
+        menu(inp, [])
         inp.kite(seconds * 60)
     elif case == "meta":
         # Block 4: META1 = fresh save, Meta preset, quit, shop (Might x5, refund, Might x1, Cinda), records,
@@ -138,7 +147,7 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]

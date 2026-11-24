@@ -103,6 +103,7 @@ volatile int test_gold_bosses;
 volatile int test_nova_pulled;         // gems pulled by Novas with Lodestone >= 3
 volatile int test_charge_offscreen;    // Warchief charges warned with the boss off screen (review: 0)
 volatile int test_curse_elites;        // most elites alive during a cursed wave (<= 5)
+volatile int test_level_at_600;      // level when the clock reaches 10:00 (Tiempos test)
 volatile int test_evolved;           // G-55: evolution bits (1 Starfall, 2 Blizzard, 4 Ward of Ages)
 volatile int test_meta_gold;         // gold banked by the last finished run
 volatile int test_new_unlocks;       // unlock bits gained by the last finished run
@@ -1603,6 +1604,11 @@ namespace
             _update_shrine();
             _update_timers();
 
+            if(_t == 600 * fps && test_level_at_600 == 0)
+            {
+                test_level_at_600 = _level;
+            }
+
             if(_shop[shop_recovery] && _player_hp > 0 && ++_recovery_t >= 10 * fps / _shop[shop_recovery])
             {
                 _recovery_t = 0;
@@ -1666,7 +1672,10 @@ namespace
             if(_player_hp <= 0)
             {
                 _player_hp = 0;
-                test_dead_at = _t / fps;
+                if(test_dead_at == 0)
+                {
+                    test_dead_at = _t / fps;   // the first death of the session (retries do not overwrite it)
+                }
                 _mode = game_mode::dead;
                 _wizard.set_tiles(art::wizard.tiles_item(), art::wizard_death.first);
                 _wizard.set_visible(true);
