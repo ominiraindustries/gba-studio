@@ -563,6 +563,25 @@ namespace dl
             --cd.p.keys;
         }
 
+        if(e.a & chest_trapped)
+        {
+            // M2-a (MAGIA 2.1): hiss and a shaking lid for 24 f, then needles on the cell in front; stepping away
+            // (back or aside, 12 f) dodges them. The loot comes out after the needles either way
+            if(m.trap_timer > 0)
+            {
+                return;
+            }
+
+            m.trap_timer = trap_warn_f;
+            m.trap_ent = ent;
+            m.trap_cell = _cell;
+            m.trap_index = index;
+            objects_dirty = true;
+            _hud.message("HISS! STEP AWAY!", 60);
+            sfx(2.2, 0.5);
+            return;
+        }
+
         if(! _give(m.chest_item[index]))
         {
             return;     // bag full: the chest stays shut
@@ -574,6 +593,121 @@ namespace dl
         sfx(1.1, 0.7);
     }
 
+    void combat::_trap_update()
+    {
+        magic_state& m = cd.m;
+
+        if(m.trap_timer <= 0 || --m.trap_timer > 0)
+        {
+            return;
+        }
+
+        entity& e = _lv->ents[m.trap_ent];
+        e.a = uint8_t(e.a & ~chest_trapped);    // fired: from now on a normal chest
+
+        if(_cell == m.trap_cell && cd.p.hp > 0)
+        {
+            ++m.trap_hits;
+            _hud.message("NEEDLES!", 60);
+            trap_hit(6 + 2 * (_floor + 1));     // MAGIA 2.1: 6 + 2 x floor, ignores DEF
+        }
+        else
+        {
+            ++m.trap_dodges;
+            _post(EV_MON_MISS, m.trap_ent, 0);
+            sfx(1.6, 0.5);
+        }
+
+        if(cd.p.hp > 0 && _give(m.chest_item[m.trap_index]))
+        {
+            e.a = uint8_t(e.a | chest_opened);
+            _post(EV_PICKUP, m.trap_ent, m.chest_item[m.trap_index]);
+        }
+
+        m.trap_ent = -1;
+        objects_dirty = true;
+    }
+
+    void combat::_wake_mimic(monster& m)
+    {
+        // MAGIA 2.1: teeth and a white blink for 30 f before the first bite (R5); it never moves
+        m.state = MS_CHASE;
+        m.attack_cd = 0;
+        _hud.message("A MIMIC!", 90);
+        sfx(0.4, 0.8);
+        objects_dirty = true;
+    }
+
+    void combat::touch(int cell)
+    {
+        int mi = cd.mon_at[cell];
+
+        if(mi >= 0 && cd.mons[mi].kind == MON_MIMIC && cd.mons[mi].state == MS_IDLE)
+        {
+            _wake_mimic(cd.mons[mi]);
+        }
+    }
+
+    // M2 (MAGIA 2.1): trapped chests from floor 2 (20 %, 25 % from 4) among the normal ones and one mimic from floor
+    // 3 (15 %, 20 % from 4), never the first chest, a scroll chest or a dead end (always somewhere to step back)
+    void combat::_setup_chest_kinds()
+    {
+        magic_state& m = cd.m;
+        level& lv = *_lv;
+        int trap_pct = _floor < 1 ? 0 : _floor < 3 ? 20 : 25;
+        int mimic_pct = _floor < 2 ? 0 : _floor < 3 ? 15 : 20;
+        auto scroll = [](int item) { return item >= ITEM_SCROLL_MISSILE && item <= ITEM_SCROLL_HEAL; };
+
+        if(mimic_pct && _rng.get_int(100) < mimic_pct)
+        {
+            for(int i = m.nchests - 1; i >= 1; --i)
+            {
+                entity& e = lv.ents[m.chest_ent[i]];
+                int c = e.y * W + e.x;
+                int sides = 0;
+
+                for(int d = 0; d < 4; ++d)
+                {
+                    sides += _edge_pass(c, d, true) ? 1 : 0;
+                }
+
+                if((e.a & chest_locked) || scroll(m.chest_item[i]) || sides < 2 || cd.nmons >= max_monsters ||
+                   cd.mon_at[c] >= 0)
+                {
+                    continue;
+                }
+
+                // the chest entity becomes the monster (drawn with prop_mimic, frame 0 == a closed chest)
+                _ent_of_cell[c] = -1;
+                e.type = E_MONSTER;
+                e.b = MON_MIMIC;
+                cd.mons[cd.nmons] = monster{ m.chest_ent[i], int16_t(c), MON_MIMIC, MS_IDLE,
+                                             int16_t(mon_table[MON_MIMIC].hp), 0, 0, 0, -1, 0, 0, 0, 0 };
+                cd.mon_at[c] = int16_t(cd.nmons++);
+                ++m.mimics;
+
+                for(int k = i; k + 1 < m.nchests; ++k)
+                {
+                    m.chest_ent[k] = m.chest_ent[k + 1];
+                    m.chest_item[k] = m.chest_item[k + 1];
+                }
+
+                --m.nchests;
+                break;
+            }
+        }
+
+        for(int i = 0; i < m.nchests && trap_pct; ++i)
+        {
+            entity& e = lv.ents[m.chest_ent[i]];
+
+            if(! (e.a & chest_locked) && ! scroll(m.chest_item[i]) && _rng.get_int(100) < trap_pct)
+            {
+                e.a = uint8_t(e.a | chest_trapped);
+            }
+        }
+    }
+
     void combat::_setup_chests(bool test_room)
     {
         magic_state& m = cd.m;
@@ -583,10 +717,10 @@ namespace dl
 
         if(test_room)
         {
-            // build_test_room order: normal chest (Heal scroll), locked chest (Ring of Mana)
-            static constexpr uint8_t contents[2] = { ITEM_SCROLL_HEAL, ITEM_RING_MANA };
+            // build_test_room order: normal chest (Heal scroll), locked chest (Ring of Mana), trapped chest (potion)
+            static constexpr uint8_t contents[3] = { ITEM_SCROLL_HEAL, ITEM_RING_MANA, ITEM_POTION };
 
-            for(int i = 0; i < lv.nents && m.nchests < 2; ++i)
+            for(int i = 0; i < lv.nents && m.nchests < 3; ++i)
             {
                 if(lv.ents[i].type == E_FURN && lv.ents[i].c == FURN_CHEST)
                 {
@@ -784,6 +918,7 @@ namespace dl
             }
         }
 
+        _setup_chest_kinds();
         cd.dist_from = -1;
     }
 }

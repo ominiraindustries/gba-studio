@@ -105,3 +105,23 @@ Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), c
   cofre con Heal (2 a la derecha); cofre con llave y Ring of Mana delante de la llave; rata a d = 4, dos slimes.
   Ejemplo M1-a: `--input "60:a;130:l;165:r;200:b" --check "test_missile_kills.32==1"`.
 - Paletas de sprites: las de adornos y halo se crean al verlas (antes 9 fijas); con magia en pantalla se miden 14 de 16.
+
+## Magia y tesoros (G-40, bloque M2)
+
+- Cofre con trampa (M2-a, desde la planta 2, 20 %/25 % de los normales): la cerradura destella en rojo 8 f cada 60 f a
+  d ≤ 2 (3 con Light); al abrirlo `HISS! STEP AWAY!` y la tapa tiembla 24 f; luego agujas en la casilla de delante
+  (6 + 2·planta, ignora DEF). El botín sale igual. Bit `dl::chest_trapped` en `entity::a`.
+- Mimic (M2-b, desde la planta 3, 15 %/20 %, máx. 1, nunca el 1.er cofre, ni con pergamino, ni en callejón): es un
+  monstruo `MON_MIMIC` dibujado con `prop_mimic` a tamaño de cofre; dormido no se mueve ni despierta por vista/oído,
+  respira (tapa 1 px) 12 f cada 120 f a d ≤ 2. Andar contra él o golpearlo lo despierta (`A MIMIC!`); 30 f de aviso
+  antes de cada mordisco. A contra un cofre real: `CLANG`.
+- Sala de prueba: cofre con trampa (poción) en (8, 20) y mimic en (14, 18). Rutas (ROM `006_delve_tr.gba`):
+  - M2-a retroceder: `--frames 260 --input "60:a;110:left;130:up;150:up;170:up;185:down" --check
+    "test_trap_dodges.32==1,test_hp.32==30"`; quedarse: sin `185:down`, `test_trap_hits.32==1,test_hp.32==22`;
+    aviso: `--check-at "192:test_trap_shown.32==1"` (las agujas caen en el f 193).
+  - M2-b: `--frames 270 --input "60:a;110:up;130:up;150:right;165:up;180:up;195:up;212:down;232:up;246:a"
+    --check "test_crits.32==1,test_mimic_unwarned.32==0,test_hp.32==30"`; respiración a d = 2 en el f 194 de
+    `--input "60:a;110:up;130:up;150:right;165:up"`. CLANG: `--input "60:a;110:right;130:up;155:a" --check
+    "test_clangs.32==1"`.
+- Provisional: botín del mimic = poción (RARE + 2 pilas de oro cuando existan las tablas M2-e); sin arte de la nube
+  de agujas (borde rojo y `-N`, o `MISS` sobre el cofre).

@@ -286,6 +286,9 @@ namespace dl
         cd.m.missile_cell = -1;
         cd.m.missile_hit = 0;
         cd.m.nchests = 0;
+        cd.m.trap_timer = 0;
+        cd.m.trap_ent = -1;
+        cd.m.mimics = 0;
 
         for(int c = 0; c < N; ++c)
         {
@@ -309,6 +312,7 @@ namespace dl
                                                  0, -1, 0, 0, 0, 0 };
                     cd.mon_at[c] = int16_t(cd.nmons);
                     ++cd.nmons;
+                    cd.m.mimics += kind == MON_MIMIC ? 1 : 0;
                 }
             }
 
@@ -473,6 +477,7 @@ namespace dl
         p.busy = p.busy > 0 ? p.busy - 1 : 0;
 
         _magic_update(b_pressed, select_pressed);
+        _trap_update();
 
         if(a_pressed)
         {
@@ -538,6 +543,11 @@ namespace dl
 
             if(m.state == MS_IDLE)
             {
+                if(m.kind == MON_MIMIC)
+                {
+                    _wake_mimic(m);     // MAGIA 2.1: a blow wakes it (the warning still comes first)
+                }
+
                 m.state = MS_CHASE;
             }
 
@@ -553,6 +563,17 @@ namespace dl
 
         // barrels and crates break (DISENO.md 6b): barrel 1 hit, crate 2
         int e = _ent_of_cell[f];
+
+        if(e >= 0 && _lv->ents[e].type == E_FURN && _lv->ents[e].c == FURN_CHEST && ! (_lv->ents[e].a & chest_opened))
+        {
+            // MAGIA 2.1: a real chest only rings (a mimic is a monster: the branch above wakes it)
+            p.reload = 0;
+            ++p.attacks;
+            ++cd.m.clangs;
+            _post(EV_CLANG, e, 0);
+            sfx(1.8, 0.6);
+            return;
+        }
 
         if(e >= 0 && _lv->ents[e].type == E_FURN && (_lv->ents[e].c == FURN_BARREL || _lv->ents[e].c == FURN_CRATE))
         {
@@ -587,7 +608,7 @@ namespace dl
         {
             monster& m = cd.mons[i];
 
-            if(m.state == MS_IDLE && bn::abs((m.cell & (W - 1)) - px) + bn::abs((m.cell >> 5) - py) <= radius)
+            if(m.state == MS_IDLE && m.kind != MON_MIMIC && bn::abs((m.cell & (W - 1)) - px) + bn::abs((m.cell >> 5) - py) <= radius)
             {
                 m.state = MS_CHASE;
             }
@@ -611,7 +632,7 @@ namespace dl
             return;
 
         case MS_IDLE:
-            if(((_frame + index) & 7) == 0 && _sees_player(m))
+            if(m.kind != MON_MIMIC && ((_frame + index) & 7) == 0 && _sees_player(m))
             {
                 m.state = MS_CHASE;
                 m.move_timer = int16_t(ms.move_f / 2);
@@ -670,6 +691,11 @@ namespace dl
             }
 
             return;
+        }
+
+        if(m.kind == MON_MIMIC)
+        {
+            return;     // never moves (MAGIA 2.1) and never falls asleep again
         }
 
         if(m.move_timer > 0)
@@ -750,6 +776,12 @@ namespace dl
         m.strike = strike_frames;
         m.attack_cd = int16_t(mon_table[m.kind].recover_f);
         _wake_near(hearing_cells);
+
+        if(m.kind == MON_MIMIC)
+        {
+            ++cd.m.mimic_bites;
+            cd.m.mimic_unwarned += m.warn_len < mon_table[MON_MIMIC].warn_f ? 1 : 0;
+        }
 
         if(_cell != m.target)
         {

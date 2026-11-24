@@ -79,8 +79,20 @@ namespace dl
         int16_t chest_ent[max_chests] = {};
         uint8_t chest_item[max_chests] = {};
         int nchests = 0;
+        // G-40 M2-a trapped chest (MAGIA 2.1): hiss and shaking lid for trap_warn_f, then needles on trap_cell
+        int trap_timer = 0;             // frames left of the warning (0 = none)
+        int trap_ent = -1;
+        int trap_cell = -1;
+        int trap_index = -1;            // chest slot (its item comes out after the needles)
+        // stats for tests (R5 / MAGIA 7)
+        int trap_hits = 0;
+        int trap_dodges = 0;
+        int clangs = 0;
+        int mimic_bites = 0;
+        int mimic_unwarned = 0;         // bites with less than mimic warn_f of warning (must stay 0)
+        int mimics = 0;                 // mimics on this floor
     };
-    enum mon_kind : uint8_t { MON_RAT, MON_SLIME, MON_SKELETON, MON_KIND_COUNT };
+    enum mon_kind : uint8_t { MON_RAT, MON_SLIME, MON_SKELETON, MON_MIMIC, MON_KIND_COUNT };
     enum mon_state : uint8_t { MS_IDLE, MS_CHASE, MS_WARN, MS_DYING };
 
     struct mon_stats
@@ -94,7 +106,12 @@ namespace dl
         { "RAT", 6, 0, 3, 30, 24, 70, 3, 20, ITEM_BREAD },
         { "SLIME", 16, 0, 4, 60, 36, 80, 5, 30, ITEM_POTION },
         { "SKELETON", 20, 1, 6, 30, 30, 90, 10, 25, ITEM_SWORD },
+        // G-40 M2-b (MAGIA 2.1): never moves, sleeps as a chest until touched. Loot: PROVISIONAL a potion until
+        // the rarity tables (M2-e) give its guaranteed RARE + 2 gold piles
+        { "MIMIC", 30, 1, 8, 30000, 30, 80, 20, 100, ITEM_POTION },
     };
+
+    constexpr int trap_warn_f = 24;         // MAGIA 2.1: hiss + shaking lid, then the needles
 
     struct weapon_stats
     {
@@ -167,6 +184,7 @@ namespace dl
         EV_LEVEL_UP,
         EV_PLAYER_DEAD,
         EV_PICKUP,          // value = item_id
+        EV_CLANG,           // ent: A on a real chest (MAGIA 2.1: nothing happens)
     };
 
     struct event
@@ -187,6 +205,7 @@ namespace dl
     // chest state bits in entity::a of an E_FURN FURN_CHEST (the low bits are the drawing orientation)
     constexpr uint8_t chest_locked = 0x10;
     constexpr uint8_t chest_opened = 0x20;
+    constexpr uint8_t chest_trapped = 0x40;     // G-40 M2-a (cleared when the trap has fired)
 
     class combat
     {
@@ -212,6 +231,7 @@ namespace dl
         [[nodiscard]] int mp_regen_frames() const;
         [[nodiscard]] bool casting() const;
         void open_chest(int ent);               // the player walked against a chest
+        void touch(int cell);                   // the player walked against a monster (wakes a mimic)
         void toggle_ring();                     // pause: wear / take off the Ring of Mana
         void drink_potion();
         static const char* item_name(int item);
@@ -273,6 +293,9 @@ namespace dl
         void _missile_update();
         void _learn(int spell);
         void _setup_chests(bool test_room);
+        void _setup_chest_kinds();              // M2: trapped chests and the mimic (floors 2+ / 3+)
+        void _trap_update();
+        void _wake_mimic(monster& m);
         int _dir_to(int from, int to) const;
     };
 }

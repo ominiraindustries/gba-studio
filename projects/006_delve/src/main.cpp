@@ -36,6 +36,7 @@
 #include "bn_sprite_items_prop_barrel.h"
 #include "bn_sprite_items_prop_bones.h"
 #include "bn_sprite_items_prop_chests.h"
+#include "bn_sprite_items_prop_mimic.h"
 #include "bn_sprite_items_icon_items.h"
 #include "bn_sprite_items_icon_jewels.h"
 #include "bn_sprite_items_prop_crate.h"
@@ -146,6 +147,20 @@ volatile int test_hints;               // G-42: dl::hint_id bits taught (dl_comb
 volatile int test_hint_frame[8];       // G-42: test_mode-frame count when each hint bit was shown
 volatile int test_palette_skips;       // sprites not created because the 16 sprite palettes were full (G-35)
 volatile int test_sprite_palettes_max;
+// G-40 M2-a / M2-b trapped chest and mimic
+volatile int test_trap_hits;
+volatile int test_trap_dodges;
+volatile int test_trap_timer;          // frames left of the trap warning (0 none)
+volatile int test_trap_shown;          // the shaking-lid frame is on screen
+volatile int test_clangs;
+volatile int test_mimic_bites;
+volatile int test_mimic_unwarned;
+volatile int test_mimic_frame;         // prop_mimic frame of the last mimic sprite synced
+volatile int test_mimic_state;         // dl::mon_state of the first mimic (-1 none)
+volatile int test_mimics;
+volatile int test_crits;
+volatile int test_dodges;
+volatile int test_kills;
 
 namespace
 {
@@ -213,6 +228,8 @@ namespace
             return &bn::sprite_items::mon_rat;
         case dl::MON_SLIME:
             return &bn::sprite_items::mon_slime;
+        case dl::MON_MIMIC:
+            return &bn::sprite_items::prop_mimic;    // G-40 M2-b: frame 0 == prop_chests closed
         default:
             return &bn::sprite_items::mon_skeleton;
         }
@@ -258,6 +275,8 @@ namespace
         bn::fixed to_x, to_y, to_s;
         int t;
         bool small = false;     // G-40: 16x16 icon on the floor (scroll, ring)
+        bool mimic = false;     // G-40 M2-b: a monster drawn at the 32 px prop size
+        bool chest = false;     // G-40 M2-a: chest frame follows its trap state
     };
 
     class game
@@ -373,6 +392,7 @@ namespace
 
             process_events();
             sync_monster_sprites();
+            sync_chest_sprites();
             update_monster_fx(heavy);
             _mgfx.update(_combat.magic(), _cell, _dir);
             update_light();
@@ -576,6 +596,9 @@ namespace
             add(E_MONSTER, 11, 16, 0, dl::MON_RAT, 0);
             add(E_MONSTER, 9, 15, 0, dl::MON_SLIME, 0);
             add(E_MONSTER, 13, 15, 0, dl::MON_SLIME, 0);
+            // G-40 M2: a trapped chest (potion) at the west end of the entry row, a mimic at the east end of row 18
+            add(E_FURN, 8, 20, dl::chest_trapped, 0, FURN_CHEST);
+            add(E_MONSTER, 14, 18, 0, dl::MON_MIMIC, 0);
         }
 #endif
 
@@ -896,6 +919,10 @@ namespace
                 {
                     _combat.open_chest(e);      // G-40: walking against a chest opens it (MAGIA 2.1)
                 }
+                else if(_combat.monster_blocks(nb))
+                {
+                    _combat.touch(nb);          // G-40 M2-b: walking against a mimic wakes it
+                }
 
                 bump();
                 return;
@@ -1086,6 +1113,26 @@ namespace
             }
 
             test_chests_locked = locked;
+            test_trap_hits = m.trap_hits;
+            test_trap_dodges = m.trap_dodges;
+            test_trap_timer = m.trap_timer;
+            test_clangs = m.clangs;
+            test_mimic_bites = m.mimic_bites;
+            test_mimic_unwarned = m.mimic_unwarned;
+            test_mimics = m.mimics;
+            test_crits = p.crits;
+            test_dodges = p.dodges;
+            test_kills = p.kills;
+            test_mimic_state = -1;
+
+            for(int i = 0; i < dl_combat_data.nmons; ++i)
+            {
+                if(dl_combat_data.mons[i].kind == dl::MON_MIMIC)
+                {
+                    test_mimic_state = dl_combat_data.mons[i].state;
+                    break;
+                }
+            }
             int redraws = test_redraws;
             _hud.update(_painter, _trans || redraws != _hud_redraws);
             _hud_redraws = redraws;
@@ -1110,6 +1157,11 @@ namespace
 
             if(monster)
             {
+                if(e.b == dl::MON_MIMIC)
+                {
+                    size = dl::geo::object_size;
+                }
+
                 return monster_item(ent);
             }
 
@@ -1151,7 +1203,7 @@ namespace
             }
 
             scale = bn::fixed(geo::object_ref_u) / z;
-            int size = o.monster ? geo::monster_size : o.small ? 16 : geo::object_size;
+            int size = o.monster && ! o.mimic ? geo::monster_size : o.small ? 16 : geo::object_size;
 
             if(vx < 8 || vx > geo::view_w - 8 || scale > 2)
             {
@@ -1187,6 +1239,8 @@ namespace
             object_sprite o{ ent, int8_t(d), int8_t(x), monster, spikes, 1, -1, 1, 0, 0, 1, 0, 0, 1, monster_lerp_frames };
             o.small = size == 16;
             const entity& e = gs.lv.ents[ent];
+            o.mimic = monster && e.b == dl::MON_MIMIC;
+            o.chest = e.type == E_FURN && e.c == FURN_CHEST;
             int frame = spikes ? (_spike_state > 0 ? 1 : 0) :
                         e.type == E_KEY ? dl::ITEM_KEY :
                         e.type == E_ITEM ? (e.b >= dl::ITEM_SCROLL_MISSILE ? 0 : e.b % dl::ITEM_COUNT) : 0;
@@ -1846,7 +1900,10 @@ namespace
             {
                 const object_sprite& o = _objects[i];
 
-                if(o.monster)
+                const dl::monster* mm = o.mimic ? _combat.monster_of_ent(o.ent) : nullptr;
+
+                // a sleeping mimic keeps the plain chest palette, no breathing scale and no halo (MAGIA 2.1)
+                if(o.monster && ! (mm && mm->state == dl::MS_IDLE))
                 {
                     _mfx.apply(o.ent, *monster_item(o.ent), _object_sprites[i], o.band);
                 }
@@ -1988,6 +2045,17 @@ namespace
                     _cfx.gold_flash();
                     break;
 
+                case dl::EV_CLANG:
+                {
+                    bn::fixed x, y;
+
+                    if(object_screen(ev.ent, x, y))
+                    {
+                        _cfx.number("CLANG", x, y);
+                    }
+                    break;
+                }
+
                 case dl::EV_PLAYER_DEAD:
                     _dead_pending = true;
                     break;
@@ -1998,6 +2066,79 @@ namespace
             }
 
             _combat.events.clear();
+        }
+
+        // G-40 M2-b prop_mimic frames: breathe 0-1, wake 2-3, bite 4-5. Asleep it is a closed chest that opens its
+        // lid 1 px for 12 f every 120 f, seen only at d <= 2 (3 with Light); awake: teeth, a white blink while the
+        // 30 f warning runs, the bite on the strike
+        int mimic_frame(const dl::monster& m, const object_sprite& o)
+        {
+            switch(m.state)
+            {
+            case dl::MS_IDLE:
+            {
+                int reach = _combat.magic().light > 0 ? 3 : 2;
+                return o.d <= reach && ((_frame + o.ent * 37) % 120) < 12 ? 1 : 0;
+            }
+            case dl::MS_WARN:
+                return 2 + ((m.timer >> 2) & 1);
+            case dl::MS_DYING:
+                return 2;
+            default:
+                return m.strike ? (m.strike > 4 ? 4 : 5) : 2;
+            }
+        }
+
+        // G-40 M2-a chest frames: a trapped one flashes its lock red (frame 4) for 8 f every 60 f at d <= 2 (3 with
+        // Light); once triggered, the lid shakes (frame 5, 1 px jitter) for the 24 f before the needles
+        void sync_chest_sprites()
+        {
+            const dl::magic_state& mg = _combat.magic();
+            int reach = mg.light > 0 ? 3 : 2;
+            int shown = 0;
+
+            for(int i = 0, n = _objects.size(); i < n; ++i)
+            {
+                object_sprite& o = _objects[i];
+
+                if(! o.chest)
+                {
+                    continue;
+                }
+
+                const entity& e = gs.lv.ents[o.ent];
+                int frame = ((e.a & dl::chest_locked) ? 2 : 0) + ((e.a & dl::chest_opened) ? 1 : 0);
+                bn::fixed jitter = 0;
+
+                if(e.a & dl::chest_trapped)
+                {
+                    if(mg.trap_timer > 0 && mg.trap_ent == o.ent)
+                    {
+                        frame = 5;
+                        jitter = (_frame & 2) ? 1 : -1;
+                        shown = 1;
+                    }
+                    else if(o.d <= reach && ((_frame + o.ent * 23) % 60) < 8)
+                    {
+                        frame = 4;
+                    }
+                }
+
+                bn::sprite_ptr& s = _object_sprites[i];
+
+                if(frame != o.frame)
+                {
+                    s.set_tiles(bn::sprite_items::prop_chests.tiles_item(), frame);
+                    o.frame = int8_t(frame);
+                }
+
+                if(o.t >= monster_lerp_frames && s.visible())
+                {
+                    s.set_x(o.to_x + jitter);
+                }
+            }
+
+            test_trap_shown = shown;
         }
 
         // animation frame and scale of every monster sprite: idle 0-1, anticipation 2 (+10 % scale), strike 3,
@@ -2017,7 +2158,13 @@ namespace
                 int frame = ((_frame + o.ent * 13) / 24) & 1;
                 bn::fixed mult = 1;
 
-                if(m)
+                if(m && o.mimic)
+                {
+                    frame = mimic_frame(*m, o);
+                    mult = m->state == dl::MS_DYING ? bn::fixed(m->timer) / 16 : bn::fixed(1);
+                    test_mimic_frame = frame;
+                }
+                else if(m)
                 {
                     if(m->state == dl::MS_DYING)
                     {
