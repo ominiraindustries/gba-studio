@@ -136,6 +136,32 @@ Pruebas (`tests/b2run.py`): `meta` (PHASE=1 compra/devuelve/récords/selección;
 que lo comprado sigue tras reiniciar), `times` (SEED 1-5, Tiempos), `start` con `MAX=1 META=1 FORCE=1` (evolución y
 Moon Lance). Por defecto cada prueba borra el `.sav` de Mesen.
 
+## Bloque 5 (G-56): F2 Grim Graveyard
+
+Se abre al superar F1 (`unlock_stage2`; tras la victoria la siguiente fase queda seleccionada). **DBG**: SELECT en la
+pantalla de elegir fase abre F2 sin superar F1. Todo el código de F1 se reutiliza con datos por fase (`_stage`):
+
+- Suelo/atrezzo con `ground_graveyard_palette` / `props_graveyard_palette`; trozo nuevo "lápidas" (4 `log`, 25 % de
+  los trozos en F2); fundido violeta 0.2 -> 0.45; `music_graveyard`; rótulo "GRIM GRAVEYARD" 2 s.
+- Bestiario §C2 como tipos con paleta (`enemy_def::pal`): ghoul, crow, skeleton, grave walker, ghost, bone archer,
+  wraith, grave brute, bone knight. Sólo las artes de la fase tienen bloque de tiles (`enemy_def::stages`).
+- Comportamientos: RISE (grieta `fx_grave` 60 f a 64-112 px delante de una lápida, máx. 4 abiertas; 1 de 6 en suelo
+  libre; sale inofensivo 20 f), SHOOT (72-96 px, destello blanco 24 f, flecha 1.2 px/f; máx. 6 tiradores), PHASE
+  (60 f de cada 240 intangible, alfa 50 %), BLINK (sombra que crece 45 f). Élite Haunted (suelta un ghost), máx. 4.
+- Proyectiles enemigos: pool de 12 (`_shots`): flechas, huesos, calaveras (se rompen con chispa, runa o explosión).
+- Línea temporal E3 completa: 0:04 ghouls, 0:30 crows, 2:00 walkers de 2 tumbas, 3:00 ghosts, 3:20 Murder of Crows
+  (2 LINE de 10 en X), 4:00 Grave Ring 12, 6:00 archers, 7:00 Ghost Swarm, 8:00 wraiths, 9:00 brute, 9:20 Bone Ring
+  20, 11:00 knight, 12:00 Murder x2 + Grave Ring, 13:00 Ghost Swarm + Elite Pair, 14:00 Stampede (knights/brutes).
+- Jefes E5.2 (avisos >= 30 f): Bone Colossus (abanico de huesos tras 30 f de destello; < 50 % derrumbe 90 f con 6
+  huesos en anillo; < 25 % 5 huesos), Banshee (lamento 45 f con 4 "!" -> onda 0-96 px; < 60 % intangible 3 s de 8 y
+  4 ghosts; < 30 % teletransporte al borde con marca 45 f), The Lich (calaveras dirigidas tras 30 f; < 66 % alza 4
+  walkers; < 33 % campo de muerte 0.5 y teletransporte cada 6 s con humo 40 f). Lich = jefe final: Hex Moon a 3:00,
+  STAGE CLEAR y resumen como en F1.
+- Paletas (16): un tipo nuevo sólo entra si queda una paleta libre; la élite sólo se tiñe si quedan 2; las muertes de
+  variantes usan la paleta del tipo (`test_palette_refusals`).
+
+Pruebas: `STAGE=2` en `tests/b2run.py` (`START_AT=-1` = desde 0:00). Ver tabla de resultados en la nota de G-56.
+
 ## Provisionales
 
 - Brotes del muro de zarzas: las mismas zarzas parpadeando (no hay arte de brote). Separación de 75 f entre lobos.

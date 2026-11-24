@@ -25,6 +25,7 @@
 #include "common_variable_8x8_sprite_font.h"
 
 #include "hb_art.h"
+#include "hb_config.h"
 #include "hb_save.h"
 
 extern volatile int test_mode;
@@ -392,14 +393,21 @@ namespace
         }
     }
 
-    // ---- Stage select (§R0): 3 stage cards, L/R picks the character, A starts. Stages 2-3 "COMING SOON".
+    // Stage 2 opens when stage 1 is cleared (E3); stage 3 is block 7.
+    [[nodiscard]] bool stage_open(int stage)
+    {
+        return stage == 0 || (stage == 1 && (save().unlock_bits & unlock_stage2));
+    }
+
+    // ---- Stage select (§R0): 3 stage cards, L/R picks the character, A starts. Stage 3 "COMING SOON".
+    // DBG (debug_menu): SELECT opens stage 2 without clearing stage 1.
     bool stage_select(run_setup& setup)
     {
         test_screen = 3;
         screen sc;
         bn::vector<bn::sprite_ptr, 3> cards;
         bn::optional<bn::sprite_ptr> wizard;
-        int stage = 0;
+        int stage = stage_open(save().last_stage) ? int(save().last_stage) : 0;
         int character = character_available(save().character) ? int(save().character) : int(char_wendel);
         bool redraw = true;
 
@@ -415,7 +423,7 @@ namespace
                 for(int s = 0; s < stage_count; ++s)
                 {
                     int x = -76 + s * 76;
-                    bool open = s == 0;
+                    bool open = stage_open(s);
                     bn::sprite_ptr card = bn::sprite_items::stage_cards.create_sprite(x, -14 - (s == stage ? 4 : 0),
                                                                                       open ? s : 3);
                     cards.push_back(bn::move(card));
@@ -425,9 +433,9 @@ namespace
                 sc.text(-76 + stage * 76, -50, ">", true, true);
                 sc.text(0, 26, names[stage], true, true);
 
-                if(stage == 0)
+                if(stage_open(stage))
                 {
-                    const stage_record& r = save().records[0];
+                    const stage_record& r = save().records[stage];
                     bn::string<32> line("Best ");
                     append_time(line, r.best_time_s);
                     line.append("  CLEAR x");
@@ -436,7 +444,7 @@ namespace
                 }
                 else
                 {
-                    sc.text(0, 37, "COMING SOON", false, true);
+                    sc.text(0, 37, stage == 1 ? "CLEAR GLOAM MEADOW" : "COMING SOON", false, true);
                 }
 
                 bn::string<32> who("L/R: ");
@@ -469,6 +477,13 @@ namespace
             if(bn::keypad::b_pressed())
             {
                 return false;
+            }
+
+            if(debug_menu && bn::keypad::select_pressed())
+            {
+                save().unlock_bits |= unlock_stage2;
+                play_sfx(bn::sound_items::sfx_menu_move);
+                redraw = true;
             }
 
             if(bn::keypad::left_pressed() && stage > 0)
@@ -512,7 +527,7 @@ namespace
             }
             else if(bn::keypad::a_pressed())
             {
-                if(stage != 0)
+                if(! stage_open(stage))
                 {
                     play_sfx(bn::sound_items::sfx_error);
                     continue;

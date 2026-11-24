@@ -64,6 +64,22 @@
 #include "bn_sprite_palette_items_text_ink.h"
 #include "bn_sprite_palette_items_text_gold.h"
 #include "bn_sprite_palette_items_text_red.h"
+#include "bn_sprite_items_ghost.h"
+#include "bn_sprite_items_skeleton_big.h"
+#include "bn_sprite_items_bone_colossus.h"
+#include "bn_sprite_items_banshee.h"
+#include "bn_sprite_items_lich.h"
+#include "bn_sprite_items_fx_arrow.h"
+#include "bn_sprite_items_fx_bone.h"
+#include "bn_sprite_items_fx_skull.h"
+#include "bn_sprite_items_fx_grave.h"
+#include "bn_sprite_palette_items_rotten_palette.h"
+#include "bn_sprite_palette_items_crow_palette.h"
+#include "bn_sprite_palette_items_grey_flesh_palette.h"
+#include "bn_sprite_palette_items_red_bone_palette.h"
+#include "bn_sprite_palette_items_violet_palette.h"
+#include "bn_bg_palette_items_ground_graveyard_palette.h"
+#include "bn_bg_palette_items_props_graveyard_palette.h"
 #include "bn_sound_items.h"
 #include "bn_music_items.h"
 
@@ -212,6 +228,38 @@ namespace hb::art
     inline constexpr const bn::sprite_item& fx_seed = bn::sprite_items::fx_seed;     // 8x8, fly 0-1
 
     // ---- Pickups.
+    // Stage 2 Grim Graveyard (DISENO_RUTA block 5, art/LÉEME.md "Bloque 5"): horde arts reused with palettes.
+    constexpr monster_art ghost = { &bn::sprite_items::ghost, { { 0, 4, 8 } }, 1, { 6, 3, 5 }, -2 };
+    constexpr int ghost_fade = 4;
+    constexpr monster_art skeleton_big = { &bn::sprite_items::skeleton_big, { { 0, 6, 8 } }, 1, { 6, 7, 4 }, -6 };
+
+    inline constexpr const bn::sprite_item& bone_colossus = bn::sprite_items::bone_colossus;   // faces right
+    constexpr anim colossus_walk = { 0, 6, 8 };
+    constexpr anim colossus_throw = { 6, 2, 15 };
+    constexpr anim colossus_collapse = { 8, 3, 8 };
+    constexpr anim colossus_death = { 11, 5, 8 };
+    inline constexpr const bn::sprite_item& banshee = bn::sprite_items::banshee;
+    constexpr anim banshee_float = { 0, 4, 10 };
+    constexpr anim banshee_wail = { 4, 2, 8 };
+    constexpr anim banshee_vanish = { 6, 2, 8 };
+    constexpr anim banshee_death = { 8, 4, 8 };
+    inline constexpr const bn::sprite_item& lich = bn::sprite_items::lich;
+    constexpr anim lich_idle = { 0, 4, 10 };
+    constexpr anim lich_cast = { 4, 3, 10 };
+    constexpr anim lich_teleport = { 7, 3, 8 };
+    constexpr anim lich_death = { 10, 5, 8 };
+    inline constexpr const bn::sprite_item& fx_arrow = bn::sprite_items::fx_arrow;   // 8x8, e 0, ne 1
+    inline constexpr const bn::sprite_item& fx_bone = bn::sprite_items::fx_bone;     // 8x8, spin 0-3
+    inline constexpr const bn::sprite_item& fx_skull = bn::sprite_items::fx_skull;   // 8x8, fly 0-1 (faces right)
+    inline constexpr const bn::sprite_item& fx_grave = bn::sprite_items::fx_grave;   // 16x16, crack 0-2
+    inline constexpr const bn::sprite_palette_item& rotten_palette = bn::sprite_palette_items::rotten_palette;
+    inline constexpr const bn::sprite_palette_item& crow_palette = bn::sprite_palette_items::crow_palette;
+    inline constexpr const bn::sprite_palette_item& grey_flesh_palette = bn::sprite_palette_items::grey_flesh_palette;
+    inline constexpr const bn::sprite_palette_item& red_bone_palette = bn::sprite_palette_items::red_bone_palette;
+    inline constexpr const bn::sprite_palette_item& violet_palette = bn::sprite_palette_items::violet_palette;
+    inline constexpr const bn::bg_palette_item& ground_graveyard_palette = bn::bg_palette_items::ground_graveyard_palette;
+    inline constexpr const bn::bg_palette_item& props_graveyard_palette = bn::bg_palette_items::props_graveyard_palette;
+
     inline constexpr const bn::sprite_item& gems = bn::sprite_items::gems;
     constexpr int gem_blue = 0;      // 2 frames each
     constexpr int gem_green = 2;
@@ -321,6 +369,12 @@ namespace hb::art
     inline constexpr const bn::sound_item& sfx_thorn = bn::sound_items::sfx_thorn;
     inline constexpr const bn::sound_item& sfx_curse_sting = bn::sound_items::sfx_curse_sting;
     // Jingles (music stopped first so they are heard).
+    inline constexpr const bn::sound_item& sfx_wail = bn::sound_items::sfx_wail;
+    inline constexpr const bn::sound_item& sfx_arrow = bn::sound_items::sfx_arrow;
+    inline constexpr const bn::sound_item& sfx_rise = bn::sound_items::sfx_rise;
+    inline constexpr const bn::sound_item& sfx_skull = bn::sound_items::sfx_skull;
+    inline constexpr const bn::sound_item& sfx_teleport = bn::sound_items::sfx_teleport;
+    inline constexpr const bn::sound_item& sfx_bone = bn::sound_items::sfx_bone;
     inline constexpr const bn::sound_item& jingle_victory = bn::sound_items::jingle_victory;
     inline constexpr const bn::sound_item& jingle_defeat = bn::sound_items::jingle_defeat;
     inline constexpr const bn::sound_item& jingle_boss_down = bn::sound_items::jingle_boss_down;
@@ -328,6 +382,7 @@ namespace hb::art
     // ---- Music (looping .it modules), volume 0.5-0.6 so the effects stay audible.
     inline constexpr const bn::music_item& music_title = bn::music_items::music_title;
     inline constexpr const bn::music_item& music_meadow = bn::music_items::music_meadow;
+    inline constexpr const bn::music_item& music_graveyard = bn::music_items::music_graveyard;
     inline constexpr const bn::music_item& music_boss = bn::music_items::music_boss;
     constexpr int music_volume_pct = 55;
 }

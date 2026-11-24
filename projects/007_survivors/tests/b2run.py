@@ -1,4 +1,4 @@
-# Block 2-3 (G-49, G-52) headless checks for 007_survivors with tools/scripts/gbarun.py (no window).
+# Block 2-5 (G-49, G-52, G-56; STAGE=2 opens Grim Graveyard with the DBG SELECT on stage select) headless checks for 007_survivors with tools/scripts/gbarun.py (no window).
 # Usage (repo root): python -I projects/007_survivors/tests/b2run.py CASE OUTDIR
 #   stress   DBG God + Stress 56 (mixed horde) + Max power, 40 s circling; prints test_tiles_used / test_cpu_max
 #   cards    stress + open a level-up (DBG Level up) for the VRAM peak with cards open
@@ -55,7 +55,10 @@ class Inputs:
 def menu(inp, rows):
     inp.press("start", 30)   # title -> main menu
     inp.press("a", 20)       # PLAY -> stage select
-    inp.press("a", 30)       # Gloam Meadow -> run
+    if os.environ.get("STAGE") == "2":
+        inp.press("select", 10)  # DBG: open Grim Graveyard (G-56)
+        inp.press("right", 10)
+    inp.press("a", 30)       # stage -> run
     inp.press("select", 10)
     for r in rows:
         inp.row(*r)
@@ -74,7 +77,8 @@ def main():
     elif case == "start":
         idx = int(os.environ.get("START_AT", "0"))
         rows = [(ROW_GOD,)] if os.environ.get("GOD", "1") == "1" else []
-        rows.append((ROW_START, "a", idx))
+        if idx >= 0:
+            rows.append((ROW_START, "a", idx))   # START_AT=-1: from 0:00
         if os.environ.get("MAX") == "1":
             rows.append((ROW_MAX,))
         if os.environ.get("META") == "1":
@@ -174,7 +178,7 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]
@@ -184,7 +188,7 @@ def main():
     sav = os.path.join(os.path.expanduser("~"), "Documents", "Mesen2", "Saves", "007_survivors.sav")
     if os.environ.get("KEEP_SAVE") != "1" and os.path.exists(sav):
         os.remove(sav)
-    rc = subprocess.call(cmd, stdout=subprocess.DEVNULL)
+    rc = subprocess.call(cmd, stdout=subprocess.DEVNULL if not os.environ.get("VERBOSE") else None)
     import json
     res = json.load(open(os.path.join(out, "result.json")))
     print(" ".join(f"{c['check'].split('>=')[0].replace('.32', '')[5:]}={c['value']}" for c in res["checks"]), "ok" if res["ok"] else "FAIL")
