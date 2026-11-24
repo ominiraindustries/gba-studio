@@ -1,0 +1,57 @@
+{
+  "group_id": "4934afef-cdaa-492e-81bd-b65bf9c671ad",
+  "states": [
+    {
+      "character": {
+        "id": "14119346-7937-4f10-bd3f-cd07aa5363b0",
+        "name": "Idle",
+        "prompt": "giant king slime boss, huge round bouncy translucent cyan-blue jelly blob with white shine highlights, wearing a small golden crown with red jewels, big angry dark eyes and wide grin, dark outline, clean pixel art",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "custom",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-24T15:17:30.476397+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "jump": {
+            "south": [
+              "Idle/animations/jump/south/frame_000.png",
+              "Idle/animations/jump/south/frame_001.png",
+              "Idle/animations/jump/south/frame_002.png",
+              "Idle/animations/jump/south/frame_003.png",
+              "Idle/animations/jump/south/frame_004.png",
+              "Idle/animations/jump/south/frame_005.png",
+              "Idle/animations/jump/south/frame_006.png",
+              "Idle/animations/jump/south/frame_007.png"
+            ]
+          },
+          "idle": {
+            "south": [
+              "Idle/animations/idle/south/frame_000.png",
+              "Idle/animations/idle/south/frame_001.png",
+              "Idle/animations/idle/south/frame_002.png",
+              "Idle/animations/idle/south/frame_003.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-11-24T15:24:06.089570"
+}

@@ -1,0 +1,53 @@
+{
+  "group_id": "7cea183e-21cf-4114-9291-1808fd32495c",
+  "states": [
+    {
+      "character": {
+        "id": "2573c735-5537-4422-8514-2b3065d53617",
+        "name": "Idle",
+        "prompt": "round jelly slime blob enemy, translucent cyan-blue body with white shine highlight, two small dark eyes, dark outline, clean readable pixel art",
+        "size": {
+          "width": 32,
+          "height": 32
+        },
+        "template_id": "custom",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-24T15:14:30.513274+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "hop": {
+            "south": [
+              "Idle/animations/hop/south/frame_000.png",
+              "Idle/animations/hop/south/frame_001.png",
+              "Idle/animations/hop/south/frame_002.png",
+              "Idle/animations/hop/south/frame_003.png"
+            ]
+          },
+          "death": {
+            "south": [
+              "Idle/animations/death/south/frame_000.png",
+              "Idle/animations/death/south/frame_001.png",
+              "Idle/animations/death/south/frame_002.png",
+              "Idle/animations/death/south/frame_003.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-11-24T15:22:37.784926"
+}
