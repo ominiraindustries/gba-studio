@@ -17,6 +17,8 @@ int main()
     {
         hb::run_setup setup;
         hb::main_menu(setup);
+        fx.screen_shake = ! (hb::save().fx_bits & hb::option_no_shake);   // OPTIONS (G-55.2 defaults)
+        fx.level_flash = ! (hb::save().fx_bits & hb::option_no_flash);
 
         while(true)
         {

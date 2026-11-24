@@ -106,6 +106,7 @@ volatile int test_curse_elites;        // most elites alive during a cursed wave
 volatile int test_level_at_600;      // level when the clock reaches 10:00 (Tiempos test)
 volatile int test_evolved;           // G-55: evolution bits (1 Starfall, 2 Blizzard, 4 Ward of Ages)
 volatile int test_meta_gold;         // gold banked by the last finished run
+volatile int test_pending;            // pending level ups + free upgrades (DBG Bot C check)
 volatile int test_new_unlocks;       // unlock bits gained by the last finished run
 volatile int test_lance_hits;
 volatile int test_tiles_menu;         // peak with a menu open (cards, pause, summary)
@@ -520,7 +521,7 @@ namespace
     // §7, DISENO_CONTENIDO §C2 (stage 1)
     const enemy_def enemy_defs[type_count] = {
         { &art::slime, 6, fixed(0.35), 4, false, kind_hop, 7, 1, 0, 0, false },      // contact 5 -> 4 (§19.1)
-        { &art::bat, 3, fixed(1.1), 4, true, kind_wave, 7, 1, 0, 0, false },
+        { &art::bat, 3, fixed(0.95), 4, true, kind_wave, 7, 1, 0, 0, false },   // 1.1 -> 0.95 (G-55.1)
         { &art::skeleton, 14, fixed(0.55), 6, false, kind_chase, 7, 1, 20, 0, false },   // damage 8 -> 6 (§19.2)
         { &art::big_slime, 30, fixed(0.3), 8, false, kind_hop, 11, 5, 0, 2, true },
         { &art::goblin, 10, fixed(0.85), 6, false, kind_chase, 9, 1, 0, 0, true },
@@ -988,7 +989,7 @@ namespace
                 _cursed_at[act] = _random.get_int(10) < 6 ? at : -1;
             }
 
-            _stage_music().play(fixed(art::music_volume_pct) / 100);
+            _stage_music().play(music_volume(art::music_volume_pct));
             // perf: the Storm Chain sprites are created once, hidden (creating 16 in one frame cost ~60 %).
             for(int k = 0; k < chain_sprites; ++k)
             {
@@ -1227,6 +1228,7 @@ namespace
         int _evolved = 0;           // evolution_bit
         int _evolve_flash = 0;
         bool _meta_done = false;
+        bool _dbg_started = false;   // DBG Start at used: the run credits gold only (no records, stats or unlocks)
         int _meta_earned = 0;
         int _new_best = 0;          // 1 time, 2 kills, 4 level
         uint32_t _new_unlocks = 0;
@@ -1253,6 +1255,13 @@ namespace
         int _blink_cd = 0;
         int _blink_invulnerable = 0;
         bool _blink_hint_done = false;
+        // DBG Bot C (DISENO_RUTA "Revision bloque 4"): reactive kiter that replaces the d-pad, B and A.
+        bool _bot_c = false;
+        fixed_point _bot_home;
+        int _bot_ax = 1;
+        int _bot_ay = 0;
+        int _bot_t = 0;
+        bool _bot_near = false;
         static constexpr int nova_max = 120;   // §19.6 (was 150)   // ~50 s of early play (2 per kill, 1 per gem XP)
         int _nova = 0;
         int _nova_flash = 0;
@@ -1518,7 +1527,7 @@ namespace
 
         void _play(const bn::sound_item& item, fixed volume = 1, fixed speed = 1)
         {
-            if(_sounds_this_frame >= 2)
+            if(_sounds_this_frame >= 2 || ! sfx_on())
             {
                 return;
             }
@@ -1841,6 +1850,7 @@ namespace
                 _open_level_up();
             }
 
+            test_pending = _pending_levels * 100 + _free_upgrades;
             test_time_s = _t / fps;
             test_level = _level;
             test_hp = _player_hp;
@@ -2165,10 +2175,150 @@ namespace
             }
         }
 
+        // DBG Bot C: flee vector = sum of unit(wizard - threat) * 512 / d^2 for threats <= 96 px, wall/thorn repulsion
+        // <= 24 px (sampled with _blocked in 8 directions), plus a 1/8 pull toward an orbit of r 80 around the start
+        // point (around the thorn wall centre, r 40, while the wall stands). Snapped to the nearest of 8 directions.
+        // Returns true if a threat is within 16 px (Blink).
+        bool _bot_steer(int& ax, int& ay)
+        {
+            // Re-decided every 4 frames (a player's reaction time; keeps the bot out of the CPU measurements).
+            if((++_bot_t & 3) != 0)
+            {
+                ax = _bot_ax;
+                ay = _bot_ay;
+                return _bot_near;
+            }
+
+            int px = to_int(_pos.x());
+            int py = to_int(_pos.y());
+            fixed vx = 0;
+            fixed vy = 0;
+            int closest = 96 * 96 + 1;
+
+            auto flee = [&](int tx, int ty, int reach)
+            {
+                int dx = px - tx;
+                int dy = py - ty;
+
+                if(dx < -reach || dx > reach || dy < -reach || dy > reach)
+                {
+                    return;
+                }
+
+                int d2 = dx * dx + dy * dy;
+
+                if(d2 > reach * reach)
+                {
+                    return;
+                }
+
+                closest = bn::min(closest, d2);
+                // unit * 512 / d^2: 2 at 16 px, 0.5 at 32 px, 0.06 at 96 px (with 24 / d the bot fled every horde
+                // beyond weapon range: 62 kills by 1:50 against 191 for the blind bot).
+                int d2c = bn::max(d2, 64);
+                fixed_point away = dx || dy ? unit(dx, dy) : fixed_point(1, 0);
+                fixed w = fixed(512) / d2c;
+                vx += away.x() * w;
+                vy += away.y() * w;
+            };
+
+            for(const enemy& e : _enemies)
+            {
+                flee(to_int(e.pos.x()), to_int(e.pos.y()), 96);
+            }
+
+            for(const shot& sh : _shots)
+            {
+                flee(to_int(sh.pos.x()), to_int(sh.pos.y()), 48);
+            }
+
+            if(_boss && _boss_state != 3)
+            {
+                flee(to_int(_boss_pos.x()), to_int(_boss_pos.y()), 96);
+                flee(to_int(_boss_pos.x()), to_int(_boss_pos.y()), 96);   // bosses weigh double
+            }
+
+            constexpr int dirs[8][2] = { { 1, 0 }, { 1, 1 }, { 0, 1 }, { -1, 1 }, { -1, 0 }, { -1, -1 }, { 0, -1 }, { 1, -1 } };
+
+            for(const auto& d : dirs)
+            {
+                for(int r = 8; r <= 24; r += 8)
+                {
+                    if(_blocked(_pos.x() + d[0] * r, _pos.y() + d[1] * r))
+                    {
+                        vx -= fixed(d[0] * 24) / (r * 2);   // closer walls push harder
+                        vy -= fixed(d[1] * 24) / (r * 2);
+                        break;
+                    }
+                }
+            }
+
+            // A player walks over the nearest gem (<= 64 px): pull 3/4 toward it (with less the bot fled from every
+            // gem and was level 4 at 5:20; the blind bot is level 9 at 2:09).
+            int gem_d = 64 * 64;
+            int gem_dx = 0;
+            int gem_dy = 0;
+
+            for(const pickup& g : _pickups)
+            {
+                int dx = to_int(g.pos.x()) - px;
+                int dy = to_int(g.pos.y()) - py;
+
+                if(dx > -64 && dx < 64 && dy > -64 && dy < 64 && dx * dx + dy * dy < gem_d)
+                {
+                    gem_d = dx * dx + dy * dy;
+                    gem_dx = dx;
+                    gem_dy = dy;
+                }
+            }
+
+            if(gem_dx || gem_dy)
+            {
+                fixed_point to = unit(gem_dx, gem_dy);
+                vx += to.x() * 3 / 4;
+                vy += to.y() * 3 / 4;
+            }
+
+            fixed_point home = _thorn_solid() ? _thorn_center : _bot_home;
+            int radius = _thorn_solid() ? 40 : 80;
+            int rx = px - to_int(home.x());
+            int ry = py - to_int(home.y());
+
+            if(rx || ry)
+            {
+                fixed_point out = unit(rx, ry);
+                int r = bn::abs(rx) + bn::abs(ry);   // cheap distance, good enough for a pull
+                fixed radial = r > radius ? fixed(-1) : fixed(1);
+                // Tangent (counter-clockwise) plus a radial term toward the circle, weight 1/8.
+                vx += (-out.y() + out.x() * radial) / 8;
+                vy += (out.x() + out.y() * radial) / 8;
+            }
+            else
+            {
+                vx += fixed(1) / 8;
+            }
+
+            fixed ox = bn::abs(vx);
+            fixed oy = bn::abs(vy);
+
+            if(ox > 0 || oy > 0)
+            {
+                // Nearest of 8 directions: an axis is used if it is at least tan(22.5) of the other.
+                _bot_ax = ox * 1000 >= oy * 414 ? (vx > 0 ? 1 : -1) : 0;
+                _bot_ay = oy * 1000 >= ox * 414 ? (vy > 0 ? 1 : -1) : 0;
+            }
+
+            ax = _bot_ax;
+            ay = _bot_ay;
+            _bot_near = closest <= 16 * 16;
+            return _bot_near;
+        }
+
         void _update_player()
         {
             int ax = int(bn::keypad::right_held()) - int(bn::keypad::left_held());
             int ay = int(bn::keypad::down_held()) - int(bn::keypad::up_held());
+            bool bot_blink = _bot_c && _bot_steer(ax, ay);
             _update_aim();
 
             if(_blink_cd > 0)
@@ -2181,12 +2331,12 @@ namespace
                 --_blink_invulnerable;
             }
 
-            if(bn::keypad::b_pressed())
+            if(bn::keypad::b_pressed() || bot_blink)
             {
                 _try_blink(ax, ay);
             }
 
-            if(bn::keypad::a_pressed() && _nova >= nova_max)
+            if((bn::keypad::a_pressed() || _bot_c) && _nova >= nova_max)
             {
                 _cast_nova();
             }
@@ -6166,7 +6316,7 @@ namespace
                 test_events = test_events | 16;
             }
 
-            art::music_boss.play(fixed(art::music_volume_pct) / 100);
+            art::music_boss.play(music_volume(art::music_volume_pct));
             bn::sprite_ptr b = _world_sprite(_boss_item(), _boss_pos, 0, 8);
             b.set_mosaic_enabled(_fx.boss_mosaic);
             _boss = bn::move(b);
@@ -6264,7 +6414,7 @@ namespace
 
             if(_music_resume_t > 0 && --_music_resume_t == 0)
             {
-                _stage_music().play(fixed(art::music_volume_pct) / 100);
+                _stage_music().play(music_volume(art::music_volume_pct));
             }
 
             if(! _boss)
@@ -7199,7 +7349,7 @@ namespace
 
                 if(_thorn_t >= thorn_grown && _thorn_hurt_cd == 0 && _outside_wall(px, py, 3))
                 {
-                    // Touching the thorns: 6 damage every 30 f and an 8 px push toward the centre.
+                    // Touching the thorns (DISENO_RUTA "Revision bloque 4"): 4 damage every 60 f, 12 px push inward.
                     if(test_thorn_first_hurt < 0 || _thorn_t < test_thorn_first_hurt)
                     {
                         test_thorn_first_hurt = _thorn_t;
@@ -7207,14 +7357,14 @@ namespace
 
                     ++_thorn_hits_wall;
                     test_thorn_hits_max = bn::max(int(test_thorn_hits_max), _thorn_hits_wall);
-                    _hurt_player(6);
-                    _thorn_hurt_cd = 30;
+                    _hurt_player(4);
+                    _thorn_hurt_cd = 60;
                     int dx = to_int(_thorn_center.x()) - px;
                     int dy = to_int(_thorn_center.y()) - py;
 
                     if(dx || dy)
                     {
-                        fixed_point np = _pos + unit(dx, dy) * 8;
+                        fixed_point np = _pos + unit(dx, dy) * 12;
 
                         if(! _blocked(np.x(), np.y()))
                         {
@@ -8308,8 +8458,13 @@ namespace
                 _play(art::sfx_menu, fixed(0.5));
                 _draw_cards();
             }
-            else if(bn::keypad::a_pressed())
+            else if(bn::keypad::a_pressed() || (_bot_c && _cards_shown))
             {
+                if(_bot_c)
+                {
+                    _cursor = bn::min(1, _card_count - 1);   // DBG Bot C picks the 2nd card
+                }
+
                 if(_mode == game_mode::shrine_pick)
                 {
                     _apply_blessing(_card_ids[_cursor]);
@@ -8495,7 +8650,7 @@ namespace
         }
 
         static constexpr int fx_rows = 11;
-        static constexpr int debug_rows = 6;
+        static constexpr int debug_rows = 7;
         static constexpr int dbg_start_count = 14;
         static constexpr int dbg_force_count = 13;
 
@@ -8527,6 +8682,7 @@ namespace
         // (about 2 levels per minute: Lv 20 at 10:00, DISENO_RUTA block 2). Past 5:00 the Slime King counts as killed.
         void _dbg_start_at(int second)
         {
+            _dbg_started = true;
             // Review block 2: the tutorial hints count as seen.
             _blink_hint_done = true;
             _gem_hint_done = true;
@@ -8737,7 +8893,7 @@ namespace
             constexpr const char* names[fx_rows + debug_rows] = {
                 "Hit flash", "Knockback", "Damage numbers", "Screen shake", "Death poof", "Gem trail",
                 "Level-up flash", "Dusk", "Frost translucent", "Boss mosaic", "Shadows",
-                "DBG God mode", "DBG Max power", "DBG Start at", "DBG Stress 56", "DBG Force", "DBG Meta preset"
+                "DBG God mode", "DBG Max power", "DBG Start at", "DBG Stress 56", "DBG Force", "DBG Meta preset", "DBG Bot C"
             };
 
             _menu.clear();
@@ -8765,6 +8921,10 @@ namespace
                 {
                     state = _stress ? "ON" : "OFF";
                 }
+                else if(r == fx_rows + 6)
+                {
+                    state = _bot_c ? "ON" : "OFF";
+                }
                 else if(r == fx_rows + 2)
                 {
                     state = _dbg_start_name(_dbg_start);
@@ -8778,7 +8938,7 @@ namespace
                     state = "A";
                 }
 
-                _text.generate(60, -62 + r * 9, state, _menu);
+                _text.generate(60, -64 + r * 8, state, _menu);
             }
         }
 
@@ -8857,6 +9017,11 @@ namespace
                 {
                     _stress = ! _stress;
                 }
+                else if(_cursor == fx_rows + 6)
+                {
+                    _bot_c = ! _bot_c;
+                    _bot_home = _pos;
+                }
 
                 _play(art::sfx_menu, fixed(0.5));
                 _draw_fx_menu();
@@ -8899,6 +9064,16 @@ namespace
             test_meta_gold = earned;
             d.gold += uint32_t(earned);
             d.gold_total += uint32_t(earned);
+
+            if(_dbg_started)
+            {
+                // DISENO_RUTA "Revision bloque 4" #10: a Start at run must not write records or unlock anything.
+                _new_best = 0;
+                _new_unlocks = 0;
+                test_new_unlocks = 0;
+                write_save();
+                return;
+            }
 
             stage_record& r = d.records[_setup.stage];
             _new_best = (s > r.best_time_s ? 1 : 0) | (_kills > r.best_kills ? 2 : 0) | (_level > r.best_level ? 4 : 0);

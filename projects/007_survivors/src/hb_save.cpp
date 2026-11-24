@@ -102,6 +102,12 @@ bool load_save()
     return false;
 }
 
+void erase_save()
+{
+    reset(g_save);
+    write_save();
+}
+
 void write_save()
 {
     g_save.version = save_version;

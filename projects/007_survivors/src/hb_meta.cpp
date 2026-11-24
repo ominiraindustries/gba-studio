@@ -29,7 +29,7 @@
 #include "hb_save.h"
 
 extern volatile int test_mode;
-volatile int test_screen;   // 1 title, 2 menu, 3 stage select, 4 shop, 5 records (headless tests)
+volatile int test_screen;   // 1 title, 2 menu, 3 stage select, 4 shop, 5 records, 6 options (headless tests)
 
 namespace hb
 {
@@ -39,6 +39,24 @@ namespace
     constexpr int stage_count = 3;
     constexpr int shop_rows = shop_count + 2;   // + Cinda, Morrow
     constexpr int character_prices[char_count] = { 0, 300, 600 };
+
+    // Block 4 review: grey text for prices the gold does not reach (font fill index 14, outline 12) and a dark
+    // silhouette for locked characters (every opaque index the same dark blue).
+    constexpr bn::color text_grey_colors[16] = {
+        bn::color(0, 31, 0), bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(0, 0, 0),
+        bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(0, 0, 0),
+        bn::color(0, 0, 0), bn::color(0, 0, 0), bn::color(1, 1, 2), bn::color(0, 0, 0), bn::color(13, 13, 15),
+        bn::color(0, 0, 0)
+    };
+    constexpr bn::sprite_palette_item text_grey(text_grey_colors, bn::bpp_mode::BPP_4);
+
+    constexpr bn::color silhouette_colors[16] = {
+        bn::color(0, 31, 0), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6),
+        bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6),
+        bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6), bn::color(3, 3, 6),
+        bn::color(3, 3, 6)
+    };
+    constexpr bn::sprite_palette_item silhouette(silhouette_colors, bn::bpp_mode::BPP_4);
 
     struct screen
     {
@@ -55,6 +73,13 @@ namespace
         void clear()
         {
             texts.clear();
+        }
+
+        void grey_text(int x, int y, const bn::string_view& s)
+        {
+            small.set_left_alignment();
+            small.set_palette_item(text_grey);
+            small.generate(x, y, s, texts);
         }
 
         void text(int x, int y, const bn::string_view& s, bool gold = false, bool center = false)
@@ -82,14 +107,17 @@ namespace
 
     void play_sfx(const bn::sound_item& item)
     {
-        item.play(bn::fixed(0.6));
+        if(sfx_on())
+        {
+            item.play(bn::fixed(0.6));
+        }
     }
 
     void play_music(const bn::music_item& item)
     {
         if(! bn::music::playing() || bn::music::playing_item() != item)
         {
-            item.play(bn::fixed(art::music_volume_pct) / 100);
+            item.play(music_volume(art::music_volume_pct));
         }
     }
 
@@ -164,11 +192,22 @@ namespace
             else
             {
                 int character = row - shop_count + 1;
-                bn::sprite_ptr icon = bn::sprite_items::wizard.create_sprite(-100, y - 4, 0);
-                icon.set_palette(character == char_cinda ? bn::sprite_palette_items::wizard_cinda_palette :
-                                                           bn::sprite_palette_items::wizard_morrow_palette);
+                // Portrait in the icon column (block 4 review): half size so it stays inside its 17 px row.
+                bn::sprite_ptr icon = bn::sprite_items::wizard.create_sprite(-100, y - 2, 0);
+                icon.set_scale(0.5);
+
+                if(row_locked(row))
+                {
+                    icon.set_palette(silhouette);   // locked: dark silhouette + name + condition
+                }
+                else
+                {
+                    icon.set_palette(character == char_cinda ? bn::sprite_palette_items::wizard_cinda_palette :
+                                                               bn::sprite_palette_items::wizard_morrow_palette);
+                }
+
                 icons.push_back(bn::move(icon));
-                name = row_locked(row) ? "?" : character_name(character);
+                name = character_name(character);
                 rank = character_available(character) ? "OWNED" : "";
             }
 
@@ -191,12 +230,38 @@ namespace
                 p.append(" G");
             }
 
-            sc.text(30, y, p, sel && price >= 0 && price <= int(save().gold));
+            if(price > int(save().gold) || row_locked(row))
+            {
+                sc.grey_text(30, y, p);   // not affordable (or locked): grey
+            }
+            else
+            {
+                sc.text(30, y, p, sel && price >= 0);
+            }
 
             if(sel)
             {
                 sc.text(-118, y, ">", true);
             }
+        }
+
+        // More rows above / below the page: the gold HUD edge arrow (north frame; flipped for down), right edge.
+        if(top > 0)
+        {
+            icons.push_back(art::edge_arrow.create_sprite(110, -40, art::arrow_north));
+        }
+
+        if(top + 6 < shop_rows)
+        {
+            bn::sprite_ptr down = art::edge_arrow.create_sprite(110, 45, art::arrow_north);
+            down.set_vertical_flip(true);
+            icons.push_back(bn::move(down));
+        }
+
+        if(! confirm && shop_spent(save()) == 0 && ! (save().unlock_bits & (unlock_cinda | unlock_morrow)) &&
+           int(save().gold) >= 30)
+        {
+            sc.text(0, -51, "Gold buys permanent upgrades", false, true);   // R6: one line, at the moment
         }
 
         if(confirm)
@@ -213,6 +278,10 @@ namespace
             if(cursor < shop_count)
             {
                 info = shop_defs[cursor].effect;
+            }
+            else if(row_locked(cursor))
+            {
+                info = cursor == shop_count ? "Cinda - Clear stage 1" : "Morrow - Clear stage 2";
             }
             else if(cursor == shop_count)
             {
@@ -402,6 +471,141 @@ namespace
     }
 
     // Stage 2 opens when stage 1 is cleared (E3); stage 3 is block 7.
+    // ---- OPTIONS (DISENO_RUTA block 4 #8, G-55.2 defaults): music, SFX, screen shake, flash, erase save (hold A 2 s).
+    void draw_options(screen& sc, int cursor, int hold)
+    {
+        sc.clear();
+        sc.title("OPTIONS");
+        const save_data& d = save();
+        const char* names[5] = { "Music", "Sound FX", "Screen shake", "Flash", "Erase save" };
+        bool values[4] = { d.music_vol != 0, d.sfx_vol != 0, ! (d.fx_bits & option_no_shake),
+                           ! (d.fx_bits & option_no_flash) };
+
+        for(int r = 0; r < 5; ++r)
+        {
+            int y = -36 + r * 16;
+            bool sel = r == cursor;
+            sc.text(-80, y, names[r], sel);
+
+            if(r < 4)
+            {
+                sc.text(40, y, values[r] ? "ON" : "OFF", sel);
+            }
+
+            if(sel)
+            {
+                sc.text(-96, y, ">", true);
+            }
+        }
+
+        if(cursor == 4)
+        {
+            if(hold > 0)
+            {
+                bn::string<32> bar("ERASING ");
+
+                for(int k = 0; k < 10; ++k)
+                {
+                    bar.push_back(k < hold * 10 / 120 ? '#' : '.');
+                }
+
+                sc.text(0, 52, bar, true, true);
+            }
+            else
+            {
+                sc.text(0, 52, "Hold A for 2 s: erases all progress", false, true);
+            }
+        }
+
+        sc.text(0, 68, "A: CHANGE  B: BACK", false, true);
+    }
+
+    void options_screen()
+    {
+        test_screen = 6;
+        screen sc;
+        int cursor = 0;
+        int hold = 0;
+        draw_options(sc, cursor, hold);
+
+        while(true)
+        {
+            bn::core::update();
+            save_data& d = save();
+            bool redraw = false;
+
+            if(cursor == 4 && bn::keypad::a_held())
+            {
+                ++hold;
+
+                if(hold % 12 == 0)
+                {
+                    redraw = true;
+                }
+
+                if(hold >= 120)
+                {
+                    erase_save();
+                    play_sfx(bn::sound_items::sfx_refund);
+                    hold = 0;
+                    redraw = true;
+                }
+            }
+            else if(hold > 0)
+            {
+                hold = 0;   // released before 2 s: nothing happens
+                redraw = true;
+            }
+
+            if(bn::keypad::b_pressed())
+            {
+                return;
+            }
+            else if(bn::keypad::up_pressed() && cursor > 0)
+            {
+                --cursor;
+                play_sfx(bn::sound_items::sfx_menu_move);
+                redraw = true;
+            }
+            else if(bn::keypad::down_pressed() && cursor < 4)
+            {
+                ++cursor;
+                play_sfx(bn::sound_items::sfx_menu_move);
+                redraw = true;
+            }
+            else if(cursor < 4 && (bn::keypad::a_pressed() || bn::keypad::left_pressed() ||
+                                   bn::keypad::right_pressed()))
+            {
+                if(cursor == 0)
+                {
+                    d.music_vol = d.music_vol ? 0 : 100;
+
+                    if(bn::music::playing())
+                    {
+                        bn::music::set_volume(music_volume(art::music_volume_pct));
+                    }
+                }
+                else if(cursor == 1)
+                {
+                    d.sfx_vol = d.sfx_vol ? 0 : 100;
+                }
+                else
+                {
+                    d.fx_bits ^= cursor == 2 ? option_no_shake : option_no_flash;
+                }
+
+                write_save();
+                play_sfx(bn::sound_items::sfx_menu_move);
+                redraw = true;
+            }
+
+            if(redraw)
+            {
+                draw_options(sc, cursor, hold);
+            }
+        }
+    }
+
     [[nodiscard]] bool stage_open(int stage)
     {
         return stage == 0 || (stage == 1 && (save().unlock_bits & unlock_stage2));
@@ -468,7 +672,7 @@ namespace
 
                 if(! wizard)
                 {
-                    wizard = bn::sprite_items::wizard.create_sprite(-84, 50, 0);
+                    wizard = bn::sprite_items::wizard.create_sprite(-86, 58, 0);   // >= 4 px below the "Best" line
                 }
 
                 if(character == char_cinda)
@@ -552,7 +756,7 @@ namespace
                 save().last_stage = uint8_t(stage);
                 setup.character = character;
                 setup.stage = stage;
-                art::sfx_card.play(bn::fixed(0.6));
+                play_sfx(art::sfx_card);
                 bn::core::update();   // consume A
                 return true;
             }
@@ -596,7 +800,7 @@ unsigned title_screen()
         bn::core::update();
     }
 
-    art::sfx_card.play(bn::fixed(0.6));
+    play_sfx(art::sfx_card);
     bn::core::update();
     return frames;
 }
@@ -605,7 +809,7 @@ bool main_menu(run_setup& setup)
 {
     bn::optional<bn::regular_bg_ptr> title_bg;
     bn::vector<bn::sprite_ptr, 6> logo;
-    constexpr const char* items[3] = { "PLAY", "SHOP", "RECORDS" };
+    constexpr const char* items[4] = { "PLAY", "SHOP", "RECORDS", "OPTIONS" };
     int cursor = 0;
 
     while(true)
@@ -634,11 +838,11 @@ bool main_menu(run_setup& setup)
                 redraw = false;
                 sc.clear();
 
-                for(int i = 0; i < 3; ++i)
+                for(int i = 0; i < 4; ++i)
                 {
                     bn::string<16> line(i == cursor ? "> " : "");
                     line.append(items[i]);
-                    sc.text(0, 24 + i * 14, line, i == cursor, true);
+                    sc.text(0, 22 + i * 12, line, i == cursor, true);
                 }
 
                 gold_line(sc, 70);
@@ -652,7 +856,7 @@ bool main_menu(run_setup& setup)
                 play_sfx(bn::sound_items::sfx_menu_move);
                 redraw = true;
             }
-            else if(bn::keypad::down_pressed() && cursor < 2)
+            else if(bn::keypad::down_pressed() && cursor < 3)
             {
                 ++cursor;
                 play_sfx(bn::sound_items::sfx_menu_move);
@@ -661,7 +865,7 @@ bool main_menu(run_setup& setup)
             else if(bn::keypad::a_pressed() || bn::keypad::start_pressed())
             {
                 chosen = cursor;
-                art::sfx_card.play(bn::fixed(0.6));
+                play_sfx(art::sfx_card);
             }
         }
 
@@ -681,9 +885,13 @@ bool main_menu(run_setup& setup)
         {
             shop_screen();
         }
-        else
+        else if(chosen == 2)
         {
             records_screen();
+        }
+        else
+        {
+            options_screen();
         }
 
         bn::core::update();

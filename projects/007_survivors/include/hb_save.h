@@ -5,6 +5,7 @@
 // versioned struct; written at the end of a run, after buying / refunding and never in the middle of a run.
 
 #include "bn_common.h"
+#include "bn_fixed.h"
 
 namespace hb
 {
@@ -74,7 +75,7 @@ namespace hb
         uint32_t kills_total;
         uint16_t runs;
         uint16_t deaths;
-        uint16_t fx_bits;
+        uint16_t fx_bits;        // OPTIONS: option_bit (0 = defaults, shake and flash ON)
         uint8_t music_vol;
         uint8_t sfx_vol;
         uint8_t character;
@@ -83,6 +84,12 @@ namespace hb
     };
 
     constexpr int save_version = 1;
+
+    enum option_bit : uint16_t
+    {
+        option_no_shake = 1u << 0,
+        option_no_flash = 1u << 1
+    };
 
     struct shop_def
     {
@@ -102,6 +109,20 @@ namespace hb
     bool load_save();
 
     void write_save();
+
+    // OPTIONS "Erase save": a new save (defaults) written at once.
+    void erase_save();
+
+    // Music volume (0-1) for bn::music_item::play: the art level times the OPTIONS switch.
+    [[nodiscard]] inline bn::fixed music_volume(int art_pct)
+    {
+        return bn::fixed(art_pct * int(save().music_vol) / 100) / 100;
+    }
+
+    [[nodiscard]] inline bool sfx_on()
+    {
+        return save().sfx_vol != 0;
+    }
 
     // Gold spent on the shop ranks bought so far (REFUND gives it all back).
     [[nodiscard]] int shop_spent(const save_data& data);

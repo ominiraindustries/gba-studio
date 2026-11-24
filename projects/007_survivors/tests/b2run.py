@@ -2,6 +2,7 @@
 # Usage (repo root): python -I projects/007_survivors/tests/b2run.py CASE OUTDIR
 #   stress   DBG God + Stress 56 (mixed horde) + Max power, 40 s circling; prints test_tiles_used / test_cpu_max
 #   cards    stress + open a level-up (DBG Level up) for the VRAM peak with cards open
+#   botc     DBG Bot C (reactive kiter in the ROM) for SECONDS, SEED like times (G-55.1)
 #   start    DBG Start at mm:ss (START_AT env, row value index) then profile C kiting for SECONDS
 # The SELECT menu rows: 11 effect toggles, then DBG rows (see _draw_fx_menu in src/hb_game.cpp).
 import os
@@ -12,6 +13,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")
 ROM = os.path.join(ROOT, "projects", "007_survivors", "007_survivors.gba")
 FX_ROWS = 11
 ROW_GOD, ROW_MAX, ROW_START, ROW_STRESS, ROW_FORCE = FX_ROWS, FX_ROWS + 1, FX_ROWS + 2, FX_ROWS + 3, FX_ROWS + 4
+ROW_BOT = FX_ROWS + 6   # DBG Bot C (G-55.1)
 
 
 class Inputs:
@@ -93,6 +95,16 @@ def main():
         inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))
         menu(inp, [])
         inp.kite(seconds * 60)
+    elif case == "botc":
+        # G-55.1: Tiempos with the in-ROM reactive DBG Bot C (no input after the menu; GOD=1 optional, START_AT too).
+        inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))
+        rows = [(ROW_GOD,)] if os.environ.get("GOD") == "1" else []
+        idx = int(os.environ.get("START_AT", "-1"))
+        if idx >= 0:
+            rows.append((ROW_START, "a", idx))
+        rows.append((ROW_BOT,))
+        menu(inp, rows)
+        inp.f += seconds * 60
     elif case == "meta":
         # Block 4: META1 = fresh save, Meta preset, quit, shop (Might x5, refund, Might x1, Cinda), records,
         # stage select with Cinda. META2 (KEEP_SAVE=1) = boot again and open the shop: purchases kept.
@@ -134,6 +146,75 @@ def main():
             marks.append(inp.f)
             inp.press("right", 20)
             marks.append(inp.f)
+        elif os.environ.get("PHASE") == "4":
+            # G-55.3: Start at 7:00 then quit (no record / unlock), shop with little gold (grey prices, hint, locked
+            # characters, arrows), stage select "No runs yet", then a plain run with Meta preset x4 (5-digit gold),
+            # main menu gold and stage select with "Best".
+            inp.press("a", 20)
+            inp.press("a", 60)                   # run
+            inp.press("select", 10)
+            inp.row(ROW_START, "a", 2)           # Start at 7:00
+            inp.press("select", 20)
+            inp.press("start", 20)
+            inp.press("down", 8)
+            inp.press("a", 60)                   # quit -> menu
+            marks.append(inp.f)                  # A: menu, small gold
+            inp.press("down", 10)
+            inp.press("a", 30)                   # SHOP
+            marks.append(inp.f)                  # B: shop top
+            for _ in range(12):
+                inp.press("down", 6)
+            inp.f += 10
+            marks.append(inp.f)                  # C: shop bottom (Morrow locked, up arrow)
+            inp.press("up", 6)
+            marks.append(inp.f)                  # D: Cinda locked
+            inp.press("b", 30)
+            inp.press("up", 10)
+            inp.press("a", 30)                   # stage select
+            marks.append(inp.f)                  # E: No runs yet
+            inp.press("a", 60)                   # plain run
+            inp.press("select", 10)
+            for _ in range(4):
+                inp.row(ROW_FORCE + 1)           # Meta preset x4
+            inp.press("select", 20)
+            inp.parts.append(f"{inp.f}-{inp.f + 300}:right")
+            inp.f += 310
+            inp.press("start", 20)
+            inp.press("down", 8)
+            inp.press("a", 60)
+            marks.append(inp.f)                  # F: menu, 5-digit gold
+            inp.press("a", 30)
+            marks.append(inp.f)                  # G: stage select with Best
+        elif os.environ.get("PHASE") == "5":
+            # Shop arrows (top / bottom page), then OPTIONS: turn Music and Flash off, leave, reopen (kept), then
+            # hold A 2 s on Erase save (defaults back).
+            inp.press("down", 10)
+            inp.press("a", 30)
+            marks.append(inp.f)
+            for _ in range(12):
+                inp.press("down", 6)
+            inp.f += 10
+            marks.append(inp.f)
+            inp.press("b", 30)
+            for _ in range(2):
+                inp.press("down", 8)
+            inp.press("a", 30)                   # OPTIONS
+            marks.append(inp.f)
+            inp.press("a", 10)                   # Music OFF
+            for _ in range(3):
+                inp.press("down", 8)
+            inp.press("a", 10)                   # Flash OFF
+            inp.press("b", 30)
+            inp.press("a", 30)                   # OPTIONS again
+            marks.append(inp.f)
+            for _ in range(4):
+                inp.press("down", 8)
+            inp.parts.append(f"{inp.f}-{inp.f + 60}:a")
+            marks.append(inp.f + 50)             # erasing bar
+            inp.f += 140
+            inp.parts.append(f"{inp.f}-{inp.f + 135}:a")
+            inp.f += 150
+            marks.append(inp.f)                  # erased: all ON
         elif os.environ.get("PHASE") == "3":
             # Reroll: Meta preset, quit, buy Reroll 1, play, wait for a level-up, R.
             inp.press("a", 20)
@@ -178,7 +259,7 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]

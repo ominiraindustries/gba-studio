@@ -22,7 +22,7 @@ namespace hb
     constexpr bn::fixed player_speed = 1;
     constexpr bn::fixed player_accel = bn::fixed(1) / 4;   // 0 -> 1.0 in 4 frames
     constexpr bn::fixed player_decel = bn::fixed(1) / 3;   // 1.0 -> 0 in 3 frames
-    constexpr int player_hp = 100;
+    constexpr int player_hp = 120;   // 100 -> 120 (DISENO_RUTA 'Revision bloque 4', G-55.1)
     constexpr int player_invulnerable_frames = 40;   // 30 -> 40 (DISENO §19.1, G-45.2)
     constexpr int player_half_box = 4;                     // 8x8 hurt box
     constexpr int pickup_radius = 32;                      // §19.4 (was 24)
