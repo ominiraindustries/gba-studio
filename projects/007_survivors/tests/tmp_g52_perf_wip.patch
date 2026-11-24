@@ -1,0 +1,291 @@
+diff --git a/projects/007_survivors/src/hb_game.cpp b/projects/007_survivors/src/hb_game.cpp
+index 5cf6625..61149fc 100644
+--- a/projects/007_survivors/src/hb_game.cpp
++++ b/projects/007_survivors/src/hb_game.cpp
+@@ -916,8 +916,6 @@ namespace
+                 _prof_timer.restart();
+                 bn::core::update();
+                 test_prof[11] = _prof_timer.elapsed_ticks();
+-                test_prof[12] = 0;
+-                test_prof[13] = 0;
+ 
+                 // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
+                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
+@@ -951,6 +949,10 @@ namespace
+                         }
+                     }
+                 }
++
++                // Per-frame accumulators are cleared after the worst frame copied them.
++                test_prof[12] = 0;
++                test_prof[13] = 0;
+             }
+         }
+ 
+@@ -988,6 +990,12 @@ namespace
+         bn::vector<bn::sprite_ptr, frost_shards> _frost;
+         bn::vector<pickup, max_gems + 4> _pickups;
+         bn::vector<particle, max_particles> _particles;
++        // perf (G-52): hidden impact/poof sprites kept for reuse (creating a sprite with the horde alive costs
++        // ~100-150 ticks; kills and hit sparks created several per frame).
++        bn::vector<bn::sprite_ptr, max_particles> _spare_impact;
++        bn::vector<bn::sprite_ptr, max_particles> _spare_poof;
++        bn::vector<bn::sprite_ptr, max_particles> _spare_trail;
++        bn::vector<bn::sprite_ptr, 8> _spare_gems;
+         bn::vector<damage_number, max_damage_numbers> _numbers;
+ 
+         bn::array<bn::color, 16> _white_colors;
+@@ -1247,6 +1255,8 @@ namespace
+         int _chain_show = 0;
+         // perf: new sprites per frame for kill effects (death anim, poof, gem); past it they are skipped or merged.
+         static constexpr int create_budget_per_frame = 4;
++        // Wolves crouching at once (review block 2 said 3; G-52 dash hits 8:00-9:00 = 44 with 3, target <= 25).
++        static constexpr int wolf_max_crouching = 2;
+         int _create_budget = create_budget_per_frame;
+         int _chain_jumps = 0;
+         int _chain_damage = 0;
+@@ -1467,6 +1477,7 @@ namespace
+ 
+             ++_t;
+             _create_budget = create_budget_per_frame;
++            _palette_room();
+             _prof_timer.restart();
+             _update_player();
+             _prof(0);
+@@ -2148,6 +2159,7 @@ namespace
+             // 8 types from the start ran out of palettes during the Slime King).
+             if(! _type_pal[type])
+             {
++                _palette_room();
+                 _type_pal[type] = type == type_treasure ?
+                             bn::sprite_palette_item(_elite_colors[type][3], bn::bpp_mode::BPP_4).create_palette() :
+                             def.look->item->palette_item().create_palette();
+@@ -3411,6 +3423,7 @@ namespace
+ 
+         void _update_bolts()
+         {
++
+             for(int bi = 0; bi < _bolts.size();)
+             {
+                 bolt& b = _bolts[bi];
+@@ -3461,6 +3474,7 @@ namespace
+                     dead = true;
+                 }
+ 
++
+                 if(dead)
+                 {
+                     b.sprite.set_visible(false);
+@@ -4031,6 +4045,7 @@ namespace
+                                     // perf: one red palette held while wolves live (creating it per blink cost ~30 %).
+                                     if(! _wolf_red_pal)
+                                     {
++                                        _palette_room();
+                                         _wolf_red_pal = bn::sprite_palette_item(_wolf_red_colors,
+                                                                                 bn::bpp_mode::BPP_4).create_palette();
+                                     }
+@@ -4104,7 +4119,7 @@ namespace
+                             step = step * fixed(1.6);
+                         }
+ 
+-                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < 3 &&
++                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < wolf_max_crouching &&
+                            abs_int(dx) <= 100 && abs_int(dy) <= 60 && dx * dx + dy * dy <= 96 * 96)
+                         {
+                             // Direction fixed when the warning starts; only on screen (the crouch is the warning).
+@@ -4159,7 +4174,9 @@ namespace
+ 
+                 // Separation (§13): pushed away from up to 3 overlapping neighbours of the nearby buckets, so a
+                 // crowd spreads into a ring instead of one ball. Swarm bats keep their formation.
+-                if(e.mode != mode_swarm)
++                // perf (G-52): each monster separates every other frame with twice the push (same average spread;
++                // separation was ~600 ticks of the worst frame with 47 alive).
++                if(e.mode != mode_swarm && ((e.uid + _t) & 1) == 0)
+                 {
+                     int ex2 = to_int(e.pos.x());
+                     int ey2 = to_int(e.pos.y());
+@@ -4193,9 +4210,10 @@ namespace
+                                 if(abs_int(sx) < separation_distance && abs_int(sy) < separation_distance)
+                                 {
+                                     // Identical spots split by uid so two stacked enemies do not move together.
+-                                    fixed side = e.uid > o.uid ? separation_push : -separation_push;
+-                                    push += fixed_point(sx > 0 ? separation_push : sx < 0 ? -separation_push : side,
+-                                                        sy > 0 ? separation_push : sy < 0 ? -separation_push : side);
++                                    constexpr fixed sp = separation_push * 2;
++                                    fixed side = e.uid > o.uid ? sp : -sp;
++                                    push += fixed_point(sx > 0 ? sp : sx < 0 ? -sp : side,
++                                                        sy > 0 ? sp : sy < 0 ? -sp : side);
+                                     ++pushes;
+                                 }
+                             }
+@@ -4357,6 +4375,15 @@ namespace
+             _play(art::sfx_boss);
+         }
+ 
++        void _set_boss_white(bool white)
++        {
++            if(_boss)
++            {
++                _boss->set_palette(white ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
++                                           _boss_item().palette_item());
++            }
++        }
++
+         [[nodiscard]] bool _boss_box_hit(int x, int y, int half) const
+         {
+             int dx = x - to_int(_boss_pos.x());
+@@ -4376,7 +4403,7 @@ namespace
+ 
+             if(_fx.hit_flash && _boss)
+             {
+-                _boss->set_palette(bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4));
++                _set_boss_white(true);
+             }
+ 
+             if(_hit_sound_cd == 0)
+@@ -4443,7 +4470,7 @@ namespace
+ 
+             if(_boss_flash && --_boss_flash == 0)
+             {
+-                _boss->set_palette(_boss_item().palette_item());
++                _set_boss_white(false);
+             }
+ 
+             if(_boss_hp <= 0)
+@@ -4701,8 +4728,7 @@ namespace
+             if(_boss_invuln > 0)
+             {
+                 --_boss_invuln;
+-                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+-                                                        art::warchief.palette_item());
++                _set_boss_white((_boss_invuln & 4) != 0);
+             }
+ 
+             switch(_boss_state)
+@@ -4952,8 +4978,7 @@ namespace
+             if(_boss_invuln > 0)
+             {
+                 --_boss_invuln;
+-                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+-                                                        art::treant.palette_item());
++                _set_boss_white((_boss_invuln & 4) != 0);
+             }
+ 
+             switch(_boss_state)
+@@ -5018,12 +5043,11 @@ namespace
+ 
+             case tr_glow:
+                 _set_boss_frame(art::treant_idle, _t, true);
+-                _boss->set_palette((_boss_timer & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+-                                                       art::treant.palette_item());
++                _set_boss_white((_boss_timer & 4) != 0);
+ 
+                 if(--_boss_timer <= 0)
+                 {
+-                    _boss->set_palette(art::treant.palette_item());
++                    _set_boss_white(false);
+                     _seeds_pending = 8;
+                     _seed_cd = 5 * fps;
+                     _boss_state = tr_walk;
+@@ -5209,6 +5233,7 @@ namespace
+             if(! _thorn_tiles)
+             {
+                 _thorn_tiles = bn::sprite_tiles_ptr::create(art::fx_thorn.tiles_item(), 0);
++                _palette_room();
+                 _thorn_pal = art::fx_thorn.palette_item().create_palette();
+             }
+ 
+@@ -5440,7 +5465,20 @@ namespace
+             }
+             else
+             {
+-                s = kind == pickup_coin ? art::coin.create_sprite_optional(p, 0) : art::gems.create_sprite_optional(p, _gem_frame(value));
++                if(kind == pickup_gem && ! _spare_gems.empty())
++                {
++                    // perf (G-52): collected gem sprites are reused (a kill created one).
++                    s = bn::move(_spare_gems.back());
++                    _spare_gems.pop_back();
++                    s->set_tiles(art::gems.tiles_item(), _gem_frame(value));
++                    s->set_position(p);
++                    s->set_visible(true);
++                }
++                else
++                {
++                    s = kind == pickup_coin ? art::coin.create_sprite_optional(p, 0) :
++                                              art::gems.create_sprite_optional(p, _gem_frame(value));
++                }
+             }
+ 
+             if(! s)
+@@ -5540,6 +5578,7 @@ namespace
+                     if(d2 < 6 * 6)
+                     {
+                         _collect(g);
++
+                         _pickups[i] = bn::move(_pickups.back());
+                         _pickups.pop_back();
+                         continue;
+@@ -5587,7 +5626,22 @@ namespace
+                 return;
+             }
+ 
+-            bn::optional<bn::sprite_ptr> s = item.create_sprite_optional(p, frames.first);
++            bn::optional<bn::sprite_ptr> s;
++            bn::vector<bn::sprite_ptr, max_particles>* spare = _spare_for(item);
++
++            if(spare && ! spare->empty())
++            {
++                s = bn::move(spare->back());
++                spare->pop_back();
++                s->set_tiles(item.tiles_item(), frames.first);
++                s->set_position(p);
++                s->set_visible(true);
++            }
++            else
++            {
++                s = item.create_sprite_optional(p, frames.first);
++            }
++
+ 
+             if(! s)
+             {
+@@ -5606,6 +5660,24 @@ namespace
+             pt.frames = frames;
+         }
+ 
++        // The hidden spares hold their palettes: drop them when a new palette may not fit (16 sprite palettes).
++        void _palette_room()
++        {
++            if(bn::sprite_palettes::available_colors_count() < 3 * 16)
++            {
++                _spare_impact.clear();
++                _spare_poof.clear();
++                _spare_trail.clear();
++                _spare_gems.clear();
++            }
++        }
++
++        [[nodiscard]] bn::vector<bn::sprite_ptr, max_particles>* _spare_for(const bn::sprite_item& item)
++        {
++            return &item == &art::fx_impact ? &_spare_impact : &item == &art::fx_poof ? &_spare_poof :
++                   &item == &art::tmp_fx ? &_spare_trail : nullptr;
++        }
++
+         void _spawn_poof(const fixed_point& p, int count)
+         {
+             _play(art::sfx_poof, fixed(0.4));
+@@ -5637,6 +5709,14 @@ namespace
+ 
+                 if(--pt.life <= 0)
+                 {
++                    bn::vector<bn::sprite_ptr, max_particles>* spare = _spare_for(*pt.item);
++
++                    if(spare && ! spare->full())
++                    {
++                        pt.sprite.set_visible(false);
++                        spare->push_back(bn::move(pt.sprite));
++                    }
++
+                     _particles[i] = bn::move(_particles.back());
+                     _particles.pop_back();
+                     continue;

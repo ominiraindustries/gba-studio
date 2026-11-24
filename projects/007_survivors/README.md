@@ -98,6 +98,12 @@ Rendimiento (perfil C 4:30-10:10, peor frame): `_update_horde_frames` retargetea
 frame (632 ticks): ahora con desfase, sólo artes vivas y 2 por frame (222). Los grupos normales entran por la cola
 (2 por frame). `chunk_template` con caché de 16 entradas (lo llaman 2-3 veces por monstruo y frame).
 
+Estabilidad G-52 (bloque 3): Stress + Max power 130 % -> 98 % (fragmentos de Frost Ring y chispas de Spark se crean
+al subir el arma, no en el primer disparo; Max power escalona los enfriamientos). Lobo: máx. **2** agachados a la vez y
+**300 f** de espera tras embestir (antes 3 y 180 f); golpes de embestida 8:00-9:00 perfil C God: 44 -> 41 (objetivo
+<= 25 aún no). Parche de rendimiento en pruebas (perfil C 90 -> 86 %, pero rompe la subida de nivel; sin integrar):
+`tests/tmp_g52_perf_wip.patch`.
+
 ## Provisionales
 
 - Sonidos `audio/tmp_*.wav` (`tests/gen_tmp_sfx.py`) y gráficos `graphics/tmp_fx` (chispa de estela), `tmp_wave`

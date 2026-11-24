@@ -916,8 +916,6 @@ namespace
                 _prof_timer.restart();
                 bn::core::update();
                 test_prof[11] = _prof_timer.elapsed_ticks();
-                test_prof[12] = 0;
-                test_prof[13] = 0;
 
                 // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
@@ -951,6 +949,10 @@ namespace
                         }
                     }
                 }
+
+                // Per-frame kill accumulators are cleared after the worst frame copied them (they always read 0).
+                test_prof[12] = 0;
+                test_prof[13] = 0;
             }
         }
 
@@ -1247,6 +1249,8 @@ namespace
         int _chain_show = 0;
         // perf: new sprites per frame for kill effects (death anim, poof, gem); past it they are skipped or merged.
         static constexpr int create_budget_per_frame = 4;
+        // Wolves crouching at once (review block 2 said 3; G-52: 3 gave 44 dash hits in 8:00-9:00).
+        static constexpr int wolf_max_crouching = 2;
         int _create_budget = create_budget_per_frame;
         int _chain_jumps = 0;
         int _chain_damage = 0;
@@ -4057,7 +4061,7 @@ namespace
                             else
                             {
                                 e.state = 0;
-                                e.cd = 90;   // 180 f
+                                e.cd = 150;   // 300 f (G-52: 180 f gave 47 dash hits in 8:00-9:00)
                                 e.vel = fixed_point();
                                 e.sprite.set_tiles(_horde_tiles[_type_slot[e.type]][0]);
                             }
@@ -4104,7 +4108,7 @@ namespace
                             step = step * fixed(1.6);
                         }
 
-                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < 3 &&
+                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < wolf_max_crouching &&
                            abs_int(dx) <= 100 && abs_int(dy) <= 60 && dx * dx + dy * dy <= 96 * 96)
                         {
                             // Direction fixed when the warning starts; only on screen (the crouch is the warning).
