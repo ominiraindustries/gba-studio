@@ -333,6 +333,7 @@ Formato: `art/*.aseprite` indexado con paleta del juego, una etiqueta por animac
 | Bloque 1 = 5 min, 3+3+2 | alcance pequeño (CLAUDE.md "Alcance") | ROM jugable antes de crecer |
 | Tope 56 enemigos / 24 proyectiles / 20 gemas | 128 sprites, línea de OBJ | perfil con escena de peor caso |
 | Retry con A en < 3 s, oro se conserva | R10 | tiempo de muerte → control |
+| G-45.2: tope min. 1 = 12, slime daño 4, invulnerable 40 f | flujo (reto ≈ habilidad), R2, R3 | perfil A vivo a 2:00 con ≥ 20 HP; perfil B vivo a 2:10 |
 
 ## 17. Riesgos
 
@@ -394,3 +395,35 @@ Riesgos que quedan: contraste del mago (túnica lila oscura sobre hierba oscura;
 que él) → pregunta de dirección artística al usuario (tarea `design-question`); la Nova lanzada en pantalla casi vacía
 se desperdicia (aceptado: decisión del jugador, el medidor lo enseña); el perfil A es un novato pasivo: si con los
 arreglos sigue muriendo antes de 2:00, bajar el tope de §6 del minuto 1 de 20 a 16.
+
+### 19.1 Decisión G-45.2 (2026-11-24): el novato pasivo muere a ~1:48
+
+Medido sobre cef3c44 en copias (perfil A = cuadrado 90 f, perfil B = paseante 240 f; HP a 2:00 aprox.):
+
+| Variante | Perfil A | Perfil B |
+|---|---|---|
+| base | 12 HP a 1:47, **muere ~1:48** | 15 HP a 2:01, **muere ~2:03** |
+| (a) tope min. 1 16 → 12 | muere 1:55 | 20 HP a 2:04 |
+| (b) slime 5 → 4 | 12 HP a 1:54, muere | muere 2:04 |
+| (c) esqueletos 1:20 → 2:00 | muere 1:53 | 30 HP a 2:09 |
+| (d) invulnerable 30 → 40 f | 6 HP a 1:41, muere | 24 HP a 2:05 |
+| (a)+(b) | 28 HP a 1:58, 18 a 2:03, 6 a 2:08 | 30 HP a 2:04 |
+| (a)+(c) | 1 HP a 1:59 | 6 HP a 2:04 |
+| **(a)+(b)+(d)** | **106 HP a 2:01**, 86 a 2:06 | **56 HP a 2:04**, 28 a 2:19 |
+
+**Decisión: (a)+(b)+(d)** — `per_minute[1]` **16 → 12**, daño del slime **5 → 4**, `player_invulnerable_frames`
+**30 → 40**. Se descartan (c) (retrasar al esqueleto rompe R3: el giro del minuto 1 se queda sin enseñar y sólo
+traslada el pico a 2:00) y (e) (también muere el perfil B, que sí se mueve: no es "el más pasivo", es la curva).
+
+Porqué: el problema no es sólo el perfil A; **los dos perfiles mueren entre 1:48 y 2:04**, así que el tramo
+1:10–2:00 está por encima de la habilidad de un novato (flujo; objetivo §6: llegar a 3:00). Ningún número suelto basta
+(tabla). (a) baja la densidad alrededor de quien no se aleja; (b) baja el castigo del enemigo más común sin tocar al
+esqueleto, que sigue siendo "el que duele" (R3 desarrollar, lenguaje de amenaza); (d) es R2 (perdona sin que se
+note): 40 f = 0,67 s, cada toque extra en un cerco cuesta menos, y combinado con (a) rompe el encadenado de golpes
+(perfil A base: 78 HP perdidos de 1:13 a 1:47; con la combinación: 26 HP de 1:44 a 2:06). El riesgo de quedar fácil está acotado: a 2:00 entra el minuto 2 (tope 26,
+50 % esqueletos, Bat Swarm) y el perfil B ya baja a 28 HP a 2:19.
+
+Métricas (prueba del implementador, mismos perfiles, `prof.py ROM OUT A|B 9000 7800`): A vivo a 2:00 con **≥ 20 HP**;
+B vivo a 2:10; Nv2 ≤ 0:25 en ambos (sin cambios). Si en la prueba del usuario el minuto 1 se siente vacío, primer
+paso atrás: invulnerable 40 → 35 f (no el tope).
+
