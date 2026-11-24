@@ -86,6 +86,9 @@ volatile int test_prof_ember;         // worst ticks of Ember Toss / Storm Chain
 volatile int test_prof_chain;
 volatile int test_boss_ttk;           // seconds from the boss entrance to its death
 volatile int test_first_crouch_frame; // test_frames of the first wolf crouch (for a capture)
+volatile int test_wall_onscreen = 99;   // G-52.1: fewest thorns inside 0..239 x 24..159 while the wall stands (24)
+volatile int test_thorn_first_hurt = -1; // frames after the cast of the first thorn damage (>= 60)
+volatile int test_thorn_hits_max;       // most thorn hits in one wall (bot: <= 2)
 volatile int test_thorn_radius;        // current thorn wall radius (150 -> 110)
 volatile int test_gold_drops;          // summary breakdown (E5.4)
 volatile int test_gold_bosses;
@@ -1208,7 +1211,18 @@ namespace
 
         bn::vector<root_spike, 6> _roots;
         bn::vector<seed_shot, 8> _seeds;
-        bn::vector<bn::sprite_ptr, 16> _thorns;
+        // Thorn wall (DISENO_FASES "Decision G-52.1"): ellipse of 24 thorns centred on the wizard, camera locked.
+        static constexpr int thorn_count = 24;
+        static constexpr int thorn_sprout = 60;                     // harmless blinking sprouts
+        static constexpr int thorn_grown = thorn_sprout + 8;        // thorns grow in 8 f, then they hurt
+        static constexpr int thorn_wither = thorn_grown + 1200;     // 20 s wall (10 s closing + 10 s fixed)
+        static constexpr int thorn_gone = thorn_wither + 30;        // 30 f wither (blink, harmless, not solid)
+        static constexpr int thorn_cycle = thorn_gone + 600;        // 10 s free, then again while in phase 2
+        bn::vector<bn::sprite_ptr, thorn_count> _thorns;
+        int _thorn_rx = 104;
+        int _thorn_ry = 56;
+        int _cam_lock = 0;          // 0..20: camera blend from the wizard to the wall centre
+        int _thorn_hits_wall = 0;
         bn::optional<bn::sprite_tiles_ptr> _thorn_tiles;   // one block shared by the 16 thorn sprites
         bn::optional<bn::sprite_palette_ptr> _thorn_pal;
         fixed_point _boss_entry;
@@ -1522,6 +1536,24 @@ namespace
             int cam_x = to_int(_pos.x());
             int cam_y = to_int(_pos.y());
 
+            // G-52.1: during the thorn wall the camera slides in 20 f to (centre.x, centre.y - 12) and stays there.
+            if(_thorn_t >= 0 && _thorn_t < thorn_wither)
+            {
+                _cam_lock = bn::min(_cam_lock + 1, 20);
+            }
+            else if(_cam_lock > 0)
+            {
+                --_cam_lock;
+            }
+
+            if(_cam_lock > 0)
+            {
+                int lx = to_int(_thorn_center.x());
+                int ly = to_int(_thorn_center.y()) - 12;
+                cam_x += (lx - cam_x) * _cam_lock / 20;
+                cam_y += (ly - cam_y) * _cam_lock / 20;
+            }
+
             if(_shake > 0)
             {
                 --_shake;
@@ -1595,6 +1627,12 @@ namespace
             int px = to_int(x);
             int py = to_int(y);
             int h = player_half_box;
+
+            if(_thorn_solid() && _outside_wall(px, py, 0))
+            {
+                return true;   // G-52.1: the thorns are solid for the wizard (walking and Blink)
+            }
+
             return _map.solid_at(px - h, py - h) || _map.solid_at(px + h - 1, py - h) ||
                    _map.solid_at(px - h, py + h - 1) || _map.solid_at(px + h - 1, py + h - 1);
         }
@@ -4974,11 +5012,10 @@ namespace
 
                 if(phase == 2)
                 {
-                    // The wall closes around his entry point; PROVISIONAL: around the wizard if he is far from it.
-                    int ex = to_int(_pos.x() - _boss_entry.x());
-                    int ey = to_int(_pos.y() - _boss_entry.y());
-                    _thorn_center = ex * ex + ey * ey > 120 * 120 ? _pos : _boss_entry;
+                    // G-52.1: the wall closes around the wizard (never starts outside it).
+                    _thorn_center = _pos;
                     _thorn_t = 0;
+                    _thorn_hits_wall = 0;
                     test_events = test_events | (1 << 15);
                     _play(art::sfx_thorn, fixed(0.8));
                 }
@@ -5231,6 +5268,21 @@ namespace
 
         // Thorn wall: 16 sprites (2 created per frame, one shared tile block) on a ring that closes from r 150 to
         // r 110 in 10 s; outside it (or touching it) the wizard takes 6 every 30 f.
+        // True if the wizard's centre at (x, y) is outside the wall's solid ellipse (thorn radius - 8 - margin).
+        [[nodiscard]] bool _outside_wall(int x, int y, int margin) const
+        {
+            int ax = _thorn_rx - 8 - margin;
+            int ay = _thorn_ry - 8 - margin;
+            int dx = bn::clamp(x - to_int(_thorn_center.x()), -400, 400);
+            int dy = bn::clamp(y - to_int(_thorn_center.y()), -400, 400);
+            return dx * dx * ay * ay + dy * dy * ax * ax > ax * ax * ay * ay;
+        }
+
+        [[nodiscard]] bool _thorn_solid() const
+        {
+            return _thorn_t >= 0 && _thorn_t < thorn_wither;
+        }
+
         void _update_thorns()
         {
             if(_thorn_t < 0)
@@ -5239,7 +5291,39 @@ namespace
             }
 
             ++_thorn_t;
-            int radius = 150 - bn::min(_thorn_t, 600) * 40 / 600;
+
+            if(_boss_phase >= 3 && _thorn_t < thorn_wither)
+            {
+                _thorn_t = thorn_wither;   // < 33 %: the wall withers at once
+            }
+
+            if(_thorn_t >= thorn_cycle)
+            {
+                if(_boss_phase == 2)
+                {
+                    _thorn_center = _pos;
+                    _thorn_t = 0;
+                    _thorn_hits_wall = 0;
+                    _play(art::sfx_thorn, fixed(0.8));
+                }
+                else
+                {
+                    _thorn_t = -1;
+                    return;
+                }
+            }
+
+            int closing = bn::clamp(_thorn_t - thorn_grown, 0, 600);
+            _thorn_rx = 104 - closing * 16 / 600;
+            _thorn_ry = 56 - closing * 8 / 600;
+
+            if(_thorn_t >= thorn_gone)
+            {
+                _thorns.clear();
+                _thorn_tiles.reset();
+                _thorn_pal.reset();
+                return;
+            }
 
             if(! _thorn_tiles)
             {
@@ -5252,7 +5336,7 @@ namespace
                 _thorn_tiles->set_tiles_ref(art::fx_thorn.tiles_item(), (_thorn_t >> 4) & 1);
             }
 
-            for(int n = 0; n < 2 && ! _thorns.full(); ++n)
+            for(int n = 0; n < 6 && ! _thorns.full(); ++n)
             {
                 bn::sprite_ptr sprite = bn::sprite_ptr::create(_thorn_center, art::fx_thorn.shape_size(), *_thorn_tiles,
                                                                *_thorn_pal);
@@ -5262,12 +5346,43 @@ namespace
                 _thorns.push_back(bn::move(sprite));
             }
 
-            if((_thorn_t & 1) == 0 || _thorn_t < 40)
+            // PROVISIONAL (no sprout art yet): sprouts and withering are the thorn sprites blinking every 4 f.
+            bool blink = _thorn_t < thorn_sprout || _thorn_t >= thorn_wither;
+            bool visible = ! blink || (_thorn_t & 4);
+
+            if(_thorn_t < thorn_sprout && (_thorn_t & 3) == 0 && _boss)
             {
-                for(int k = 0; k < _thorns.size(); ++k)
+                _boss->set_x(_boss->x() + ((_thorn_t & 4) ? 1 : -1));   // the Treant trembles 1 px during the sprouts
+            }
+
+            bool onscreen_check = _cam_lock == 20 && _thorns.full() && _thorn_t < thorn_wither;
+            int on = 0;
+            int cam_x = to_int(_camera.x());
+            int cam_y = to_int(_camera.y());
+
+            for(int k = 0; k < _thorns.size(); ++k)
+            {
+                fixed_point v = angle_vector(k * 2048 / thorn_count);
+                fixed_point p(_thorn_center.x() + v.x() * _thorn_rx, _thorn_center.y() + v.y() * _thorn_ry);
+
+                if(_thorn_t < 40 || (_thorn_t & 1) == 0)
                 {
-                    _thorns[k].set_position(_thorn_center + angle_vector(k * 128) * radius);
+                    _thorns[k].set_position(p);
                 }
+
+                _thorns[k].set_visible(visible && ! _cards_shown);
+
+                if(onscreen_check)
+                {
+                    int sx = to_int(p.x()) - cam_x + 120;
+                    int sy = to_int(p.y()) - cam_y + 80;
+                    on += sx - 8 >= 0 && sx + 8 <= 240 && sy - 8 >= 24 && sy + 8 <= 160;
+                }
+            }
+
+            if(onscreen_check)
+            {
+                test_wall_onscreen = bn::min(int(test_wall_onscreen), on);
             }
 
             if(_thorn_hurt_cd > 0)
@@ -5275,17 +5390,47 @@ namespace
                 --_thorn_hurt_cd;
             }
 
-            int dx = to_int(_pos.x() - _thorn_center.x());
-            int dy = to_int(_pos.y() - _thorn_center.y());
-            int inner = radius - 8;
-
-            if(_thorn_hurt_cd == 0 && dx * dx + dy * dy > inner * inner)
+            if(_thorn_solid())
             {
-                _hurt_player(6);
-                _thorn_hurt_cd = 30;
+                int px = to_int(_pos.x());
+                int py = to_int(_pos.y());
+
+                // Defence, not a mechanic: if he ever ends outside (the ellipse shrank), he is put back inside.
+                for(int guard = 0; guard < 12 && _outside_wall(px, py, 0); ++guard)
+                {
+                    _pos = _thorn_center + (_pos - _thorn_center) * fixed(0.9);
+                    px = to_int(_pos.x());
+                    py = to_int(_pos.y());
+                }
+
+                if(_thorn_t >= thorn_grown && _thorn_hurt_cd == 0 && _outside_wall(px, py, 3))
+                {
+                    // Touching the thorns: 6 damage every 30 f and an 8 px push toward the centre.
+                    if(test_thorn_first_hurt < 0 || _thorn_t < test_thorn_first_hurt)
+                    {
+                        test_thorn_first_hurt = _thorn_t;
+                    }
+
+                    ++_thorn_hits_wall;
+                    test_thorn_hits_max = bn::max(int(test_thorn_hits_max), _thorn_hits_wall);
+                    _hurt_player(6);
+                    _thorn_hurt_cd = 30;
+                    int dx = to_int(_thorn_center.x()) - px;
+                    int dy = to_int(_thorn_center.y()) - py;
+
+                    if(dx || dy)
+                    {
+                        fixed_point np = _pos + unit(dx, dy) * 8;
+
+                        if(! _blocked(np.x(), np.y()))
+                        {
+                            _pos = np;
+                        }
+                    }
+                }
             }
 
-            test_thorn_radius = radius;
+            test_thorn_radius = _thorn_rx;
         }
 
         void _clear_treant_attacks()
