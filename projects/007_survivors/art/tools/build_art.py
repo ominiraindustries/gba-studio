@@ -470,7 +470,7 @@ def export():
         assert im.mode == "P", (name, im.mode)
         meta = json.load(open(data))
         fw = meta["frames"][0]["frame"]["w"]; fh = meta["frames"][0]["frame"]["h"]
-        pal = im.getpalette()[:48]
+        pal = (im.getpalette() + [0] * 48)[:48]  # short palettes (few colours) are padded
         pal = [tuple(pal[i:i + 3]) for i in range(0, 48, 3)]
         w, h = im.size
         px = list(im.getdata())

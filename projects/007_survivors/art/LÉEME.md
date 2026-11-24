@@ -1,4 +1,10 @@
-# Arte de 007_survivors (Mossy Meadow, bloque 1)
+# Arte de 007_survivors (HEXBOUND) — estilo C "paleta limitada con brillo"
+
+Desde G-44 (seguimiento) todo el set está en el **estilo C** elegido por el usuario (`style_samples/style_C.png`):
+suelo casi negro con textura sutil, enemigos oscuros con **borde frío de 1 px** (`#3d5590`) y ojos de color,
+Wendel en lila luminoso con **contorno claro** (`#b4a4f4`), y magia, gemas y FX en **neón** (magenta, cian, lima,
+lila). Mismos nombres, tamaños, etiquetas y orden de frames que antes: el código no cambia.
+El set anterior (pradera, colores vivos) está guardado en `old_style/` (no se exporta).
 
 Fuente de verdad: los `.aseprite` de esta carpeta (modo **indexado**, 16 colores, **índice 0 = transparente**, una
 etiqueta por animación con sus tiempos). El build de Butano lee `graphics/*.bmp` + `.json`, que se exportan desde aquí.
@@ -10,6 +16,8 @@ python -I art/tools/build_art.py export    # .aseprite -> graphics/*.bmp (4 bpp)
 python -I art/tools/build_art.py contact D # mockup 240x160 (1x y 3x) en la carpeta D, hecho sólo con graphics/
 python -I art/tools/build_art.py seed      # SÓLO siembra: crea los .aseprite que falten desde art/raw/. Nunca pisa uno existente.
 python -I art/tools/fetch_raw.py           # vuelve a bajar las fuentes de PixelLab a art/raw/ (no hace falta normalmente)
+python -I art/tools/restyle_c.py           # REHACE el set en estilo C desde old_style/ (PISA art/*.aseprite: sólo si
+                                           # nadie los ha editado a mano; luego build_art.py export)
 ```
 
 Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar uno desde cero, bórralo y `seed <nombre>`.
@@ -40,6 +48,10 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `fx_impact` | sprite | 8×8 | hit 0–2 | FX |
 | `fx_poof` | sprite | 8×8 | poof 0–3 | FX |
 | `fx_aura` | sprite | 16×16 | loop 0–1 (aura de élite) | FX |
+| `fx_nova` | sprite | 64×64 | burst 0–7 (50 ms) | FX: anillo de Hex Nova que crece (0–1 destello central, 4–7 se deshace en tramado) |
+| `fx_nova_spark` | sprite | 8×8 | twinkle 0–3 (60 ms) | FX: chispa suelta de la Nova |
+| `fx_blink` | sprite | 32×32 | blink 0–5 (50 ms) | FX: 0–2 implosión (salida), 3–5 destello (llegada) |
+| `wizard_ghost` | sprite | 32×32 | mismas que `wizard` (35 frames) | silueta lila plana con borde claro para la estela del Blink (usar con transparencia) |
 | `shadow_small` / `shadow_big` | sprite | 16×8 / 32×16 | idle 0 (sombra; usar con transparencia; el rey la usa de aviso de caída) | FX |
 | `ground` | regular_bg 512×512 | — | — | suelo (se repite sin costura: el borde derecho casa con el izquierdo y el de abajo con el de arriba) |
 | `props` + `props_palette` | regular_bg_tiles + bg_palette | — | ver tabla de atrezzo | atrezzo |
@@ -54,9 +66,13 @@ python -I art/tools/build_ui.py mock D     # mockups 240x160 (partida+HUD, subid
 La exportación es la misma (`build_art.py export`). Fuentes de PixelLab en `art/raw/ui/` (`card_0.png` = marco de la
 carta, `title_a.png` = ilustración del título); el resto está dibujado en `build_ui.py`.
 
-Todos los `hud_*`, `card`, `fx_levelup` y `logo` comparten la **paleta UI** (un solo `sprite_palette_ptr`):
-1 contorno `#140c1c`; 2 morado oscuro (huecos de barra, paneles); 3 morado runa; 4–6 maderas; 7–8 oros; 9–10 pergamino;
-11–13 azules de XP; 14 rojo; 15 blanco. `hud_slots` usa la paleta **recogibles** (la de `icons`).
+Todos los `hud_*`, `card`, `fx_levelup` y `logo` comparten la **paleta UI** (un solo `sprite_palette_ptr`). Mismos
+índices que antes, colores de estilo C: 1 contorno `#05050a`; 2 panel `#14162c`; 3 lila neón `#b070ff`; 4–6 marcos de
+acero frío `#1c2440 #34466e #5a74a8` (antes maderas); 7–8 cian neón `#1aa8d0 #80f4ff` (antes oros: logo, flechas
+"gold", "selected"); 9–10 panel de carta `#181c36 #22284a` (antes pergamino); 11–13 magenta de XP `#7a1478 #e020c0
+#ff9cf0`; 14 rojo `#ff3050`; 15 blanco `#f4f0ff`. `hud_slots` usa la paleta **recogibles** (la de `icons`).
+Texto: `text_ink` = blanco frío sobre el panel oscuro de la carta, `text_gold` = cian neón, `text_red` = rojo neón
+(los nombres se mantienen por el código).
 
 | Fichero (código) | Tipo | Frame | Etiquetas / frames | Uso |
 |---|---|---|---|---|
@@ -67,6 +83,7 @@ Todos los `hud_*`, `card`, `fx_levelup` y `logo` comparten la **paleta UI** (un 
 | `hud_plaque` | sprite | 32×16 | left 0, right 1 | panel de 64×16 para el reloj / nivel; texto centrado en su fila 4 |
 | `hud_slots` | sprite | 16×16 | weapon 0–8, passive 9–17 | ranura con icono: 0/9 vacía, 1–8 / 10–17 = `icons` 0–7 (oro = arma, azul = pasiva) |
 | `hud_arrow` | sprite | 16×16 | gold 0–2, red 3–5 (este, noreste, norte) | flecha de borde; resto de direcciones con `set_horizontal_flip`/`set_vertical_flip` |
+| `hud_nova` | sprite | 16×16 | charge 0–4, full 5–6 (150 ms) | medidor de Hex Nova: hexágono que se llena de magenta (0 vacío … 4 lleno); 5↔6 brillo de "lista" |
 | `hud_alert` | sprite | 16×16 | blink 0–1 (150 ms) | "!" de aviso de oleada (rombo rojo; frame 1 = destello) |
 | `fx_levelup` | sprite | 64×64 | burst 0–3 (60 ms; 0–2 crece, 3 girado) | rayos detrás del mago al subir de nivel; alternar 2↔3 en bucle |
 | `card` + `card_base` | sprite | 64×64 + 64×32 | normal 0, selected 1 | carta 64×80 = `card` en (x,y) + `card_base` en (x,y+48) (se solapan 16 filas idénticas) |
@@ -83,7 +100,8 @@ nombre en dos líneas (y+28, y+37), filete en y+46, nivel/"NEW!" en y+50, efecto
 en una línea con la fuente variable 8×8. Seleccionada: borde dorado brillante, madera clara y gemas cian; el código
 puede además subirla 4 px.
 
-Título: "PRESS START" lo pone el código (hacia y=148 sobre la hierba; con la sombra de la fuente se lee bien).
+Título: escena nocturna (cielo con estrellas, arco, lápidas, obelisco, árbol muerto, Wendel con brillo magenta y gemas
+en el suelo). "PRESS START" lo pone el código (hacia y=148 sobre el suelo oscuro; con la sombra de la fuente se lee bien).
 `title_bg` usa los 256 colores de fondo (8 bpp, 64 usados): mientras esté en pantalla no caben otros fondos 4 bpp con
 paleta propia; el logo es de sprites para poder quitarlo o cambiarlo.
 
@@ -98,18 +116,30 @@ bush 96,64 · bush_flowers 128,64 · stump 160,64 · mushrooms 192,64 · pillar_
 tall_grass 24,104 · flowers 56,104 · pond 88,104 · crystal 120,104 · log 152,104 (32×32) · rocks_small 184,104 32×24.
 El índice 0 es transparente: se pinta en una segunda capa de fondo sobre `ground`.
 
+En estilo C los nombres se mantienen pero el dibujo cambia (fuentes en `raw/style_samples/C_deco|C_chars`):
+tree y pine = árboles muertos · arch = arco rúnico · pillar = obelisco rúnico · ruin_wall = arco en ruinas ·
+rock = roca · bush / bush_flowers = matorrales oscuros · stump = calavera · mushrooms = setas con sombrero cian que
+brilla · pillar_stump = columna caída · rune_stone = piedra rúnica pequeña · tall_grass / flowers = hierba muerta ·
+pond = charca oscura con reflejo cian · crystal = cristal frío · log = lápidas · rocks_small = piedras.
+
 ## Paletas (4 bpp, 16 colores; índice 0 transparente)
 
-- **mago** (fija, `build_art.py: PAL_WIZARD`): 1 contorno `#1b1028`; 2–6 morados/lilas `#3a2160 #5e3496 #8a55c8 #b78ae6
-  #e2c6ff`; 7–8 piel; 9–10 barba/gris; 11–12 madera del bastón; 13 oro `#f2c84a`; 14–15 cristal `#5ad8f0 #2a7ab0`.
-- **recogibles** (fija, `PAL_PICKUPS`): 1 contorno; 2–4 verdes; 5–7 azules; 8–10 rojos; 11–13 oros; 14 blanco; 15 marrón.
-- **FX** (fija, `PAL_FX`): 1 contorno azul noche; 2 blanco; 3–6 amarillo→rojo (chispa); 7–10 hielo; 11–14 lilas/runa;
-  15 sombra `#102010`.
-- **slime+rey**, **no-muertos** (skeleton, bat, skeleton_big), **pieles verdes** (goblin, orc), **orc_warchief**,
-  **shrine**, **atrezzo**: paleta común calculada por corte de mediana de todos sus frames (ordenada de oscuro a claro).
-  Los sprites del mismo grupo comparten paleta: en código pueden usar un solo `sprite_palette_ptr`.
-- **suelo**: verdes y tierras apagados (saturación ×0,62, brillo ×0,9) para que los sprites destaquen; 13–15 flores
-  (rosa, amarillo, blanco roto). Índice 0 = color de fondo (verde medio), no lo usa ningún píxel.
+Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLASS_RECIPES`).
+
+- **mago** (fija): 1 **contorno claro** `#b4a4f4` (borde exterior de 1 px); 2–6 lilas `#2e1c5c #5a3aa8 #8c64e0 #b898ff
+  #e8dcff` (más luminosos que cualquier enemigo); 7–8 piel; 9–10 barba; 11–12 bastón; 13 cian neón; 14–15 cristal
+  magenta `#ff5ce8 #a02090`.
+- **recogibles** (fija): 1 contorno; 2–4 lima neón (gema `green`, 5 XP); 5–7 cian neón (gema `blue`, 1 XP); 8–10
+  magenta/rosa (gema `red`, 25 XP; corazón); 11–13 oros (moneda, cofre); 14 blanco; 15 morado oscuro.
+- **FX** (fija): 1 contorno; 2 blanco; 3–5 rosas/magenta neón (chispa, Nova); 6 rojo (aura de élite); 7–10 cian
+  (hielo, Blink); 11–14 lilas (runa, Nova); 15 sombra casi negra. `fx_nova`, `fx_nova_spark`, `fx_blink` la usan.
+- **enemigos**: cuerpo oscuro, ojos de color y borde frío `#3d5590` fuera de la silueta. Grupos con paleta común:
+  **slime** (verde azulado oscuro, ojos lima) · **no-muertos** (huesos fríos casi blancos, alas moradas, ojos rojos)
+  · **pieles verdes** (piel azul noche, ojos amarillo neón) · **orc_warchief** (armadura oscura, rojo neón) ·
+  **slime_king** (paleta propia) · **shrine** (piedra fría, runa magenta).
+- **suelo** `ground`: `#07060c` con manchas suaves `#0b0a15`/`#100f1e`, motas frías y grietas. Índice 0 = `#07060c`
+  (color de fondo de la pantalla), no lo usa ningún píxel. Pocos tiles únicos (~130).
+- **atrezzo**: 15 colores fríos fijos (`PROPS_PAL`) con cian y magenta para los brillos.
 
 ## Qué no tocar
 
@@ -125,3 +155,5 @@ El índice 0 es transparente: se pinta en una segunda capa de fondo sobre `groun
 - `orc` y `orc_warchief` (bloque 2) son provisionales: el orco parece encapuchado y el jefe se sale del lienzo al atacar.
 - Faltan: wolf, Big Slime, charca con bordes. (HUD, carta, flecha, "!" y título: bloque 2, arriba.)
 - Élite: `fx_aura` + paleta tintada en código (`set_fade` a rojo/oro) en vez de contorno de color dibujado.
+- Estilo C: los enemigos y el mago conservan las animaciones del set anterior recoloreadas (mismas siluetas); si se
+  quiere más detalle "oscuro", rehacer animaciones con PixelLab sobre la misma rejilla de frames.
