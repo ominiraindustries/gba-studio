@@ -27,6 +27,7 @@
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_sprites_mosaic.h"
+#include "bn_sprite_tiles.h"
 #include "bn_timer.h"
 #include "bn_string.h"
 #include "bn_unique_ptr.h"
@@ -70,6 +71,16 @@ volatile int test_prof[14];
 volatile int test_prof_worst[14];     // worst frame without a Nova cast
 volatile int test_prof_nova[14];      // worst Nova frame
 volatile int test_cpu_max_plain;      // worst frame without a Nova cast
+volatile int test_wolf_crouches;      // DASH warnings started
+volatile int test_wolf_dashes;        // dashes started (each one after a 30 f crouch)
+volatile int test_wolf_dash_hits;     // hits on the wizard by a dashing wolf
+volatile int test_events;             // bit 0 treasure goblin, 1 split, 2 wolf pack, 3 goblin raid, 4 warchief,
+                                      // 5 horn, 6 stunned, 7 double charge, 8 warchief dead, 9 treasure killed
+volatile int test_boss_phase;
+volatile int test_dead_at;            // second of death (0 alive)
+volatile int test_prof_ember;         // worst ticks of Ember Toss / Storm Chain updates
+volatile int test_prof_chain;
+volatile int test_tiles_used;         // peak bn::sprite_tiles::used_tiles_count() during play (§C6: <= 900)
 
 // perf: the hottest per-frame loops run as ARM code from IWRAM (measured in G-45; see README "Rendimiento").
 #define HB_HOT __attribute__((section(".iwram"), target("arm"), noinline))
@@ -373,38 +384,81 @@ namespace
         type_slime,
         type_bat,
         type_skeleton,
+        type_big_slime,
+        type_goblin,
+        type_wolf,
+        type_orc,
+        type_treasure,   // Treasure Goblin: goblin art with a gold palette (§C2), FLEE
         type_count
+    };
+
+    // Behaviour archetypes (DISENO_CONTENIDO §C1).
+    enum enemy_kind : uint8_t
+    {
+        kind_chase,
+        kind_hop,
+        kind_wave,
+        kind_dash,
+        kind_tank,
+        kind_flee
     };
 
     struct enemy_def
     {
         const art::monster_art* look;
-        int hp;
+        int hp;              // hp_base; scaled per minute (§C1)
         fixed speed;
         int damage;
         bool flying;
+        uint8_t kind;        // enemy_kind
+        uint8_t half;        // half size of the body box (px)
+        uint8_t xp;          // gem value
+        uint8_t xp5_pct;     // chance (%) that the gem is worth 5 instead
+        uint8_t splits;      // SPLIT: children (slimes) on death
+        bool big;            // 32x32: counts for the <= 10 big cap (§C1)
     };
 
-    // §7
+    // §7, DISENO_CONTENIDO §C2 (stage 1)
     const enemy_def enemy_defs[type_count] = {
-        { &art::slime, 6, fixed(0.35), 4, false },      // contact 5 -> 4 (§19.1, G-45.2)
-        { &art::bat, 3, fixed(1.1), 4, true },
-        { &art::skeleton, 14, fixed(0.55), 6, false },   // damage 8 -> 6 (§19.2)
+        { &art::slime, 6, fixed(0.35), 4, false, kind_hop, 7, 1, 0, 0, false },      // contact 5 -> 4 (§19.1)
+        { &art::bat, 3, fixed(1.1), 4, true, kind_wave, 7, 1, 0, 0, false },
+        { &art::skeleton, 14, fixed(0.55), 6, false, kind_chase, 7, 1, 20, 0, false },   // damage 8 -> 6 (§19.2)
+        { &art::big_slime, 30, fixed(0.3), 8, false, kind_hop, 11, 5, 0, 2, true },
+        { &art::goblin, 10, fixed(0.85), 6, false, kind_chase, 9, 1, 0, 0, true },
+        { &art::wolf, 18, fixed(0.7), 10, false, kind_dash, 9, 5, 0, 0, false },
+        { &art::orc, 60, fixed(0.45), 12, false, kind_tank, 11, 5, 0, 0, true },
+        { &art::goblin, 40, fixed(1.3), 0, false, kind_flee, 9, 0, 0, 0, true },
     };
+
+    // HP scaling per minute (§C1): round(hp_base * (1 + 0.07 * minute)); bosses exempt.
+    [[nodiscard]] constexpr int scaled_hp(int hp_base, int minute)
+    {
+        return (hp_base * (100 + 7 * minute) + 50) / 100;
+    }
+
+    // Shared animation (§C6): one tile block per drawn direction for each monster art (not per type: palette
+    // variants share it), reloaded with the current frame at every animation step. Every instance of an art
+    // animates in sync. Slots are assigned in enemy_defs order.
+    constexpr int max_horde_arts = 8;
 
     enum upgrade_id : uint8_t
     {
         up_spark,
         up_rune,
         up_frost,
-        up_boots,
+        up_ember,
+        up_chain,
+        up_boots,       // first passive
         up_heart,
+        up_tome,
+        up_lodestone,
         up_heal,
         up_gold,
         up_count
     };
 
-    constexpr int weapon_or_passive_count = 5;
+    constexpr int weapon_or_passive_count = up_heal;
+    constexpr int max_slots = 4;   // §C3: 4 weapon slots, 4 passive slots
     constexpr int max_upgrade_level = 5;
 
     struct upgrade_text
@@ -420,8 +474,12 @@ namespace
         { "Spark Bolt", &art::icons, art::icon_spark_bolt, { "Auto", "+1 bolt", "+3 dmg", "+1 bolt", "Pierce" } },
         { "Rune Orbit", &art::icons, art::icon_rune_orbit, { "2 runes", "+1 rune", "Wider", "+1 rune", "Always" } },
         { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slows", "+3 dmg", "Bigger", "Faster", "Freeze" } },
+        { "Ember Toss", &art::icons, art::icon_ember_toss, { "Fire", "+1 ball", "Wider", "+6 dmg", "Burn+" } },
+        { "Storm Chain", &art::icons, art::icon_storm_chain, { "Zap", "+1 jump", "+4 dmg", "+2 jump", "Faster" } },
         { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD" } },
         { "Heart Amulet", &art::icons, art::icon_heart_amulet, { "+20 HP", "+20 HP", "+20 HP", "+20 HP", "+20 HP" } },
+        { "Spell Tome", &art::icons, art::icon_spell_tome, { "-6% CD", "-6% CD", "-6% CD", "-6% CD", "-6% CD" } },
+        { "Lodestone", &art::icons, art::icon_magnet, { "Reach+", "Reach+", "Reach+", "Reach+", "Reach+" } },
         { "Heal", &art::heart, 0, { "Heal 30", "", "", "", "" } },
         { "Gold", &art::coin, 0, { "+10 G", "", "", "", "" } },
     };
@@ -475,6 +533,12 @@ namespace
         uint8_t nova = 0;       // 1: caught by a Hex Nova, hit in a later frame (perf: spread over frames)
         int16_t slow = 0;
         int16_t freeze = 0;
+        uint8_t state = 0;      // DASH: 0 walk, 1 crouch (warning), 2 dash
+        uint8_t timer = 0;      // frames left in the DASH state
+        uint8_t cd = 0;         // DASH recharge (frames / 2)
+        uint8_t safe = 0;       // SPLIT children: frames without dealing or taking damage
+        bool small = false;     // Splitting copy: does not split again
+        bool flank = false;     // goblins: +30 or -30 degrees while far (§C1 CHASE flank)
 
         explicit enemy(bn::sprite_ptr&& s) :
             sprite(bn::move(s))
@@ -502,7 +566,23 @@ namespace
     {
         pickup_gem,
         pickup_coin,
-        pickup_chest
+        pickup_chest,
+        pickup_heart
+    };
+
+    struct split_request
+    {
+        fixed_point pos;
+        uint8_t type;
+        uint8_t count;
+        int hp;       // 0: the type's scaled HP
+    };
+
+    enum swarm_kind : uint8_t
+    {
+        swarm_bats,
+        swarm_wolves,
+        swarm_goblins
     };
 
     struct pickup
@@ -584,16 +664,34 @@ namespace
             for(int t = 0; t < type_count; ++t)
             {
                 const art::monster_art& look = *enemy_defs[t].look;
-                _type_pal[t] = look.item->palette_item().create_palette();
+                _type_pal[t] = t == type_treasure ?
+                            bn::sprite_palette_item(_elite_colors[t][3], bn::bpp_mode::BPP_4).create_palette() :
+                            look.item->palette_item().create_palette();
+                int slot = -1;
 
-                // Cached as [drawn dir][frame]; every direction must have the same frame count.
-                for(int d = 0; d < look.walk_dirs; ++d)
+                for(int o = 0; o < _horde_art_count; ++o)
                 {
-                    for(int f = 0; f < look.move[0].count; ++f)
+                    if(_horde_looks[o] == &look)
                     {
-                        _move_tiles[t].push_back(look.item->tiles_item().create_tiles(look.move[d].first + f));
+                        slot = o;
                     }
                 }
+
+                if(slot < 0)
+                {
+                    slot = _horde_art_count++;
+                    _horde_looks[slot] = &look;
+                    _horde_frame[slot] = 0;
+
+                    // A block of our own (nothing else references walk frames), retargeted with set_tiles_ref at every animation step.
+                    for(int d = 0; d < look.walk_dirs; ++d)
+                    {
+                        _horde_tiles[slot].push_back(bn::sprite_tiles_ptr::create(look.item->tiles_item(),
+                                                                                      look.move[d].first));
+                    }
+                }
+
+                _type_slot[t] = uint8_t(slot);
             }
 
             // Props first with tile offset disabled so the dynamic cells index the tile set directly.
@@ -649,6 +747,26 @@ namespace
             _player_hp = player_hp;
             _player_max_hp = player_hp;
             _facing = fixed_point(1, 0);
+
+            // Treasure Goblin: one 50 % window per act, 0:30-3:30 into the act (§C5), never near a boss.
+            for(int act = 1; act >= 0; --act)
+            {
+                int at = (act * 300 + 30 + _random.get_int(181)) * fps;
+
+                if(_random.get_int(2) == 0)
+                {
+                    _treasure_at = at;
+                }
+            }
+
+            art::music_meadow.play(fixed(art::music_volume_pct) / 100);
+            // perf: the Storm Chain sprites are created once, hidden (creating 16 in one frame cost ~60 %).
+            for(int k = 0; k < chain_sprites; ++k)
+            {
+                bn::sprite_ptr c = _world_sprite(art::fx_chain, fixed_point(), 0, 2);
+                c.set_visible(false);
+                _chain_sprites.push_back(bn::move(c));
+            }
 
             _show_hint("D-PAD: MOVE", 3 * fps);
             _refresh_hud(true);
@@ -813,13 +931,17 @@ namespace
         bn::vector<damage_number, max_damage_numbers> _numbers;
 
         bn::array<bn::color, 16> _white_colors;
-        bn::array<bn::color, 16> _elite_colors[type_count][2];
+        bn::array<bn::color, 16> _elite_colors[type_count][4];   // swift, shielded, splitting, treasure gold
         bn::array<bn::color, 16> _boss_white_colors;
 
         // Hot-path caches (perf): enemies swap palettes and animation frames by handle, without a VRAM lookup.
         bn::optional<bn::sprite_palette_ptr> _white_pal;
         bn::optional<bn::sprite_palette_ptr> _type_pal[type_count];
-        bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs * 4> _move_tiles[type_count];
+        bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs> _horde_tiles[max_horde_arts];
+        const art::monster_art* _horde_looks[max_horde_arts] = {};
+        int _horde_frame[max_horde_arts] = {};
+        int _horde_art_count = 0;
+        uint8_t _type_slot[type_count] = {};
 
         // Player
         fixed_point _pos;
@@ -881,6 +1003,19 @@ namespace
         int _spawns_total = 0;
         uint16_t _next_uid = 1;
         int _swarm_warning_t = 0;
+        int _swarm_kind = 0;
+        int _swarm_rows_left = 0;
+        int _swarm_row_t = 0;
+        int _rest_t = 0;              // 8 s without spawns after a boss (E1)
+        int _bosses_killed = 0;
+        int _boss_kind = 0;           // 0 Slime King, 1 Orc Warchief
+        int _boss_max_hp = 600;
+        int _big_alive = 0;
+        static constexpr int max_big_alive = 10;   // 32x32 monsters (§C1, OBJ line budget)
+        int _treasure_at = -1;
+        bool _treasure_alive = false;
+        bn::optional<bn::sprite_ptr> _treasure_arrow;
+        bn::vector<split_request, 8> _splits;
         fixed_point _swarm_dir;
         fixed_point _swarm_origin;
         bool _stress = false;
@@ -950,6 +1085,63 @@ namespace
         uint8_t _boss_frost_pulse = 0;
         int _boss_wave_t = 0;
         int _boss_title_t = 0;
+        int _boss_fight_t = 0;
+        int _boss_phase = 1;
+        int _boss_invuln = 0;
+        int _boss_frame = -1;
+        int _boss_attacks = 0;
+        int _boss_bar_shown = -1;
+        bool _boss_second = false;
+        fixed_point _boss_dir;
+        bn::vector<bn::sprite_ptr, 4> _boss_warn;
+
+        // Ember Toss / Storm Chain
+        struct ember_ball
+        {
+            bn::sprite_ptr sprite;
+            fixed_point pos;
+            fixed_point vel;
+            int t = 0;
+
+            explicit ember_ball(bn::sprite_ptr&& s) :
+                sprite(bn::move(s))
+            {
+            }
+        };
+
+        struct fire_patch
+        {
+            bn::sprite_ptr sprite;
+            fixed_point pos;
+            int life = 0;
+
+            explicit fire_patch(bn::sprite_ptr&& s) :
+                sprite(bn::move(s))
+            {
+            }
+        };
+
+        bn::vector<ember_ball, 2> _embers;
+        bn::vector<fire_patch, 4> _fires;
+        int _ember_cd = 90;
+        static constexpr int chain_sprites = 16;
+        bn::vector<bn::sprite_ptr, chain_sprites> _chain_sprites;
+        int _chain_cd = 60;
+        int _chain_show = 0;
+        // perf: new sprites per frame for kill effects (death anim, poof, gem); past it they are skipped or merged.
+        static constexpr int create_budget_per_frame = 4;
+        int _create_budget = create_budget_per_frame;
+        int _chain_jumps = 0;
+        int _chain_damage = 0;
+        int _chain_range = 0;
+        int _chain_hits = 0;
+        int _chain_sprite_k = 0;
+        fixed_point _chain_from;
+        uint16_t _chain_hit[8] = {};
+
+        // DBG menu values
+        int _dbg_start = 0;
+        int _dbg_force = 0;
         bn::vector<bn::sprite_ptr, 10> _boss_title;
 
         // -----------------------------------------------------------------------------------------------------
@@ -979,19 +1171,25 @@ namespace
                 return;
             }
 
-            int length = 10;
+            // Lengths in frames from audio/LEEME.md (the slot is freed when the sound should have ended).
+            int length = 28;
 
             if(item == art::sfx_level)
             {
-                length = 30;
+                length = 73;
             }
             else if(item == art::sfx_boss)
             {
-                length = 36;
+                length = 95;
             }
-            else if(item == art::sfx_hurt)
+            else if(item == art::sfx_nova || item == art::sfx_wave || item == art::sfx_howl || item == art::sfx_horn)
             {
-                length = 14;
+                length = 80;
+            }
+            else if(item == art::sfx_poof || item == art::sfx_blink || item == art::sfx_explosion ||
+                    item == art::sfx_stomp || item == art::sfx_chest || item == art::sfx_coin_burst)
+            {
+                length = 34;
             }
 
             for(int& slot : _sound_slots)
@@ -1026,13 +1224,14 @@ namespace
             _boss_white_colors = _white_colors;
 
             // Elite tint (§4 2b): Swift = gold, Shielded = cyan; computed from whatever palette the item has.
-            const bn::color tints[2] = { bn::color(31, 26, 4), bn::color(8, 28, 31) };
+            const bn::color tints[4] = { bn::color(31, 26, 4), bn::color(8, 28, 31), bn::color(30, 8, 28),
+                                         bn::color(31, 22, 0) };
 
             for(int t = 0; t < type_count; ++t)
             {
                 const bn::span<const bn::color>& src = enemy_defs[t].look->item->palette_item().colors_ref();
 
-                for(int e = 0; e < 2; ++e)
+                for(int e = 0; e < 4; ++e)
                 {
                     for(int i = 0; i < 16; ++i)
                     {
@@ -1136,12 +1335,14 @@ namespace
             }
 
             ++_t;
+            _create_budget = create_budget_per_frame;
             _prof_timer.restart();
             _update_player();
             _prof(0);
             _update_director();
             _prof(1);
             _update_weapons();
+            _update_horde_frames();
             _update_enemies();
             _prof(6);
             _update_boss();
@@ -1180,6 +1381,7 @@ namespace
             if(_player_hp <= 0)
             {
                 _player_hp = 0;
+                test_dead_at = _t / fps;
                 _mode = game_mode::dead;
                 _wizard.set_tiles(art::wizard.tiles_item(), art::wizard_death.first);
                 _wizard.set_visible(true);
@@ -1303,9 +1505,9 @@ namespace
             }
 
             _pos = end;
-            _blink_cd = 3 * fps;
+            _blink_cd = _cooldown(3 * fps);
             _blink_invulnerable = 10;
-            _play(art::sfx_menu, 1, fixed(0.7));
+            _play(art::sfx_blink, fixed(0.8));
             test_blinks = test_blinks + 1;
 
             // Implosion where he leaves, flash where he lands, translucent ghosts in between.
@@ -1354,8 +1556,7 @@ namespace
             _nova_cast_frame = true;
             _nova_flash = 24;
             _shake = 20;
-            _play(art::sfx_boss);
-            _play(art::sfx_level, 1, fixed(0.8));
+            _play(art::sfx_nova);
             _nova_damage = _damage(40);
             _nova_pending = 0;
 
@@ -1657,9 +1858,9 @@ namespace
 
             int s = _t / fps;
 
-            if(_boss_spawned)
+            if(_boss)
             {
-                return 12;
+                return _boss_kind == 0 ? 12 : 16;   // DISENO_FASES E2 boss rows
             }
 
             if(s < 60)
@@ -1667,14 +1868,70 @@ namespace
                 return 6 + (8 * s) / 60;
             }
 
-            constexpr int per_minute[5] = { 14, 12, 26, 32, 38 };   // minute 1: 20 -> 16 -> 12 (DISENO §19.1, G-45.2)
-            return per_minute[bn::min(s / 60, 4)];
+            // E2 Cap per minute; minute 1: 20 -> 16 -> 12 (DISENO §19.1, G-45.2); minute 5 = after the Slime King.
+            constexpr int per_minute[10] = { 14, 12, 26, 32, 38, 12, 36, 40, 44, 46 };
+            return per_minute[bn::min(s / 60, 9)];
         }
 
         [[nodiscard]] bool _spawn_paused() const
         {
             int s = _t / fps;
-            return (s >= 50 && s < 56) || (_t >= boss_time - pre_boss_pause && _t < boss_time) || _boss_dead;
+            return (s >= 50 && s < 56) || (_t >= boss_time - pre_boss_pause && _t < boss_time) ||
+                   (_t >= boss2_time - pre_boss_pause && _t < boss2_time && _bosses_killed == 1) || _rest_t > 0 ||
+                   _boss_dead;
+        }
+
+        // Weighted mixes of E2 (stage 1), minutes 2..10 (index 0 = minute 2). Type then weight; weight 0 ends.
+        struct mix_entry
+        {
+            uint8_t type;
+            uint8_t weight;
+        };
+
+        [[nodiscard]] int _pick_mixed(int minute, int r) const
+        {
+            static constexpr mix_entry mixes[9][5] = {
+                { { type_skeleton, 50 }, { type_bat, 30 }, { type_slime, 20 }, {}, {} },                      // 2
+                { { type_skeleton, 45 }, { type_bat, 25 }, { type_slime, 15 }, { type_big_slime, 15 }, {} },  // 3
+                { { type_skeleton, 50 }, { type_bat, 25 }, { type_big_slime, 25 }, {}, {} },                  // 4
+                { { type_slime, 50 }, { type_bat, 50 }, {}, {}, {} },                                         // 5
+                { { type_goblin, 40 }, { type_skeleton, 25 }, { type_bat, 25 }, { type_big_slime, 10 }, {} }, // 6
+                { { type_goblin, 35 }, { type_wolf, 25 }, { type_skeleton, 25 }, { type_bat, 15 }, {} },      // 7
+                { { type_wolf, 30 }, { type_goblin, 30 }, { type_skeleton, 25 }, { type_bat, 15 }, {} },      // 8
+                { { type_goblin, 35 }, { type_wolf, 25 }, { type_skeleton, 25 }, { type_orc, 15 }, {} },      // 9
+                { { type_goblin, 60 }, { type_bat, 40 }, {}, {}, {} },                                        // 10
+            };
+            const mix_entry* mix = mixes[bn::max(0, bn::min(minute, 10) - 2)];
+
+            for(int k = 0; k < 5 && mix[k].weight; ++k)
+            {
+                if(r < mix[k].weight)
+                {
+                    return mix[k].type;
+                }
+
+                r -= mix[k].weight;
+            }
+
+            return type_skeleton;
+        }
+
+        // §C1 "first time": a new type enters alone and joins the draw 10 s later.
+        [[nodiscard]] static int _intro_second(int type)
+        {
+            switch(type)
+            {
+            case type_big_slime:
+                return 180;
+            case type_goblin:
+                return 360;
+            case type_wolf:
+                return 420;
+            case type_orc:
+                return 540;
+            default:
+                return 0;
+            }
         }
 
         [[nodiscard]] fixed_point _spawn_point(int min_d, int max_d, bool ahead)
@@ -1713,8 +1970,8 @@ namespace
             }
 
             const enemy_def& def = enemy_defs[type];
-            bn::sprite_ptr sprite = bn::sprite_ptr::create(p, def.look->item->shape_size(), _move_tiles[type][0],
-                                                           *_type_pal[type]);
+            const bn::sprite_tiles_ptr& tiles = _horde_tiles[_type_slot[type]][def.look->walk_dirs > 1 ? 2 : 0];
+            bn::sprite_ptr sprite = bn::sprite_ptr::create(p, def.look->item->shape_size(), tiles, *_type_pal[type]);
             sprite.set_camera(_camera);
             sprite.set_bg_priority(2);
             sprite.set_z_order(10);
@@ -1722,7 +1979,8 @@ namespace
             e.pos = p;
             _grid_link(_enemies.size() - 1);
             e.type = uint8_t(type);
-            e.hp = def.hp;
+            e.hp = scaled_hp(def.hp, _t / (60 * fps));
+            e.dir = 2;
             e.uid = _next_uid++;
 
             if(_next_uid == 0)
@@ -1732,20 +1990,54 @@ namespace
 
             ++_spawns_total;
 
-            if(elite_chance_den > 0 && _t >= 2 * 60 * fps && _random.get_int(elite_chance_den) == 0)
+            e.flank = (e.uid & 1) != 0;
+
+            if(elite_chance_den > 0 && _t >= 2 * 60 * fps && _elites_alive() < 3 && ! def.big &&
+               _random.get_int(elite_chance_den) == 0)
             {
-                e.elite = uint8_t(1 + _random.get_int(2));
+                // Swift, Shielded; Splitting from 5:00 (§C2 élites, block 2).
+                e.elite = uint8_t(1 + _random.get_int(_t >= boss_time ? 3 : 2));
 
                 if(e.elite == 2)
                 {
                     e.shield = 3;
                 }
 
+                e.hp *= e.elite == 1 ? 2 : 3;   // §C2 élites: x3 HP (Swift x2)
+
                 e.sprite.set_palette(_enemy_palette(e));
                 e.aura = _world_sprite(art::fx_aura, p, 0, 11);
             }
 
             return &e;
+        }
+
+        [[nodiscard]] int _elites_alive() const
+        {
+            int count = 0;
+
+            for(const enemy& e : _enemies)
+            {
+                count += e.elite != 0;
+            }
+
+            return count;
+        }
+
+        enemy* _force_elite(int elite)
+        {
+            enemy* e = _spawn_enemy(type_skeleton, _spawn_point(80, 96, true), 0);
+
+            if(e)
+            {
+                e->elite = uint8_t(elite);
+                e->shield = elite == 2 ? 3 : 0;
+                e->hp *= 3;
+                e->sprite.set_palette(_enemy_palette(*e));
+                e->aura = _world_sprite(art::fx_aura, e->pos, 0, 11);
+            }
+
+            return e;
         }
 
         void _make_room(int needed)
@@ -1888,6 +2180,26 @@ namespace
             int s = _t / fps;
             int r = _random.get_int(100);
 
+            if(_stress)
+            {
+                // Worst VRAM/CPU mix (DISENO_RUTA block 2): every horde art of stage 1 at once.
+                constexpr uint8_t mix[8] = { type_slime, type_skeleton, type_goblin, type_wolf, type_orc, type_bat,
+                                             type_big_slime, type_goblin };
+                return mix[(_spawns_total + r) & 7];
+            }
+
+            if(s >= 120)
+            {
+                int type = _pick_mixed(s / 60, r);
+
+                if(s < _intro_second(type) + 10 || (enemy_defs[type].big && _big_alive >= max_big_alive))
+                {
+                    type = type_skeleton;
+                }
+
+                return type;
+            }
+
             if(s < 70)
             {
                 return type_slime;
@@ -1926,16 +2238,33 @@ namespace
 
             // §19.2: no scripted skeleton pair at 1:00 any more; they enter the spawn pool from 1:10.
 
-            // Shrines at 1:30, 3:00, 4:30 (§4 2a, §6).
-            if(second && s > 0 && s % 90 == 0 && _t < boss_time)
+            if(_rest_t > 0)
+            {
+                --_rest_t;
+            }
+
+            _spawn_pending_splits();
+
+            // Shrines every 90 s (§4 2a, E2): not with a boss alive, not at 5:00 / 6:00 (boss and rest).
+            if(second && s > 0 && s % 90 == 0 && s != 360 && _t < boss2_time && ! _boss && ! _shrine)
             {
                 _spawn_shrine();
             }
 
-            // 2:00 Bat Swarm with a 1 s warning (§5, §6).
+            // 2:00 Bat Swarm with a 1 s warning (§5, §6); 8:00 Wolf Pack (STAMPEDE, 90 f + howl); 9:15 Goblin Raid
+            // (SWARM, 60 f).
             if(_t == 2 * 60 * fps - fps)
             {
-                _begin_swarm_warning();
+                _begin_swarm_warning(swarm_bats, fps);
+            }
+            else if(_t == 8 * 60 * fps - 90)
+            {
+                _begin_swarm_warning(swarm_wolves, 90);
+                _play(art::sfx_howl);
+            }
+            else if(_t == (9 * 60 + 15) * fps - fps)
+            {
+                _begin_swarm_warning(swarm_goblins, fps);
             }
 
             if(_swarm_warning_t > 0)
@@ -1949,6 +2278,10 @@ namespace
                     _spawn_swarm();
                 }
             }
+            else if(_swarm_rows_left > 0 && --_swarm_row_t <= 0)
+            {
+                _spawn_swarm();
+            }
 
             // 4:00 Bone Ring (§6).
             if(_t == 4 * 60 * fps)
@@ -1956,10 +2289,45 @@ namespace
                 _spawn_bone_ring();
             }
 
-            // 5:00 Slime King (§8).
+            // First appearances (§C1): alone, from the side the wizard faces. 7:00 wolves howl 1.5 s before.
+            if(second && ! _stress)
+            {
+                if(s == 180)
+                {
+                    _spawn_enemy(type_big_slime, _spawn_point(136, 150, true), 0);
+                }
+                else if(s == 360 || s == 420)
+                {
+                    fixed_point p = _spawn_point(136, 150, true);
+                    int type = s == 360 ? type_goblin : type_wolf;
+                    _spawn_enemy(type, p, 0);
+                    _spawn_enemy(type, p + fixed_point(0, 18), 0);
+                }
+                else if(s == 540)
+                {
+                    _spawn_enemy(type_orc, _spawn_point(136, 150, true), 0);
+                }
+            }
+
+            if(_t == 420 * fps - 90 && ! _stress)
+            {
+                _play(art::sfx_howl);
+            }
+
+            // Treasure Goblin: one window per act (§C5), or forced from the DBG menu.
+            if(_t == _treasure_at && ! _boss)
+            {
+                _spawn_treasure();
+            }
+
+            // 5:00 Slime King (§8), 10:00 Orc Warchief (E5.1).
             if(_t == boss_time && ! _boss_spawned)
             {
-                _spawn_boss();
+                _spawn_boss(0);
+            }
+            else if(_t >= boss2_time && _bosses_killed == 1 && ! _boss && ! _stress)
+            {
+                _spawn_boss(1);
             }
 
             if(_t < 10 * fps && ! _stress)
@@ -1990,7 +2358,7 @@ namespace
 
             if(_stress)
             {
-                group = 4;   // perf: 4 per frame refills as fast as 8 every 2 frames, with half the peak
+                group = 2;   // perf: 2 per frame (each new sprite costs ~5 % of a frame; 4 per frame measured +20 %)
                 _spawn_cd = 1;
             }
             else if(s < 30)
@@ -2028,19 +2396,128 @@ namespace
                     p = base;
                 }
 
-                _spawn_enemy(_pick_type(), p, 40);
+                _spawn_enemy(_pick_type(), p, s < 300 ? 40 : 30);
             }
         }
 
-        void _begin_swarm_warning()
+        // Splits are queued (from kills inside weapon loops) and spawned here, with a poof and 20 safe frames.
+        void _spawn_pending_splits()
+        {
+            for(const split_request& r : _splits)
+            {
+                for(int k = 0; k < r.count; ++k)
+                {
+                    fixed_point p = r.pos + angle_vector(k * 2048 / r.count + 256) * 10;
+
+                    if(enemy* e = _spawn_enemy(r.type, p, 0))
+                    {
+                        e->safe = 20;
+                        e->small = true;
+
+                        if(r.hp > 0)
+                        {
+                            e->hp = r.hp;
+                        }
+                    }
+                }
+
+                _spawn_poof(r.pos, 3);
+            }
+
+            _splits.clear();
+        }
+
+        void _spawn_treasure()
+        {
+            if(_treasure_alive || _enemies.full())
+            {
+                return;
+            }
+
+            if(enemy* e = _spawn_enemy(type_treasure, _spawn_point(96, 112, true), 0))
+            {
+                e->life = 20 * fps;
+                _treasure_alive = true;
+                test_events = test_events | 1;
+                _show_hint("TREASURE GOBLIN!", 2 * fps);
+                _play(art::sfx_coin_burst, fixed(0.6));
+                bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
+                arrow.set_bg_priority(0);
+                _treasure_arrow = bn::move(arrow);
+            }
+        }
+
+        void _update_treasure_arrow()
+        {
+            if(! _treasure_arrow)
+            {
+                return;
+            }
+
+            if(! _treasure_alive)
+            {
+                _treasure_arrow.reset();
+                return;
+            }
+
+            for(const enemy& e : _enemies)
+            {
+                if(e.type == type_treasure)
+                {
+                    int dx = to_int(e.pos.x() - _pos.x());
+                    int dy = to_int(e.pos.y() - _pos.y());
+                    _place_edge_arrow(*_treasure_arrow, dx, dy, 0);
+                    return;
+                }
+            }
+        }
+
+        // Gold (first 0) or red (first 3) edge arrow towards dx, dy; hidden while the target is on screen.
+        void _place_edge_arrow(bn::sprite_ptr& arrow, int dx, int dy, int first)
+        {
+            bool on_screen = abs_int(dx) < 112 && abs_int(dy) < 72;
+            arrow.set_visible(! on_screen && (_t & 16));
+
+            if(on_screen)
+            {
+                return;
+            }
+
+            int adx = abs_int(dx);
+            int ady = abs_int(dy);
+            int frame = art::arrow_north_east;
+
+            if(adx > ady * 2)
+            {
+                frame = art::arrow_east;
+            }
+            else if(ady > adx * 2)
+            {
+                frame = art::arrow_north;
+            }
+
+            arrow.set_tiles(art::edge_arrow.tiles_item(), frame + first);
+            arrow.set_horizontal_flip(dx < 0);
+            arrow.set_vertical_flip(dy > 0);
+            arrow.set_position(bn::max(-110, bn::min(110, dx)), bn::max(-58, bn::min(70, dy)));
+        }
+
+        void _begin_swarm_warning(int kind, int frames)
         {
             int side = _random.get_int(4);
             constexpr int dx[4] = { -1, 1, 0, 0 };
             constexpr int dy[4] = { 0, 0, -1, 1 };
+            _swarm_kind = kind;
             _swarm_dir = fixed_point(-dx[side], -dy[side]);
             _swarm_origin = fixed_point(dx[side] * 150, dy[side] * 110);
-            _swarm_warning_t = fps;
+            _swarm_warning_t = frames;
+            _swarm_rows_left = kind == swarm_wolves ? 2 : 1;
             _warnings.clear();
+
+            if(kind != swarm_wolves)
+            {
+                _play(art::sfx_wave, fixed(0.8));
+            }
 
             for(int i = -1; i <= 1; ++i)
             {
@@ -2064,9 +2541,52 @@ namespace
 
         void _spawn_swarm()
         {
-            _make_room(12);
             fixed_point perp(-_swarm_dir.y(), _swarm_dir.x());
             fixed_point origin = _pos + _swarm_origin;
+            --_swarm_rows_left;
+
+            if(_swarm_kind == swarm_wolves)
+            {
+                // STAMPEDE (E1): rows of 3 dashing wolves, 20 f apart, straight across at 3 px/f.
+                _make_room(3);
+                test_events = test_events | 4;
+                _swarm_row_t = 20;
+
+                for(int i = 0; i < 3; ++i)
+                {
+                    fixed_point p = origin + perp * ((i - 1) * 30);
+
+                    if(enemy* e = _spawn_enemy(type_wolf, p, 0))
+                    {
+                        e->mode = mode_swarm;
+                        e->vel = _swarm_dir * 3;
+                        e->life = 130;
+                        e->state = 2;
+                        e->timer = 255;
+                        e->sprite.set_tiles(art::wolf.item->tiles_item(), art::wolf_dash);
+                        e->sprite.set_horizontal_flip(_swarm_dir.x() < 0);
+                    }
+                }
+
+                return;
+            }
+
+            if(_swarm_kind == swarm_goblins)
+            {
+                // SWARM (E1): a compact group of 20 goblins from one side; they fan out with their flank angle.
+                _make_room(20);
+                test_events = test_events | 8;
+
+                for(int i = 0; i < 20; ++i)
+                {
+                    fixed_point p = origin + fixed_point(_random.get_int(-28, 29), _random.get_int(-28, 29));
+                    _spawn_enemy(type_goblin, p, 0);
+                }
+
+                return;
+            }
+
+            _make_room(12);
 
             for(int i = 0; i < 12; ++i)
             {
@@ -2104,6 +2624,272 @@ namespace
             return _blessing == bless_fury ? (base * 13 + 9) / 10 : base;
         }
 
+        // Spell Tome: -6 % weapon and Blink cooldown per level (§C3).
+        [[nodiscard]] int _cooldown(int base) const
+        {
+            return base * (100 - 6 * _levels[up_tome]) / 100;
+        }
+
+        // ---- Ember Toss (§C3): a ball thrown where the wizard looks lands 64 px away in 40 f, explodes (r 24)
+        // and leaves fire for 60 f (2 damage every 10 f).
+        void _update_ember()
+        {
+            int lv = _levels[up_ember];
+
+            for(int k = 0; k < _embers.size();)
+            {
+                ember_ball& b = _embers[k];
+                ++b.t;
+                b.pos += b.vel;
+                int height = (bn::lut_sin((b.t * 512) / 40).data() * 18) >> 12;
+                b.sprite.set_position(b.pos.x(), b.pos.y() - height);
+
+                if((b.t & 3) == 0)
+                {
+                    b.sprite.set_tiles(art::fx_ember.tiles_item(), (b.t >> 2) & 1);
+                }
+
+                if(b.t >= 40)
+                {
+                    _explode(b.pos, lv >= 3 ? 32 : 24, _damage(lv >= 4 ? 20 : 14));
+
+                    if(! _fires.full())
+                    {
+                        bn::sprite_ptr s = _world_sprite(art::fx_fire, b.pos, 0, 28);
+                        fire_patch& f = _fires.emplace_back(bn::move(s));
+                        f.pos = b.pos;
+                        f.life = lv >= 5 ? 120 : 60;
+                    }
+
+                    _embers.erase(_embers.begin() + k);
+                    continue;
+                }
+
+                ++k;
+            }
+
+            for(int k = 0; k < _fires.size();)
+            {
+                fire_patch& f = _fires[k];
+
+                if(--f.life <= 0)
+                {
+                    _fires.erase(_fires.begin() + k);
+                    continue;
+                }
+
+                if((f.life % 5) == 0)
+                {
+                    f.sprite.set_tiles(art::fx_fire.tiles_item(), (f.life / 5) & 3);
+                }
+
+                if((f.life % 10) == 0)
+                {
+                    _area_damage(f.pos, 12, _damage(2), false);
+                }
+
+                ++k;
+            }
+
+            if(lv == 0 || --_ember_cd > 0)
+            {
+                return;
+            }
+
+            _ember_cd = _cooldown(lv >= 5 ? 100 : 120);
+            int balls = lv >= 2 ? 2 : 1;
+
+            for(int i = 0; i < balls && ! _embers.full(); ++i)
+            {
+                int angle = balls == 1 ? 0 : (i ? 114 : -114);   // +-20 degrees
+                fixed_point r = angle_vector(angle);
+                fixed_point d(_facing.x() * r.x() - _facing.y() * r.y(), _facing.x() * r.y() + _facing.y() * r.x());
+                bn::sprite_ptr s = _world_sprite(art::fx_ember, _pos, 0, 3);
+                ember_ball& b = _embers.emplace_back(bn::move(s));
+                b.pos = _pos;
+                b.vel = d * fixed(1.6);
+            }
+        }
+
+        void _explode(const fixed_point& p, int radius, int damage)
+        {
+            _spawn_particle(p, fixed_point(), art::fx_explosion, art::explosion_anim,
+                            art::explosion_anim.count * art::explosion_anim.frame_time, 4);
+            _play(art::sfx_explosion, fixed(0.5));
+            _area_damage(p, radius, damage, true);
+        }
+
+        // Damages every enemy whose centre is within radius of p (and the boss if its box overlaps).
+        void _area_damage(const fixed_point& p, int radius, int damage, bool boss)
+        {
+            int x = to_int(p.x());
+            int y = to_int(p.y());
+            int8_t near[max_enemies];
+            int count = _grid_query(x, y, radius + 6, near);
+            int r2 = (radius + 6) * (radius + 6);
+
+            for(int k = 0; k < count; ++k)
+            {
+                const enemy& e = _enemies[near[k]];
+                int dx = to_int(e.pos.x()) - x;
+                int dy = to_int(e.pos.y()) - y;
+
+                if(dx * dx + dy * dy <= r2)
+                {
+                    _hit_enemy(near[k], damage, p);
+                }
+            }
+
+            if(boss && _boss && _boss_state != 3 && _boss_box_hit(x, y, radius / 2))
+            {
+                _hit_boss(damage);
+            }
+        }
+
+        // ---- Storm Chain (§C3): bolt to the nearest enemy that jumps to the nearest unhit one within 48 px.
+        void _update_chain()
+        {
+            if(_chain_show > 0 && --_chain_show == 0)
+            {
+                for(bn::sprite_ptr& s : _chain_sprites)
+                {
+                    s.set_visible(false);
+                }
+            }
+            else if(_chain_show > 0 && (_chain_show & 1) == 0)
+            {
+                for(bn::sprite_ptr& s : _chain_sprites)
+                {
+                    s.set_tiles(art::fx_chain.tiles_item(), (_chain_show >> 1) % 3);
+                }
+            }
+
+            _chain_step();
+            int lv = _levels[up_chain];
+
+            if(lv == 0 || --_chain_cd > 0)
+            {
+                return;
+            }
+
+            _chain_cd = _cooldown(lv >= 5 ? 70 : 100);
+            _chain_jumps = (lv >= 4 ? 6 : lv >= 2 ? 4 : 3) + 1;
+            _chain_damage = _damage(lv >= 3 ? 12 : 8);
+            _chain_from = fixed_point(_pos.x(), _pos.y() - 6);
+            _chain_range = 160;
+            _chain_hits = 0;
+            _chain_sprite_k = 0;
+
+            if(_boss && _boss_state != 3)
+            {
+                int bdx = to_int(_boss_pos.x() - _pos.x());
+                int bdy = to_int(_boss_pos.y() - _pos.y());
+
+                if(bdx * bdx + bdy * bdy < 140 * 140)
+                {
+                    _chain_segment(_chain_from, _boss_pos, _chain_sprite_k);
+                    _chain_from = _boss_pos;
+                    _hit_boss(_chain_damage);
+                    _chain_range = 48;
+                    _chain_show = 10;
+                }
+            }
+
+            _play(art::sfx_zap, fixed(0.5));
+        }
+
+        // perf: one jump per frame (a travelling bolt); all jumps in one frame measured 2471 ticks (56 %).
+        void _chain_step()
+        {
+            if(_chain_jumps <= 0)
+            {
+                return;
+            }
+
+            --_chain_jumps;
+            int x = to_int(_chain_from.x());
+            int y = to_int(_chain_from.y());
+            int range = _chain_range;
+            int8_t near[max_enemies];
+            int count;
+
+            if(range > 48)
+            {
+                // First target: plain scan (a 160 px bucket query sorts every enemy; measured slower).
+                count = _enemies.size();
+
+                for(int k = 0; k < count; ++k)
+                {
+                    near[k] = int8_t(k);
+                }
+            }
+            else
+            {
+                count = _grid_query(x, y, range, near);
+            }
+
+            int best = -1;
+            int best_d = range * range + 1;
+
+            for(int k = 0; k < count; ++k)
+            {
+                const enemy& e = _enemies[near[k]];
+
+                if(abs_int(to_int(e.pos.x()) - x) > range || abs_int(to_int(e.pos.y()) - y) > range)
+                {
+                    continue;
+                }
+
+                bool done = e.safe != 0;
+
+                for(int h = 0; h < _chain_hits; ++h)
+                {
+                    done |= _chain_hit[h] == e.uid;
+                }
+
+                int dx = to_int(e.pos.x()) - x;
+                int dy = to_int(e.pos.y()) - y;
+                int d = dx * dx + dy * dy;
+
+                if(! done && d < best_d)
+                {
+                    best_d = d;
+                    best = near[k];
+                }
+            }
+
+            if(best < 0)
+            {
+                _chain_jumps = 0;
+                return;
+            }
+
+            fixed_point to = _enemies[best].pos;
+            _chain_hit[_chain_hits++] = _enemies[best].uid;
+            _chain_segment(_chain_from, to, _chain_sprite_k);
+            _chain_from = to;
+            _chain_range = 48;
+            _chain_show = 10;
+            _hit_enemy(best, _chain_damage, to);
+        }
+
+        // A row of fx_chain sprites between two points (pooled; at most chain_sprites in total).
+        void _chain_segment(const fixed_point& a, const fixed_point& b, int& sprite_k)
+        {
+            int dx = to_int(b.x() - a.x());
+            int dy = to_int(b.y() - a.y());
+            int len = abs_int(dx) + abs_int(dy);
+            int pieces = bn::max(1, bn::min(4, len / 14));
+
+            for(int k = 0; k < pieces && sprite_k < chain_sprites; ++k, ++sprite_k)
+            {
+                bn::sprite_ptr& s = _chain_sprites[sprite_k];
+                s.set_position(a + (b - a) * (2 * k + 1) / (2 * pieces) + fixed_point(0, -4));
+                s.set_vertical_flip(k & 1);
+                s.set_visible(true);
+            }
+        }
+
         void _update_weapons()
         {
             _update_nova();
@@ -2113,6 +2899,15 @@ namespace
             _update_runes();
             _prof(3);
             _update_frost();
+            {
+                bn::timer t;
+                _update_ember();
+                int e = t.elapsed_ticks_with_restart();
+                _update_chain();
+                int c = t.elapsed_ticks();
+                test_prof_ember = bn::max(int(test_prof_ember), e);
+                test_prof_chain = bn::max(int(test_prof_chain), c);
+            }
             _prof(4);
             _update_bolts();
             _prof(5);
@@ -2127,7 +2922,8 @@ namespace
                 return;
             }
 
-            _spark_cd = lv >= 5 ? 40 : 50;
+            _spark_cd = _cooldown(lv >= 5 ? 40 : 50);
+            _play(art::sfx_spark, fixed(0.3));   // one per burst, not per spark (audio/LEEME.md)
             int count = lv >= 4 ? 3 : lv >= 2 ? 2 : 1;
             int damage = _damage(lv >= 3 ? 8 : 5);
             int pierce = lv >= 5 ? 2 : 0;
@@ -2243,7 +3039,7 @@ namespace
                 int by = to_int(b.pos.y());
 
                 int8_t near[max_enemies];
-                int near_count = dead ? 0 : _grid_query(bx, by, enemy_half_box + 3, near);
+                int near_count = dead ? 0 : _grid_query(bx, by, 14, near);
 
                 for(int k = 0; k < near_count && ! dead; ++k)
                 {
@@ -2252,7 +3048,9 @@ namespace
                     int dx = to_int(e.pos.x()) - bx;
                     int dy = to_int(e.pos.y()) - by;
 
-                    if(abs_int(dx) < enemy_half_box + 3 && abs_int(dy) < enemy_half_box + 3)
+                    int reach = enemy_defs[e.type].half + 3;
+
+                    if(abs_int(dx) < reach && abs_int(dy) < reach)
                     {
                         if(b.last_hit[0] == e.uid || b.last_hit[1] == e.uid || b.last_hit[2] == e.uid)
                         {
@@ -2407,7 +3205,7 @@ namespace
                     return;
                 }
 
-                _frost_cd = lv >= 4 ? 110 : 150;
+                _frost_cd = _cooldown(lv >= 4 ? 110 : 150);
                 _frost_t = 0;
                 ++_frost_pulse_id;
 
@@ -2515,6 +3313,11 @@ namespace
         {
             enemy& e = _enemies[i];
 
+            if(e.safe)
+            {
+                return false;
+            }
+
             if(e.shield > 0)
             {
                 --e.shield;
@@ -2565,6 +3368,11 @@ namespace
             {
                 e.knock = knockback_frames;
                 e.knock_vel = unit(to_int(e.pos.x() - from.x()), to_int(e.pos.y() - from.y())) * knockback_speed;
+
+                if(enemy_defs[e.type].kind == kind_tank)
+                {
+                    e.knock_vel = e.knock_vel / 4;   // TANK: knockback x0.25 (§C1)
+                }
             }
 
             return false;
@@ -2587,31 +3395,75 @@ namespace
 
             const art::monster_art& look = *enemy_defs[e.type].look;
             const art::anim& death = look.death;
-            _spawn_particle(fixed_point(p.x(), p.y() + look.y_offset), fixed_point(), *look.item, death,
-                            death.count * death.frame_time, 14, e.sprite.horizontal_flip());
+            if(_create_budget-- > 0)
+            {
+                _spawn_particle(fixed_point(p.x(), p.y() + look.y_offset), fixed_point(), *look.item, death,
+                                death.count * death.frame_time, 14, e.sprite.horizontal_flip());
+            }
 
             if(_fx.death_poof)
             {
                 _spawn_poof(p, 3);
             }
 
-            int value = 1;
+            const enemy_def& def = enemy_defs[e.type];
+            int value = def.xp;
 
-            if(e.type == type_skeleton && _random.get_int(5) == 0)
+            if(def.xp5_pct && _random.get_int(100) < def.xp5_pct)
             {
                 value = 5;
             }
 
-            _spawn_gem(p, value);
-
             if(e.elite)
             {
+                value = 25;
+            }
+
+            if(value > 0)
+            {
+                _spawn_gem(p, value);
+            }
+
+            if(e.type == type_treasure)
+            {
+                // §C2: 30 + rnd(31) gold and one heart.
+                _spawn_pickup(p + fixed_point(-6, 0), pickup_coin, 30 + _random.get_int(31));
+                _spawn_pickup(p + fixed_point(6, 0), pickup_heart, 30);
+                _treasure_alive = false;
+                test_events = test_events | 512;
+                _play(art::sfx_coin_burst);
+            }
+            else if(e.elite)
+            {
                 _spawn_pickup(p + fixed_point(8, 0), pickup_chest, 1);
-                _spawn_pickup(p + fixed_point(-8, 0), pickup_coin, 3);
+                _spawn_pickup(p + fixed_point(-8, 0), pickup_coin, 5);
+
+                if(_random.get_int(4) == 0)
+                {
+                    _spawn_heart(p + fixed_point(0, 8));
+                }
             }
             else if(_random.get_int(50) == 0)
             {
                 _spawn_pickup(p + fixed_point(6, 4), pickup_coin, 1);
+            }
+            else if(_random.get_int(250) == 0)
+            {
+                _spawn_heart(p + fixed_point(-6, 4));
+            }
+
+            // SPLIT (big slime: 2 slimes) and the Splitting elite (3 copies, 30 % HP), queued (§C1, §C2).
+            if(! _splits.full())
+            {
+                if(e.elite == 3 && ! e.small)
+                {
+                    _splits.push_back({ p, e.type, 3, bn::max(1, scaled_hp(def.hp, _t / (60 * fps)) * 3 * 3 / 10) });
+                    test_events = test_events | 2;
+                }
+                else if(def.splits && ! e.small)
+                {
+                    _splits.push_back({ p, type_slime, def.splits, 0 });
+                }
             }
 
             _remove_enemy(i);
@@ -2619,6 +3471,34 @@ namespace
 
         // -----------------------------------------------------------------------------------------------------
         // Enemies
+
+        // Shared horde frame (§C6): advances every art's animation and retargets its direction blocks.
+        void _update_horde_frames()
+        {
+            for(int a = 0; a < _horde_art_count; ++a)
+            {
+                const art::monster_art& look = *_horde_looks[a];
+                int f = (_t / look.move[0].frame_time) % look.move[0].count;
+
+                if(f != _horde_frame[a])
+                {
+                    _horde_frame[a] = f;
+                    bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs>& blocks = _horde_tiles[a];
+
+                    for(int d = 0, n = blocks.size(); d < n; ++d)
+                    {
+                        blocks[d].set_tiles_ref(look.item->tiles_item(), look.move[d].first + f);
+                    }
+                }
+            }
+
+            int used = bn::sprite_tiles::used_tiles_count();
+
+            if(used > test_tiles_used)
+            {
+                test_tiles_used = used;
+            }
+        }
 
         HB_HOT void _update_enemies()
         {
@@ -2658,7 +3538,26 @@ namespace
                 }
                 else
                 {
-                    if(e.mode == mode_chase && abs_int(dx) + abs_int(dy) > recycle_distance)
+                    if(e.cd)
+                    {
+                        e.cd -= (_t & 1);
+                    }
+
+                    if(e.safe)
+                    {
+                        --e.safe;
+                    }
+
+                    if(def.kind == kind_flee && --e.life <= 0)
+                    {
+                        _spawn_poof(e.pos, 3);
+                        _treasure_alive = false;
+                        _remove_enemy(i);
+                        --n;
+                        continue;
+                    }
+
+                    if(e.mode == mode_chase && def.kind != kind_flee && abs_int(dx) + abs_int(dy) > recycle_distance)
                     {
                         e.pos = _spawn_point(spawn_min_distance, spawn_max_distance, true);
                         _grid_refresh(i);
@@ -2682,6 +3581,29 @@ namespace
                     {
                         --e.freeze;
                     }
+                    else if(def.kind == kind_dash && e.state != 0)
+                    {
+                        // DASH (§C1): crouch 30 f with red eyes (warning), then 20 f straight at 3 px/f.
+                        step = e.state == 2 ? e.vel : fixed_point();
+
+                        if(--e.timer == 0)
+                        {
+                            if(e.state == 1)
+                            {
+                                e.state = 2;
+                                e.timer = 20;
+                                e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_dash);
+                                test_wolf_dashes = test_wolf_dashes + 1;
+                            }
+                            else
+                            {
+                                e.state = 0;
+                                e.cd = 90;   // 180 f
+                                e.vel = fixed_point();
+                                e.sprite.set_tiles(_horde_tiles[_type_slot[e.type]][0]);
+                            }
+                        }
+                    }
                     else
                     {
                         if(((_t + e.uid) & 3) == 0 || (e.vel.x() == 0 && e.vel.y() == 0))
@@ -2693,19 +3615,46 @@ namespace
                                 speed *= fixed(1.6);
                             }
 
-                            e.vel = unit(dx, dy) * speed;
+                            fixed_point to = unit(dx, dy);
+                            int dist = abs_int(dx) + abs_int(dy);
+
+                            if(def.kind == kind_flee)
+                            {
+                                // Flees; tires when far so a chase stays possible (PROVISIONAL tuning).
+                                to = fixed_point(-to.x(), -to.y());
+                                speed = dist > 170 ? fixed(0.6) : speed;
+                            }
+                            else if(e.type == type_goblin && dist > 56)
+                            {
+                                fixed_point r = angle_vector(e.flank ? 171 : -171);   // +-30 degrees
+                                to = fixed_point(to.x() * r.x() - to.y() * r.y(), to.x() * r.y() + to.y() * r.x());
+                            }
+
+                            e.vel = to * speed;
                         }
 
                         step = e.vel;
 
-                        if(e.type == type_slime && ((_t + e.uid * 7) & 31) >= 20)
+                        if(def.kind == kind_hop && ((_t + e.uid * 7) & 31) >= 20)
                         {
-                            // Slimes hop: still for 12 of every 32 frames, faster in between (avg 0.35).
+                            // Slimes hop: still for 12 of every 32 frames, faster in between (avg = speed).
                             step = fixed_point();
                         }
-                        else if(e.type == type_slime)
+                        else if(def.kind == kind_hop)
                         {
                             step = step * fixed(1.6);
+                        }
+
+                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase &&
+                           abs_int(dx) <= 96 && abs_int(dy) <= 96 && dx * dx + dy * dy <= 96 * 96)
+                        {
+                            // Direction fixed when the warning starts.
+                            e.state = 1;
+                            e.timer = 30;
+                            e.vel = unit(dx, dy) * 3;
+                            e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_crouch);
+                            e.sprite.set_horizontal_flip(dx < 0);
+                            test_wolf_crouches = test_wolf_crouches + 1;
                         }
 
                         if(e.slow > 0)
@@ -2802,9 +3751,16 @@ namespace
 
                 _grid_refresh(i);
 
-                // Contact damage (§7).
-                if(abs_int(dx) < player_half_box + 6 && abs_int(dy) < player_half_box + 6)
+                // Contact damage (§7); the body box grows with the monster (32x32: 11 px half).
+                int reach = player_half_box + def.half - 1;
+
+                if(def.damage && ! e.safe && abs_int(dx) < reach && abs_int(dy) < reach)
                 {
+                    if(def.kind == kind_dash && e.state == 2 && _invulnerable == 0)
+                    {
+                        test_wolf_dash_hits = test_wolf_dash_hits + 1;
+                    }
+
                     _hurt_player(def.damage);
                 }
 
@@ -2818,15 +3774,16 @@ namespace
                 e.sprite.set_position(draw);
 
                 const art::monster_art& look = *def.look;
-                const art::anim& move_anim = look.move[0];
-                bool retile = ((_t + e.uid) % move_anim.frame_time) == 0;
+                bool retile = false;
 
                 if(look.walk_dirs > 1)
                 {
                     // Turns towards the wizard one 45 degree step every 4 frames.
                     if(((_t + e.uid) & 3) == 0)
                     {
-                        int target = dir_towards(dx, dy, e.dir);
+                        int target = def.kind == kind_flee ?
+                                    dir_towards(to_int(e.vel.x() * 16), to_int(e.vel.y() * 16), e.dir) :
+                                    dir_towards(dx, dy, e.dir);
 
                         if(target != e.dir)
                         {
@@ -2836,6 +3793,10 @@ namespace
                         }
                     }
                 }
+                else if(def.kind == kind_flee || (def.kind == kind_dash && e.state != 0))
+                {
+                    e.sprite.set_horizontal_flip(e.vel.x() < 0);
+                }
                 else
                 {
                     e.sprite.set_horizontal_flip(dx < 0);
@@ -2843,8 +3804,7 @@ namespace
 
                 if(retile)
                 {
-                    int base = look.walk_dirs > 1 ? art::drawn_dir(e.dir) * move_anim.count : 0;
-                    e.sprite.set_tiles(_move_tiles[e.type][base + move_anim.frame(_t + e.uid, true) - move_anim.first]);
+                    e.sprite.set_tiles(_horde_tiles[_type_slot[e.type]][art::drawn_dir(e.dir)]);
                 }
 
                 if(e.aura)
@@ -2864,20 +3824,33 @@ namespace
         // -----------------------------------------------------------------------------------------------------
         // Boss: Slime King (§8)
 
-        void _spawn_boss()
+        void _spawn_boss(int kind)
         {
             _boss_spawned = true;
-            _boss_pos = _pos + _facing * 90;
+            _boss_kind = kind;
+            _boss_pos = _pos + _facing * (kind ? 110 : 90);   // E5: never on top, >= 96 px
 
             if(_map.solid_at(to_int(_boss_pos.x()), to_int(_boss_pos.y())))
             {
-                _boss_pos = _pos + fixed_point(0, -80);
+                _boss_pos = _pos + fixed_point(0, -100);
             }
 
-            _boss_hp = 600;
+            _boss_max_hp = kind ? warchief_hp : 600;
+            _boss_hp = _boss_max_hp;
             _boss_state = 0;
             _boss_timer = 30;
-            bn::sprite_ptr b = _world_sprite(art::slime_king, _boss_pos, 0, 8);
+            _boss_fight_t = 0;
+            _boss_phase = 1;
+            _boss_invuln = 0;
+            test_boss_phase = 1;
+
+            if(kind)
+            {
+                test_events = test_events | 16;
+            }
+
+            art::music_boss.play(fixed(art::music_volume_pct) / 100);
+            bn::sprite_ptr b = _world_sprite(kind ? art::warchief : art::slime_king, _boss_pos, 0, 8);
             b.set_mosaic_enabled(_fx.boss_mosaic);
             _boss = bn::move(b);
             bn::sprite_ptr sh = _world_sprite(art::shadow_big, _boss_pos + fixed_point(0, 22), 0, 31);
@@ -2886,14 +3859,25 @@ namespace
 
             for(int i = 0; i < 6; ++i)
             {
-                bn::sprite_ptr bar = art::boss_bar.create_sprite(-80 + i * 32, -56, art::bar_width);
+                bn::sprite_ptr bar = art::boss_bar.create_sprite(-80 + i * 32, -56, 16);
                 bar.set_bg_priority(0);
+                bar.set_z_order(1);
                 _boss_bar.push_back(bn::move(bar));
+            }
+
+            // Notches where the boss changes phase (E5: Warchief 60 % and 30 %, King 50 % and 25 %).
+            for(int k = 0; k < 2; ++k)
+            {
+                int pct = kind ? (k ? 30 : 60) : (k ? 25 : 50);
+                bn::sprite_ptr notch = art::boss_bar.create_sprite(-96 + (192 * pct) / 100, -56, art::boss_bar_notch);
+                notch.set_bg_priority(0);
+                notch.set_z_order(0);
+                _boss_bar.push_back(bn::move(notch));
             }
 
             _boss_title.clear();
             _big_text.set_center_alignment();
-            _big_text.generate(0, -30, "SLIME KING", _boss_title);
+            _big_text.generate(0, -30, kind ? "ORC WARCHIEF" : "SLIME KING", _boss_title);
             _boss_title_t = 2 * fps;
             _shake = 12;
             _play(art::sfx_boss);
@@ -2908,6 +3892,11 @@ namespace
 
         void _hit_boss(int damage)
         {
+            if(_boss_invuln > 0)
+            {
+                return;
+            }
+
             _boss_hp -= damage;
             _boss_flash = hit_flash_frames;
 
@@ -2965,12 +3954,21 @@ namespace
 
             if(_boss_flash && --_boss_flash == 0)
             {
-                _boss->set_palette(art::slime_king.palette_item());
+                _boss->set_palette(_boss_kind ? art::warchief.palette_item() : art::slime_king.palette_item());
             }
 
             if(_boss_hp <= 0)
             {
                 _kill_boss();
+                return;
+            }
+
+            ++_boss_fight_t;
+            _update_boss_bar();
+
+            if(_boss_kind == 1)
+            {
+                _update_warchief();
                 return;
             }
 
@@ -3085,10 +4083,283 @@ namespace
                 _hurt_player(10);
             }
 
+        }
+
+        void _update_boss_bar()
+        {
+            int shown = (bn::max(0, _boss_hp) * 96) / _boss_max_hp;   // 2 px per frame step, 6 pieces of 16 steps
+
+            if(shown == _boss_bar_shown)
+            {
+                return;
+            }
+
+            _boss_bar_shown = shown;
+
             for(int i = 0; i < 6; ++i)
             {
-                int fill = (_boss_hp * 192) / 600 - i * 32;
-                _boss_bar[i].set_tiles(art::boss_bar.tiles_item(), bn::max(0, bn::min(32, fill)));
+                _boss_bar[i].set_tiles(art::boss_bar.tiles_item(), bn::max(0, bn::min(16, shown - i * 16)));
+            }
+        }
+
+        // ---- Orc Warchief (DISENO_FASES E5.1): charges (40 f stomp + line of "!", 3.5 px/f up to 90 f, stunned
+        // 60 f when he hits a prop), horn below 60 % (8 goblins from 2 sides), double charge below 30 %.
+        static constexpr int warchief_hp = 3000;
+        enum warchief_state
+        {
+            wc_walk = 11,
+            wc_stomp = 12,
+            wc_charge = 13,
+            wc_stunned = 14,
+            wc_horn = 15,
+            wc_roar = 16
+        };
+
+        void _set_boss_frame(const art::anim& a, int ticks, bool loop)
+        {
+            int frame = a.frame(ticks, loop);
+
+            if(frame != _boss_frame)
+            {
+                _boss_frame = frame;
+                _boss->set_tiles(art::warchief.tiles_item(), frame);
+            }
+        }
+
+        void _warchief_warning(int frames)
+        {
+            // Direction fixed when the warning starts; 4 "!" along it.
+            _boss_dir = unit(to_int(_pos.x() - _boss_pos.x()), to_int(_pos.y() - _boss_pos.y()));
+            _boss_state = wc_stomp;
+            _boss_timer = frames;
+            _boss_warn.clear();
+
+            for(int k = 1; k <= 4; ++k)
+            {
+                bn::sprite_ptr w = _world_sprite(art::alert, _boss_pos + _boss_dir * (k * 26), 0, 7);
+                _boss_warn.push_back(bn::move(w));
+            }
+        }
+
+        void _update_warchief()
+        {
+            int pct = (_boss_hp * 100) / _boss_max_hp;
+            int phase = pct < 30 ? 3 : pct < 60 ? 2 : 1;
+            fixed rage = _boss_fight_t > 2 * 60 * fps ? fixed(1.3) : fixed(1);   // E5 ira at 2:00 of combat
+            int dx = to_int(_pos.x() - _boss_pos.x());
+            int dy = to_int(_pos.y() - _boss_pos.y());
+
+            if(phase > _boss_phase && _boss_state != 0)
+            {
+                // Phase change (E5): 60 f invulnerable flash + roar + monsters pushed 48 px away.
+                _boss_phase = phase;
+                test_boss_phase = phase;
+                _boss_invuln = 60;
+                _boss_state = wc_roar;
+                _boss_timer = 60;
+                _boss_warn.clear();
+                _shake = 20;
+                _play(art::sfx_boss);
+
+                for(int i = 0, n = _enemies.size(); i < n; ++i)
+                {
+                    enemy& e = _enemies[i];
+                    int ex = to_int(e.pos.x() - _boss_pos.x());
+                    int ey = to_int(e.pos.y() - _boss_pos.y());
+
+                    if(ex * ex + ey * ey < 48 * 48)
+                    {
+                        e.pos = _boss_pos + (ex == 0 && ey == 0 ? fixed_point(1, 0) : unit(ex, ey)) * 48;
+                        _grid_refresh(i);
+                    }
+                }
+            }
+
+            if(_boss_invuln > 0)
+            {
+                --_boss_invuln;
+                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
+                                                        art::warchief.palette_item());
+            }
+
+            switch(_boss_state)
+            {
+            case 0: // entrance (mosaic 1 -> 0 in 30 f)
+                if(_fx.boss_mosaic)
+                {
+                    bn::sprites_mosaic::set_stretch(fixed(_boss_timer) / 30);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    bn::sprites_mosaic::set_stretch(0);
+                    _boss->set_mosaic_enabled(false);
+                    _boss_state = wc_walk;
+                    _boss_timer = 120;
+                }
+                break;
+
+            case wc_walk:
+            case wc_roar:
+            {
+                fixed speed = fixed(0.5) * rage;
+
+                if(abs_int(dx) + abs_int(dy) > 160)
+                {
+                    speed *= 3;   // E5: never left behind
+                }
+
+                if(_boss_state == wc_walk)
+                {
+                    fixed_point d = unit(dx, dy);
+                    _boss_pos += d * speed;
+                    _set_boss_frame(art::warchief_walk, _t, true);
+                }
+                else
+                {
+                    _set_boss_frame(art::warchief_horn, _t, true);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    // Every 4 s: below 60 % every other attack is the horn.
+                    if(_boss_phase >= 2 && (++_boss_attacks & 1) == 0)
+                    {
+                        _boss_state = wc_horn;
+                        _boss_timer = 45;
+                        _play(art::sfx_horn);
+                    }
+                    else
+                    {
+                        _boss_second = _boss_phase >= 3;
+                        _warchief_warning(40);
+                    }
+                }
+                break;
+            }
+
+            case wc_stomp:
+                _set_boss_frame(art::warchief_stomp, _boss_timer, true);
+
+                if(_boss_timer % 10 == 0)
+                {
+                    _spawn_particle(_boss_pos + fixed_point(_random.get_int(-16, 17), 14), fixed_point(0, fixed(-0.3)),
+                                    art::fx_dust, art::dust_anim, 15, 9);
+                    _play(art::sfx_stomp, fixed(0.6));
+                }
+
+                for(int k = 0; k < _boss_warn.size(); ++k)
+                {
+                    _boss_warn[k].set_tiles(art::alert.tiles_item(), (_boss_timer >> 3) & 1);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    _boss_warn.clear();
+                    _boss_state = wc_charge;
+                    _boss_timer = 90;
+                }
+                break;
+
+            case wc_charge:
+            {
+                _set_boss_frame(art::warchief_charge, _t, true);
+                fixed_point next = _boss_pos + _boss_dir * (fixed(3.5) * rage);
+                fixed_point front = next + _boss_dir * 20;
+
+                if(_map.solid_at(to_int(front.x()), to_int(front.y() + 10)))
+                {
+                    // Hit a prop: stunned 60 f (the window).
+                    _boss_state = wc_stunned;
+                    _boss_timer = 60;
+                    _shake = 14;
+                    _boss_second = false;
+                    test_events = test_events | 64;
+                    _play(art::sfx_stomp);
+                    _spawn_poof(front, 4);
+                    break;
+                }
+
+                _boss_pos = next;
+
+                if((_boss_timer & 7) == 0)
+                {
+                    _spawn_particle(_boss_pos + fixed_point(0, 14), fixed_point(), art::fx_dust, art::dust_anim, 15, 9);
+                }
+
+                if(--_boss_timer <= 0)
+                {
+                    if(_boss_second)
+                    {
+                        // Phase 3: second warning of 20 f, re-aimed.
+                        _boss_second = false;
+                        test_events = test_events | 128;
+                        _warchief_warning(20);
+                    }
+                    else
+                    {
+                        _boss_state = wc_walk;
+                        _boss_timer = 4 * fps - 130;
+                    }
+                }
+                break;
+            }
+
+            case wc_stunned:
+                if(_boss_frame != art::warchief_stunned)
+                {
+                    _boss_frame = art::warchief_stunned;
+                    _boss->set_tiles(art::warchief.tiles_item(), art::warchief_stunned);
+                }
+
+                _boss->set_visible(! (_boss_timer & 8) || _boss_timer > 40);
+
+                if(--_boss_timer <= 0)
+                {
+                    _boss->set_visible(true);
+                    _boss_state = wc_walk;
+                    _boss_timer = 60;
+                }
+                break;
+
+            case wc_horn:
+                _set_boss_frame(art::warchief_horn, _boss_timer, true);
+                _shake = bn::max(_shake, 2);
+
+                if(--_boss_timer <= 0)
+                {
+                    // 8 goblins from 2 opposite sides.
+                    test_events = test_events | 32;
+                    _make_room(8);
+                    fixed_point side = angle_vector(_random.get_int(2048));
+
+                    for(int k = 0; k < 8; ++k)
+                    {
+                        fixed_point base = _pos + side * (k < 4 ? 140 : -140);
+                        _spawn_enemy(type_goblin, base + fixed_point(_random.get_int(-20, 21), _random.get_int(-20, 21)), 0);
+                    }
+
+                    _boss_state = wc_walk;
+                    _boss_timer = 90;
+                }
+                break;
+
+            default:
+                break;
+            }
+
+            _boss->set_horizontal_flip(_boss_state == wc_charge || _boss_state == wc_stomp ? _boss_dir.x() < 0 : dx < 0);
+            _boss->set_position(_boss_pos.x(), _boss_pos.y() - 16);
+
+            if(_boss_shadow)
+            {
+                _boss_shadow->set_position(_boss_pos + fixed_point(0, 14));
+                _boss_shadow->set_visible(_fx.shadows);
+            }
+
+            if(_boss_state != 0 && _boss_box_hit(to_int(_pos.x()), to_int(_pos.y()), player_half_box))
+            {
+                _hurt_player(15);
             }
         }
 
@@ -3098,7 +4369,7 @@ namespace
             _boss_timer = 30;
             _boss->set_tiles(art::slime_king.tiles_item(), art::king_land.first);
             _shake = 16;
-            _play(art::sfx_boss, fixed(0.7));
+            _play(art::sfx_stomp, fixed(0.8));
 
             _boss_wave = _world_sprite(art::wave, _boss_pos + fixed_point(0, 8), 0, 29);
             _boss_wave->set_blending_enabled(true);
@@ -3128,18 +4399,35 @@ namespace
 
         void _kill_boss()
         {
-            _boss_dead = true;
             _spawn_poof(_boss_pos, 6);
             _spawn_gem(_boss_pos, 25);
             _spawn_pickup(_boss_pos + fixed_point(12, 0), pickup_coin, 10);
             _boss.reset();
             _boss_shadow.reset();
             _boss_bar.clear();
+            _boss_warn.clear();
+            _boss_bar_shown = -1;
             _boss_hp = 0;
             _shake = 20;
             _level_flash = 20;
-            _play(art::sfx_boss);
-            _end_timer = 120;
+            _play(art::sfx_explosion);
+            bn::sprites_mosaic::set_stretch(0);
+
+            if(_boss_kind == 1)
+            {
+                // Block 2 ends at the Warchief (minutes 10-15 are block 3).
+                _boss_dead = true;
+                test_events = test_events | 256;
+                _end_timer = 120;
+                return;
+            }
+
+            // Boss chest (§C3 cartas): 1 (60 %), 3 (30 %) or 5 (10 %) upgrades; 8 s rest (E1); meadow music.
+            int roll = _random.get_int(10);
+            _spawn_pickup(_boss_pos + fixed_point(-12, 0), pickup_chest, roll < 6 ? 1 : roll < 9 ? 3 : 5);
+            ++_bosses_killed;
+            _rest_t = 8 * fps;
+            art::music_meadow.play(fixed(art::music_volume_pct) / 100);
         }
 
         // -----------------------------------------------------------------------------------------------------
@@ -3168,8 +4456,8 @@ namespace
                 }
             }
 
-            // Over the cap the value goes to the farthest gem, which turns green/red (§13).
-            if(gems >= max_gems || _pickups.full())
+            // Over the cap (or the sprite creation budget) the value goes to the farthest gem (§13).
+            if(gems >= max_gems || _pickups.full() || (_create_budget <= 0 && far_i >= 0))
             {
                 if(far_i >= 0)
                 {
@@ -3184,6 +4472,8 @@ namespace
 
                 return;
             }
+
+            --_create_budget;
 
             if(_spawn_pickup(p, pickup_gem, value) && ! _gem_hint_done)
             {
@@ -3210,6 +4500,10 @@ namespace
             {
                 s = art::chest.create_sprite_optional(p, 0);
             }
+            else if(kind == pickup_heart)
+            {
+                s = art::heart.create_sprite_optional(p, 0);
+            }
             else
             {
                 s = kind == pickup_coin ? art::coin.create_sprite_optional(p, 0) : art::gems.create_sprite_optional(p, _gem_frame(value));
@@ -3231,9 +4525,26 @@ namespace
             return true;
         }
 
+        // Heart (heals 30): never more than 2 on the ground (§C1).
+        void _spawn_heart(const fixed_point& p)
+        {
+            int hearts = 0;
+
+            for(const pickup& g : _pickups)
+            {
+                hearts += g.kind == pickup_heart;
+            }
+
+            if(hearts < 2)
+            {
+                _spawn_pickup(p, pickup_heart, 30);
+            }
+        }
+
         void _update_pickups()
         {
-            int radius = _blessing == bless_magnet ? 400 : pickup_radius;
+            // Lodestone: +25 % pickup radius per level (§C3 pasivas).
+            int radius = _blessing == bless_magnet ? 400 : pickup_radius * (4 + _levels[up_lodestone]) / 4;
             int r2 = radius * radius;
 
             if(_gem_combo_t > 0 && --_gem_combo_t == 0)
@@ -3248,12 +4559,20 @@ namespace
                 int dy = to_int(_pos.y() - g.pos.y());
                 int d2 = dx * dx + dy * dy;
 
-                if(g.kind == pickup_chest)
+                if(g.kind == pickup_chest || g.kind == pickup_heart)
                 {
                     if(d2 < 12 * 12)
                     {
-                        ++_free_upgrades;
-                        _play(art::sfx_level, fixed(0.6));
+                        if(g.kind == pickup_heart)
+                        {
+                            _player_hp = bn::min(_player_max_hp, _player_hp + g.value);
+                        }
+                        else
+                        {
+                            _free_upgrades += g.value;
+                        }
+
+                        _play(g.kind == pickup_heart ? art::sfx_gem : art::sfx_chest, fixed(0.6));
                         _pickups[i] = bn::move(_pickups.back());
                         _pickups.pop_back();
                         continue;
@@ -3351,8 +4670,12 @@ namespace
         {
             _play(art::sfx_poof, fixed(0.4));
 
+            // perf: poofs only while the frame's sprite creation budget lasts (kills in bulk cost ~5 % each).
+            count = bn::min(count, _create_budget - 1);
+
             for(int i = 0; i < count; ++i)
             {
+                --_create_budget;
                 fixed_point v = angle_vector(i * (2048 / count) + 256) * fixed(0.8);
                 _spawn_particle(p + v * 2, v, art::fx_poof, { 0, 4, 3 }, 12, 15);
             }
@@ -3455,6 +4778,8 @@ namespace
 
         void _update_shrine()
         {
+            _update_treasure_arrow();
+
             if(! _shrine)
             {
                 return;
@@ -3462,35 +4787,10 @@ namespace
 
             int dx = to_int(_shrine_pos.x() - _pos.x());
             int dy = to_int(_shrine_pos.y() - _pos.y());
-            bool on_screen = abs_int(dx) < 112 && abs_int(dy) < 72;
 
             if(_shrine_arrow)
             {
-                _shrine_arrow->set_visible(! on_screen && (_t & 16));
-
-                if(! on_screen)
-                {
-                    // Edge arrow: clamp the direction to the screen border, pick one of 8 frames.
-                    int sx = bn::max(-110, bn::min(110, dx));
-                    int sy = bn::max(-58, bn::min(70, dy));
-                    int adx = abs_int(dx);
-                    int ady = abs_int(dy);
-                    int frame = art::arrow_north_east;
-
-                    if(adx > ady * 2)
-                    {
-                        frame = art::arrow_east;
-                    }
-                    else if(ady > adx * 2)
-                    {
-                        frame = art::arrow_north;
-                    }
-
-                    _shrine_arrow->set_tiles(art::edge_arrow.tiles_item(), frame);
-                    _shrine_arrow->set_horizontal_flip(dx < 0);
-                    _shrine_arrow->set_vertical_flip(dy > 0);
-                    _shrine_arrow->set_position(sx, sy);
-                }
+                _place_edge_arrow(*_shrine_arrow, dx, dy, 0);
             }
 
             if(abs_int(dx) < 12 && abs_int(dy) < 14)
@@ -3719,9 +5019,22 @@ namespace
             uint8_t pool[up_count];
             int pool_n = 0;
 
+            int weapons = 0;
+            int passives = 0;
+
             for(int i = 0; i < weapon_or_passive_count; ++i)
             {
-                if(_levels[i] < max_upgrade_level)
+                if(_levels[i])
+                {
+                    (i < up_boots ? weapons : passives) += 1;
+                }
+            }
+
+            for(int i = 0; i < weapon_or_passive_count; ++i)
+            {
+                bool slot_free = _levels[i] > 0 || (i < up_boots ? weapons : passives) < max_slots;
+
+                if(_levels[i] < max_upgrade_level && slot_free)
                 {
                     pool[pool_n++] = uint8_t(i);
                 }
@@ -4091,6 +5404,8 @@ namespace
             _text.set_left_alignment();
             int y = -42;
 
+            int y_passive = y;
+
             for(int i = 0; i < weapon_or_passive_count; ++i)
             {
                 if(_levels[i] == 0)
@@ -4098,17 +5413,23 @@ namespace
                     continue;
                 }
 
-                // Slots (hud_slots) live in the pause screen only, to keep the combat HUD within the sprite budget.
-                int slot_frame = (i < up_boots ? art::slot_weapon_first : art::slot_passive_first) + upgrade_texts[i].icon;
-                bn::sprite_ptr slot = art::slots.create_sprite(-72, y, slot_frame);
+                // Weapons left column, passives right (4 + 4 slots). Slots (hud_slots) exist for icons 0-7 only;
+                // newer icons show bare.
+                bool weapon = i < up_boots;
+                int x = weapon ? -104 : 6;
+                int& row_y = weapon ? y : y_passive;
+                int icon = upgrade_texts[i].icon;
+                bn::sprite_ptr slot = icon < 8 ?
+                            art::slots.create_sprite(x, row_y, (weapon ? art::slot_weapon_first : art::slot_passive_first) + icon) :
+                            art::icons.create_sprite(x, row_y, icon);
                 slot.set_bg_priority(0);
                 _menu.push_back(bn::move(slot));
 
                 bn::string<24> line(upgrade_texts[i].name);
-                line.append("  Lv ");
+                line.append(" ");
                 line.append(bn::to_string<2>(_levels[i]));
-                _text.generate(-58, y, line, _menu);
-                y += 17;
+                _text.generate(x + 12, row_y, line, _menu);
+                row_y += 20;
             }
 
             _text.generate(-60, 50, _cursor == 0 ? "> Resume" : "  Resume", _menu);
@@ -4139,7 +5460,113 @@ namespace
         }
 
         static constexpr int fx_rows = 11;
-        static constexpr int debug_rows = 4;
+        static constexpr int debug_rows = 5;
+        static constexpr int dbg_start_count = 6;
+        static constexpr int dbg_force_count = 7;
+
+        [[nodiscard]] static const char* _dbg_start_name(int i)
+        {
+            constexpr const char* names[dbg_start_count] = { "4:30", "5:50", "7:00", "8:00", "9:00", "9:45" };
+            return names[i];
+        }
+
+        [[nodiscard]] static int _dbg_start_second(int i)
+        {
+            constexpr int seconds[dbg_start_count] = { 270, 350, 420, 480, 540, 585 };
+            return seconds[i];
+        }
+
+        [[nodiscard]] static const char* _dbg_force_name(int i)
+        {
+            constexpr const char* names[dbg_force_count] = { "Treasure", "Split elite", "Wolves", "Warchief",
+                                                             "Wolf Pack", "Goblin Raid", "Big slime" };
+            return names[i];
+        }
+
+        // DBG "Start at mm:ss": the clock jumps and the wizard gets the level and build of profile C at that minute
+        // (about 2 levels per minute: Lv 20 at 10:00, DISENO_RUTA block 2). Past 5:00 the Slime King counts as killed.
+        void _dbg_start_at(int second)
+        {
+            _t = second * fps;
+            _spawn_cd = 0;
+
+            if(second > 300 && _bosses_killed == 0)
+            {
+                _boss_spawned = true;
+                _bosses_killed = 1;
+            }
+
+            if(_treasure_at >= 0 && _treasure_at < _t)
+            {
+                _treasure_at = -1;
+            }
+
+            constexpr uint8_t order[] = { up_spark, up_frost, up_rune, up_heart, up_ember, up_boots, up_spark,
+                                          up_tome, up_chain, up_frost, up_lodestone, up_rune };
+            int target = bn::max(2, (2 * second) / 60);
+            int k = 0;
+
+            for(int guard = 0; _level < target && guard < 200; ++guard, ++k)
+            {
+                int id = order[k % int(sizeof(order))];
+                int weapons = 0;
+
+                for(int i = 0; i < up_boots; ++i)
+                {
+                    weapons += _levels[i] > 0;
+                }
+
+                if(_levels[id] >= max_upgrade_level || (id < up_boots && _levels[id] == 0 && weapons >= max_slots))
+                {
+                    continue;
+                }
+
+                _apply_upgrade(id);
+                ++_level;
+            }
+
+            _xp = 0;
+            _player_hp = _player_max_hp;
+        }
+
+        void _dbg_force_event(int i)
+        {
+            switch(i)
+            {
+            case 0:
+                _spawn_treasure();
+                break;
+            case 1:
+                _force_elite(3);
+                break;
+            case 2:
+            {
+                fixed_point p = _spawn_point(120, 136, true);
+                _spawn_enemy(type_wolf, p, 0);
+                _spawn_enemy(type_wolf, p + fixed_point(0, 20), 0);
+                break;
+            }
+            case 3:
+                _bosses_killed = bn::max(_bosses_killed, 1);
+                _boss_spawned = true;
+
+                if(! _boss)
+                {
+                    _spawn_boss(1);
+                }
+                break;
+            case 4:
+                _begin_swarm_warning(swarm_wolves, 90);
+                _play(art::sfx_howl);
+                break;
+            case 5:
+                _begin_swarm_warning(swarm_goblins, fps);
+                break;
+            default:
+                _spawn_enemy(type_big_slime, _spawn_point(110, 130, true), 0);
+                break;
+            }
+        }
 
         [[nodiscard]] int _fx_row_count() const
         {
@@ -4217,7 +5644,7 @@ namespace
             constexpr const char* names[fx_rows + debug_rows] = {
                 "Hit flash", "Knockback", "Damage numbers", "Screen shake", "Death poof", "Gem trail",
                 "Level-up flash", "Dusk", "Frost translucent", "Boss mosaic", "Shadows",
-                "DBG God mode", "DBG Max power", "DBG Skip to 4:30", "DBG Stress 56"
+                "DBG God mode", "DBG Max power", "DBG Start at", "DBG Stress 56", "DBG Force"
             };
 
             _menu.clear();
@@ -4245,6 +5672,14 @@ namespace
                 {
                     state = _stress ? "ON" : "OFF";
                 }
+                else if(r == fx_rows + 2)
+                {
+                    state = _dbg_start_name(_dbg_start);
+                }
+                else if(r == fx_rows + 4)
+                {
+                    state = _dbg_force_name(_dbg_force);
+                }
                 else
                 {
                     state = "A";
@@ -4268,6 +5703,15 @@ namespace
                 _cursor = (_cursor + 1) % rows;
                 _draw_fx_menu();
             }
+            else if((bn::keypad::left_pressed() || bn::keypad::right_pressed()) &&
+                    (_cursor == fx_rows + 2 || _cursor == fx_rows + 4))
+            {
+                int step = bn::keypad::right_pressed() ? 1 : -1;
+                int& value = _cursor == fx_rows + 2 ? _dbg_start : _dbg_force;
+                int count = _cursor == fx_rows + 2 ? dbg_start_count : dbg_force_count;
+                value = (value + count + step) % count;
+                _draw_fx_menu();
+            }
             else if(bn::keypad::a_pressed())
             {
                 if(bool* f = _fx_flag(_cursor))
@@ -4280,9 +5724,10 @@ namespace
                 }
                 else if(_cursor == fx_rows + 1)
                 {
+                    // Worst legal build: 4 weapon slots (Ember Toss left out) and every passive at Nv5.
                     for(int i = 0; i < weapon_or_passive_count; ++i)
                     {
-                        _levels[i] = max_upgrade_level;
+                        _levels[i] = i == up_ember ? 0 : max_upgrade_level;
                     }
 
                     _player_max_hp = player_hp + 20 * max_upgrade_level;
@@ -4292,8 +5737,11 @@ namespace
                 }
                 else if(_cursor == fx_rows + 2)
                 {
-                    _t = 4 * 60 * fps + 30 * fps;
-                    _spawn_cd = 0;
+                    _dbg_start_at(_dbg_start_second(_dbg_start));
+                }
+                else if(_cursor == fx_rows + 4)
+                {
+                    _dbg_force_event(_dbg_force);
                 }
                 else if(_cursor == fx_rows + 3)
                 {

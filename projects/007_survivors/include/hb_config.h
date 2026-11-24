@@ -11,7 +11,7 @@ namespace hb
     // The ROM header title is ROMTITLE in the Makefile.
     constexpr const char* game_title = "HEXBOUND";
     constexpr const char* hero_name = "Wendel";
-    constexpr const char* stage_name = "Mossy Meadow";
+    constexpr const char* stage_name = "Gloam Meadow";   // G-47
 
     // Debug rows (GOD MODE, SKIP TO 4:50, STRESS 56, LEVEL UP) in the SELECT menu. Set to false for release.
     constexpr bool debug_menu = true;
@@ -49,7 +49,8 @@ namespace hb
     constexpr int max_damage_numbers = 6;
 
     // Timeline (§6, §14)
-    constexpr int boss_time = 5 * 60 * fps;
+    constexpr int boss_time = 5 * 60 * fps;      // Slime King
+    constexpr int boss2_time = 10 * 60 * fps;    // Orc Warchief (DISENO_FASES E2)
     constexpr int pre_boss_pause = 10 * fps;
     constexpr int shrine_period = 90 * fps;
     constexpr int blessing_frames = 60 * fps;

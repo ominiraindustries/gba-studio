@@ -14,6 +14,16 @@
 #include "bn_sprite_items_bat.h"
 #include "bn_sprite_items_skeleton.h"
 #include "bn_sprite_items_slime_king.h"
+#include "bn_sprite_items_goblin.h"
+#include "bn_sprite_items_orc.h"
+#include "bn_sprite_items_orc_warchief.h"
+#include "bn_sprite_items_wolf.h"
+#include "bn_sprite_items_big_slime.h"
+#include "bn_sprite_items_fx_ember.h"
+#include "bn_sprite_items_fx_explosion.h"
+#include "bn_sprite_items_fx_fire.h"
+#include "bn_sprite_items_fx_chain.h"
+#include "bn_sprite_items_fx_dust.h"
 #include "bn_sprite_items_gems.h"
 #include "bn_sprite_items_coin.h"
 #include "bn_sprite_items_chest.h"
@@ -34,7 +44,7 @@
 #include "bn_sprite_items_hud_nova.h"
 #include "bn_sprite_items_tmp_fx.h"
 #include "bn_sprite_items_tmp_wave.h"
-#include "bn_sprite_items_tmp_bossbar.h"
+#include "bn_sprite_items_hud_bossbar.h"
 #include "bn_sprite_items_hud_xp.h"
 #include "bn_sprite_items_hud_xp_cap.h"
 #include "bn_sprite_items_hud_hp.h"
@@ -51,6 +61,7 @@
 #include "bn_sprite_palette_items_text_gold.h"
 #include "bn_sprite_palette_items_text_red.h"
 #include "bn_sound_items.h"
+#include "bn_music_items.h"
 
 namespace hb::art
 {
@@ -155,12 +166,33 @@ namespace hb::art
     constexpr monster_art skeleton = { &bn::sprite_items::skeleton,
                                        { { 8, 4, 10 }, { 12, 4, 10 }, { 0, 4, 10 }, { 16, 4, 10 }, { 20, 4, 10 } },
                                        5, { 4, 4, 5 }, -8 };
+    // goblin / orc 32x32 (art/LÉEME.md): walk_e 0-3, death 4-7, walk_s 8-11, walk_se 12-15, walk_ne 16-19, walk_n 20-23.
+    constexpr monster_art goblin = { &bn::sprite_items::goblin,
+                                     { { 8, 4, 7 }, { 12, 4, 7 }, { 0, 4, 7 }, { 16, 4, 7 }, { 20, 4, 7 } },
+                                     5, { 4, 4, 5 }, -8 };
+    constexpr monster_art orc = { &bn::sprite_items::orc,
+                                  { { 8, 4, 10 }, { 12, 4, 10 }, { 0, 4, 10 }, { 16, 4, 10 }, { 20, 4, 10 } },
+                                  5, { 4, 4, 6 }, -8 };
+    // big_slime 32x32: hop 0-3, death 4-7.
+    constexpr monster_art big_slime = { &bn::sprite_items::big_slime, { { 0, 4, 8 } }, 1, { 4, 4, 4 }, -6 };
+    // wolf 32x16 (faces right): run 0-3, crouch 4 (red eyes: warning), dash 5, death 6-8.
+    constexpr monster_art wolf = { &bn::sprite_items::wolf, { { 0, 4, 5 } }, 1, { 6, 3, 5 }, -2 };
+    constexpr int wolf_crouch = 4;
+    constexpr int wolf_dash = 5;
 
     inline constexpr const bn::sprite_item& slime_king = bn::sprite_items::slime_king;
     constexpr anim king_idle = { 0, 4, 10 };
     constexpr int king_crouch = 4;
     constexpr anim king_air = { 5, 2, 8 };
     constexpr anim king_land = { 7, 2, 10 };
+
+    // Orc Warchief 64x64: walk 0-5, attack 6-14, stomp 15-16, horn 17-18.
+    inline constexpr const bn::sprite_item& warchief = bn::sprite_items::orc_warchief;
+    constexpr anim warchief_walk = { 0, 6, 8 };
+    constexpr anim warchief_stomp = { 15, 2, 6 };
+    constexpr anim warchief_charge = { 12, 2, 4 };
+    constexpr anim warchief_horn = { 17, 2, 8 };
+    constexpr int warchief_stunned = 14;
 
     // ---- Pickups.
     inline constexpr const bn::sprite_item& gems = bn::sprite_items::gems;
@@ -182,6 +214,8 @@ namespace hb::art
     constexpr int icon_magnet = 5;
     constexpr int icon_spell_tome = 6;
     constexpr int icon_star = 7;
+    constexpr int icon_ember_toss = 8;
+    constexpr int icon_storm_chain = 9;
 
     // ---- Effects.
     inline constexpr const bn::sprite_item& fx_spark = bn::sprite_items::fx_spark;     // 8x8, 2 frames
@@ -197,6 +231,14 @@ namespace hb::art
     inline constexpr const bn::sprite_item& blink = bn::sprite_items::fx_blink;          // 32x32
     constexpr anim blink_out = { 0, 3, 3 };     // implosion where the wizard leaves
     constexpr anim blink_in = { 3, 3, 3 };      // flash where he lands
+    inline constexpr const bn::sprite_item& fx_ember = bn::sprite_items::fx_ember;          // 8x8, fly 0-1
+    inline constexpr const bn::sprite_item& fx_explosion = bn::sprite_items::fx_explosion;  // 32x32, burst 0-4
+    constexpr anim explosion_anim = { 0, 5, 4 };
+    inline constexpr const bn::sprite_item& fx_fire = bn::sprite_items::fx_fire;            // 16x16, burn 0-3
+    constexpr anim fire_anim = { 0, 4, 5 };
+    inline constexpr const bn::sprite_item& fx_chain = bn::sprite_items::fx_chain;          // 8x8, zap 0-2
+    inline constexpr const bn::sprite_item& fx_dust = bn::sprite_items::fx_dust;            // 8x8, puff 0-2
+    constexpr anim dust_anim = { 0, 3, 5 };
     inline constexpr const bn::sprite_item& shadow_small = bn::sprite_items::shadow_small;   // 16x8
     inline constexpr const bn::sprite_item& shadow_big = bn::sprite_items::shadow_big;       // 32x16
 
@@ -227,21 +269,40 @@ namespace hb::art
     inline constexpr const bn::sprite_palette_item& text_gold = bn::sprite_palette_items::text_gold;
     inline constexpr const bn::sprite_palette_item& text_red = bn::sprite_palette_items::text_red;
 
-    // PROVISIONAL (no final art yet): gem trail spark, shockwave ring, boss bar.
+    // PROVISIONAL (no final art yet): gem trail spark, shockwave ring.
     inline constexpr const bn::sprite_item& tmp_fx = bn::sprite_items::tmp_fx;
     constexpr int tmp_trail = 5;
     inline constexpr const bn::sprite_item& wave = bn::sprite_items::tmp_wave;          // 64x64, 2 frames
-    inline constexpr const bn::sprite_item& boss_bar = bn::sprite_items::tmp_bossbar;   // 32x8, frame N = N px
+    inline constexpr const bn::sprite_item& boss_bar = bn::sprite_items::hud_bossbar;   // 32x8, frame k = 2k px
     constexpr int bar_width = 32;
+    constexpr int boss_bar_notch = 17;
 
-    // ---- Sounds (PROVISIONAL tmp_* from tests/gen_tmp_sfx.py).
-    inline constexpr const bn::sound_item& sfx_hit = bn::sound_items::tmp_hit;
-    inline constexpr const bn::sound_item& sfx_gem = bn::sound_items::tmp_gem;
-    inline constexpr const bn::sound_item& sfx_level = bn::sound_items::tmp_level;
-    inline constexpr const bn::sound_item& sfx_hurt = bn::sound_items::tmp_hurt;
-    inline constexpr const bn::sound_item& sfx_boss = bn::sound_items::tmp_boss;
-    inline constexpr const bn::sound_item& sfx_poof = bn::sound_items::tmp_poof;
-    inline constexpr const bn::sound_item& sfx_menu = bn::sound_items::blip;
+    // ---- Sounds (audio/LEEME.md, G-48). Pitch never above x1.24 (G-46).
+    inline constexpr const bn::sound_item& sfx_spark = bn::sound_items::sfx_spark;   // one per burst, vol 0.3
+    inline constexpr const bn::sound_item& sfx_hit = bn::sound_items::sfx_hit;
+    inline constexpr const bn::sound_item& sfx_gem = bn::sound_items::sfx_gem;
+    inline constexpr const bn::sound_item& sfx_level = bn::sound_items::sfx_levelup;
+    inline constexpr const bn::sound_item& sfx_hurt = bn::sound_items::sfx_hurt;
+    inline constexpr const bn::sound_item& sfx_boss = bn::sound_items::sfx_boss;
+    inline constexpr const bn::sound_item& sfx_poof = bn::sound_items::sfx_poof;
+    inline constexpr const bn::sound_item& sfx_menu = bn::sound_items::sfx_card;
+    inline constexpr const bn::sound_item& sfx_card = bn::sound_items::sfx_card;
+    inline constexpr const bn::sound_item& sfx_blink = bn::sound_items::sfx_blink;
+    inline constexpr const bn::sound_item& sfx_nova = bn::sound_items::sfx_nova;
+    inline constexpr const bn::sound_item& sfx_wave = bn::sound_items::sfx_wave;
+    inline constexpr const bn::sound_item& sfx_howl = bn::sound_items::sfx_howl;
+    inline constexpr const bn::sound_item& sfx_horn = bn::sound_items::sfx_horn;
+    inline constexpr const bn::sound_item& sfx_stomp = bn::sound_items::sfx_stomp;
+    inline constexpr const bn::sound_item& sfx_explosion = bn::sound_items::sfx_explosion;
+    inline constexpr const bn::sound_item& sfx_zap = bn::sound_items::sfx_zap;
+    inline constexpr const bn::sound_item& sfx_chest = bn::sound_items::sfx_chest;
+    inline constexpr const bn::sound_item& sfx_coin_burst = bn::sound_items::sfx_coin_burst;
+
+    // ---- Music (looping .it modules), volume 0.5-0.6 so the effects stay audible.
+    inline constexpr const bn::music_item& music_title = bn::music_items::music_title;
+    inline constexpr const bn::music_item& music_meadow = bn::music_items::music_meadow;
+    inline constexpr const bn::music_item& music_boss = bn::music_items::music_boss;
+    constexpr int music_volume_pct = 55;
 }
 
 #endif

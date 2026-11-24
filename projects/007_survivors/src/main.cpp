@@ -4,6 +4,8 @@
 #include "bn_core.h"
 #include "bn_regular_bg_ptr.h"
 #include "bn_keypad.h"
+#include "bn_music.h"
+#include "bn_music_item.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_string.h"
@@ -37,6 +39,7 @@ namespace
 
         bn::vector<bn::sprite_ptr, 4> press;
         unsigned frames = 0;
+        hb::art::music_title.play(bn::fixed(hb::art::music_volume_pct) / 100);
         test_mode = 0;
 
         while(! bn::keypad::start_pressed() && ! bn::keypad::a_pressed())
@@ -56,7 +59,7 @@ namespace
             bn::core::update();
         }
 
-        hb::art::sfx_level.play(bn::fixed(0.6));
+        hb::art::sfx_card.play(bn::fixed(0.6));
         bn::core::update();   // consume the START press so the run does not open the pause menu
         return frames;
     }
