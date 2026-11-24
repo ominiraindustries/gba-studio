@@ -33,8 +33,8 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `bat` | sprite | **32×16** | fly 0–3, death 4–6 | no-muertos C (= skeleton) |
 | `skeleton` | sprite | **16×32** | walk_e 0–3, death 4–7, walk_s 8–11, walk_se 12–15, walk_ne 16–19, walk_n 20–23 (O/SO/NO = volteo) | no-muertos C (= bat) |
 | `skeleton_big` | sprite | 32×32 | walk 0–5, death 6–12 | no-muertos (bloque 2 / élite) |
-| `goblin` | sprite | 16×16 | walk 0–5 | pieles verdes (bloque 2) |
-| `orc` | sprite | 32×32 | walk 0–5 | pieles verdes (bloque 2, provisional) |
+| `goblin` | sprite | **32×32** | walk_e 0–3, death 4–7, walk_s 8–11, walk_se 12–15, walk_ne 16–19, walk_n 20–23 (O/SO/NO = volteo; figura ~20 px, pies en la fila 30) | pieles verdes C (= orc) |
+| `orc` | sprite | 32×32 | igual que `goblin` (pies en la fila 31) | pieles verdes C (= goblin) |
 | `orc_warchief` | sprite | 64×64 | walk 0–5, attack 6–14 | propia (jefe bloque 2, provisional) |
 | `gems` | sprite | 8×8 | cian pequeña 0–1 (1 XP), magenta con halo 2–3 (5 XP), oro grande 4–5 (25 XP); el 2.º frame de cada una es el destello | recogibles (fija) |
 | `coin` | sprite | 8×8 | spin 0–1 | recogibles |
@@ -176,6 +176,10 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
 - **Neones** (`python -I art/tools/neon_c.py`, PISA `gems.aseprite`): añade a `palette_c.json` cian `#1a7f9c #40e8f8
   #c0fcff` y oro `#a06818 #ffc838 #fff4b0` (lista `neons`, con los magentas de la muestra). Recogibles: 2–3 cian, 4 oro
   oscuro, 10 magenta `#fd3ffd`, 12–13 oro; FX: 7–9 hielo cian (Frost Ring, Blink).
+- **goblin / orco**: personajes PixelLab v3 desde las muestras C 16 y C 20 (`raw/style_c2/goblin_c`, `orc_c`), walk
+  plantilla de 4 frames en 5 direcciones + muerte de lado; paleta común de las muestras 16–21 con borde frío `#34466e`.
+  Ojo VRAM: 32×32 en 5 direcciones = 64 tiles por dirección; con goblin y orco a la vez en caché llenó la VRAM de
+  sprites en una prueba (ver tarea G-44).
 - Direcciones: dibujadas S, SE, E, NE, N; las de la izquierda se hacen con `set_horizontal_flip(true)`.
 - **Título**: el mago es `raw/style_c2/title/title_wizard.png` (PixelLab, estilo de la muestra 00, paleta maestra);
   `title_bg` se rehízo con `restyle_c.build_title` apuntando a esa carpeta y luego `snap_master.py`.

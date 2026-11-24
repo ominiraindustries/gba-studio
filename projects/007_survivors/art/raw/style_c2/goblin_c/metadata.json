@@ -1,0 +1,80 @@
+{
+  "group_id": "fd6a7b4e-e154-448b-8218-47fecde418bf",
+  "states": [
+    {
+      "character": {
+        "id": "f4748d7c-048c-40f4-b2c3-dac235ddffd1",
+        "name": "Idle",
+        "prompt": "small hunched goblin in dark hooded rags, night-blue skin, glowing yellow eyes, small curved dagger",
+        "size": {
+          "width": 32,
+          "height": 32
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-11-24T17:06:05.690130+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "death": {
+            "east": [
+              "Idle/animations/death/east/frame_000.png",
+              "Idle/animations/death/east/frame_001.png",
+              "Idle/animations/death/east/frame_002.png",
+              "Idle/animations/death/east/frame_003.png",
+              "Idle/animations/death/east/frame_004.png",
+              "Idle/animations/death/east/frame_005.png",
+              "Idle/animations/death/east/frame_006.png"
+            ]
+          },
+          "walk": {
+            "north-east": [
+              "Idle/animations/walk/north-east/frame_000.png",
+              "Idle/animations/walk/north-east/frame_001.png",
+              "Idle/animations/walk/north-east/frame_002.png",
+              "Idle/animations/walk/north-east/frame_003.png"
+            ],
+            "north": [
+              "Idle/animations/walk/north/frame_000.png",
+              "Idle/animations/walk/north/frame_001.png",
+              "Idle/animations/walk/north/frame_002.png",
+              "Idle/animations/walk/north/frame_003.png"
+            ],
+            "south-east": [
+              "Idle/animations/walk/south-east/frame_000.png",
+              "Idle/animations/walk/south-east/frame_001.png",
+              "Idle/animations/walk/south-east/frame_002.png",
+              "Idle/animations/walk/south-east/frame_003.png"
+            ],
+            "south": [
+              "Idle/animations/walk/south/frame_000.png",
+              "Idle/animations/walk/south/frame_001.png",
+              "Idle/animations/walk/south/frame_002.png",
+              "Idle/animations/walk/south/frame_003.png"
+            ],
+            "east": [
+              "Idle/animations/walk/east/frame_000.png",
+              "Idle/animations/walk/east/frame_001.png",
+              "Idle/animations/walk/east/frame_002.png",
+              "Idle/animations/walk/east/frame_003.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-11-24T17:08:30.956294"
+}

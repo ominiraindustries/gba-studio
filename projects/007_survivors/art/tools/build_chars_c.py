@@ -8,7 +8,8 @@ Sources (art/raw/style_c2/):
 Every colour is snapped to art/palette_c.json (the master palette extracted from style_samples/style_C.png),
 then each sprite is limited to the few master colours its C sample uses (NES-like restraint, hard edges).
 
-    python -I art/tools/build_chars_c.py           # writes wizard, wizard_ghost, slime, bat, skeleton .aseprite
+    python -I art/tools/build_chars_c.py           # writes wizard, wizard_ghost, slime, bat, skeleton, goblin, orc
+    python -I art/tools/build_chars_c.py goblin orc  # only these
     python -I art/tools/build_chars_c.py --sheet D # also a 3x preview sheet in folder D
 PISA esos .aseprite: no lo ejecutes si alguien los ha editado a mano.
 """
@@ -36,6 +37,7 @@ def hexc(h):
 MASTER = np.array([hexc(c) for c in json.load(open(os.path.join(ART, "palette_c.json")))["master"]], np.int32)
 
 
+RIM_ENEMY = hexc("#34466e")   # cold 1 px rim of the style C enemies (master colour)
 RIM_WIZ = hexc(os.environ.get("WIZ_RIM", "#8ca4b4"))   # 1 px rim around Wendel, same in every direction
 
 
@@ -264,6 +266,20 @@ def build():
         tags.append((tag, len(frames), len(frames) + 3))
         frames += fit(pick(anim("skel_c", "walk", d), 4), 16, 32, 31)
     out["skeleton"] = (frames, [120] * 4 + [90] * 4 + [120] * 16, tags, sub)
+
+    # ---------------- goblin + orc share the greenskin palette (C samples 16-18 goblin, 19-21 orc) ---------------
+    # PixelLab v3 characters made from C 16 (goblin_c) and C 20 (orc_c); same tag layout as the skeleton.
+    sub = subset_from([rgba(os.path.join(CS, "%02d.png" % i)) for i in range(16, 22)], 14)
+    if RIM_ENEMY not in sub:
+        sub = sorted(sub + [RIM_ENEMY], key=lum)
+    for name, char, bottom in (("goblin", "goblin_c", 30), ("orc", "orc_c", 31)):
+        walk = [rim(f, RIM_ENEMY) for f in fit(pick(anim(char, "walk", "east"), 4), 32, 32, bottom)]
+        death = [rim(f, RIM_ENEMY) for f in fit(pick(anim(char, "death", "east"), 4), 32, 32, bottom)]
+        frames, tags = walk + death, [("walk_e", 0, 3), ("death", 4, 7)]
+        for d, tag in (("south", "walk_s"), ("south-east", "walk_se"), ("north-east", "walk_ne"), ("north", "walk_n")):
+            tags.append((tag, len(frames), len(frames) + 3))
+            frames += [rim(f, RIM_ENEMY) for f in fit(pick(anim(char, "walk", d), 4), 32, 32, bottom)]
+        out[name] = (frames, [120] * 4 + [90] * 4 + [120] * 16, tags, sub)
     return out
 
 
@@ -282,8 +298,10 @@ def sheet(out, folder):
 
 def main(argv):
     out = build()
+    only = [a for a in argv if not a.startswith("-") and a in out]   # e.g. "goblin orc": write only these
     for name, (frames, durs, tags, sub) in out.items():
-        write(name, frames, durs, tags, sub)
+        if not only or name in only:
+            write(name, frames, durs, tags, sub)
     if "--sheet" in argv:
         sheet(out, argv[argv.index("--sheet") + 1])
 
