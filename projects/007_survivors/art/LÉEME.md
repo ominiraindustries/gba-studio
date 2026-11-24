@@ -44,6 +44,49 @@ Si editas un `.aseprite`, manda tu versión: `export` lo respeta. Para regenerar
 | `ground` | regular_bg 512×512 | — | — | suelo (se repite sin costura: el borde derecho casa con el izquierdo y el de abajo con el de arriba) |
 | `props` + `props_palette` | regular_bg_tiles + bg_palette | — | ver tabla de atrezzo | atrezzo |
 
+## Bloque 2 de arte: HUD, carta, título (`tools/build_ui.py`)
+
+```
+python -I art/tools/build_ui.py seed       # SÓLO siembra los .aseprite que falten (nunca pisa)
+python -I art/tools/build_ui.py palettes   # graphics/text_*.bmp (paletas para el texto)
+python -I art/tools/build_ui.py mock D     # mockups 240x160 (partida+HUD, subida de nivel, título) en D
+```
+La exportación es la misma (`build_art.py export`). Fuentes de PixelLab en `art/raw/ui/` (`card_0.png` = marco de la
+carta, `title_a.png` = ilustración del título); el resto está dibujado en `build_ui.py`.
+
+Todos los `hud_*`, `card`, `fx_levelup` y `logo` comparten la **paleta UI** (un solo `sprite_palette_ptr`):
+1 contorno `#140c1c`; 2 morado oscuro (huecos de barra, paneles); 3 morado runa; 4–6 maderas; 7–8 oros; 9–10 pergamino;
+11–13 azules de XP; 14 rojo; 15 blanco. `hud_slots` usa la paleta **recogibles** (la de `icons`).
+
+| Fichero (código) | Tipo | Frame | Etiquetas / frames | Uso |
+|---|---|---|---|---|
+| `hud_xp` | sprite | 32×8 | fill 0–16 (frame k = 2·k px llenos) | barra de XP: 7 piezas desde x=4 (224 px); pieza i usa `clamp(xp_px − 32·i, 0, 32) / 2` |
+| `hud_xp_cap` | sprite | 8×8 | left 0, right 1 | remates: izq. en x=1, der. en x=228 (encima de la barra) |
+| `hud_hp` | sprite | 32×8 | fill 0–9 (2 px por frame, 18 px) | barra de vida bajo el mago (barra de 20 px centrada) |
+| `hud_heart` | sprite | 8×8 | full 0, half 1, empty 2 | alternativa en corazones |
+| `hud_plaque` | sprite | 32×16 | left 0, right 1 | panel de 64×16 para el reloj / nivel; texto centrado en su fila 4 |
+| `hud_slots` | sprite | 16×16 | weapon 0–8, passive 9–17 | ranura con icono: 0/9 vacía, 1–8 / 10–17 = `icons` 0–7 (oro = arma, azul = pasiva) |
+| `hud_arrow` | sprite | 16×16 | gold 0–2, red 3–5 (este, noreste, norte) | flecha de borde; resto de direcciones con `set_horizontal_flip`/`set_vertical_flip` |
+| `hud_alert` | sprite | 16×16 | blink 0–1 (150 ms) | "!" de aviso de oleada (rombo rojo; frame 1 = destello) |
+| `fx_levelup` | sprite | 64×64 | burst 0–3 (60 ms; 0–2 crece, 3 girado) | rayos detrás del mago al subir de nivel; alternar 2↔3 en bucle |
+| `card` + `card_base` | sprite | 64×64 + 64×32 | normal 0, selected 1 | carta 64×80 = `card` en (x,y) + `card_base` en (x,y+48) (se solapan 16 filas idénticas) |
+| `logo` | sprite | 64×32 | 6 celdas | logo HEXBOUND 192×64: celda k en (24 + (k%3)·64, 4 + (k/3)·32) |
+| `title_bg` | regular_bg **8 bpp** 256×256 | — | — | título: la imagen ocupa (0,0)–(239,159); `create_bg(8, 48)` la alinea a pantalla |
+| `text_ink` / `text_gold` / `text_red` | sprite_palette | — | — | `text_generator.set_palette_item(...)`: tinta marrón para la carta, oro para "LEVEL UP!", rojo de aviso |
+
+Fuente del editable: `card.aseprite` es la carta entera 64×80 con 2 frames; la exportación la parte en `card` +
+`card_base`. `logo.aseprite` es el logo entero 192×64; la exportación lo corta en celdas de 64×32. Si cambia el nombre
+del juego, sólo hay que repintar `logo.aseprite` (o `seed logo` tras borrarlo y cambiar la palabra en `build_ui.py`).
+
+Carta: hueco de icono 16×16 en (x+24, y+10) dentro de un círculo de 20 px; texto de pergamino de unos 48 px de ancho:
+nombre en dos líneas (y+28, y+37), filete en y+46, nivel/"NEW!" en y+50, efecto corto en y+59. "Swift Boots" no cabe
+en una línea con la fuente variable 8×8. Seleccionada: borde dorado brillante, madera clara y gemas cian; el código
+puede además subirla 4 px.
+
+Título: "PRESS START" lo pone el código (hacia y=148 sobre la hierba; con la sombra de la fuente se lee bien).
+`title_bg` usa los 256 colores de fondo (8 bpp, 64 usados): mientras esté en pantalla no caben otros fondos 4 bpp con
+paleta propia; el logo es de sprites para poder quitarlo o cambiarlo.
+
 Pies: los personajes de suelo tienen los pies en la **última fila** del frame (el mago, 1 px por encima). El
 murciélago está centrado. Cada animación lleva un único desplazamiento (no tiembla dentro del bucle).
 Lado: `walk_side`, `skeleton`, `goblin`, `orc` miran a la **derecha**; a la izquierda, `set_horizontal_flip(true)`.
@@ -80,5 +123,5 @@ El índice 0 es transparente: se pinta en una segunda capa de fondo sobre `groun
 - Mago: diseño pedía 16×32; es 32×32 (la figura con bastón mide 20 px de ancho).
 - `skeleton` es 16×32 (la figura mide 11×22) y la muerte se recorta a 16 px de ancho.
 - `orc` y `orc_warchief` (bloque 2) son provisionales: el orco parece encapuchado y el jefe se sale del lienzo al atacar.
-- Faltan: HUD (marcos de barras, carta de mejora, flecha de borde, "!"), wolf, Big Slime, título, charca con bordes.
+- Faltan: wolf, Big Slime, charca con bordes. (HUD, carta, flecha, "!" y título: bloque 2, arriba.)
 - Élite: `fx_aura` + paleta tintada en código (`set_fade` a rojo/oro) en vez de contorno de color dibujado.

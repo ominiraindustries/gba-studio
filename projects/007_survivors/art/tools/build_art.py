@@ -475,6 +475,12 @@ def export():
         w, h = im.size
         px = list(im.getdata())
         pix = [px[y * w:(y + 1) * w] for y in range(h)]
+        if name in SPECIAL_EXPORT:  # set 2 (build_ui.py): 8 bpp title, sliced logo, split card
+            fullpal = im.getpalette()[:768]
+            fullpal = [tuple(fullpal[i:i + 3]) for i in range(0, len(fullpal), 3)]
+            SPECIAL_EXPORT[name](pal, fullpal, pix, w, h, fh)
+            print(f"{name:14s} {w}x{h} frame {fw}x{fh} x{len(meta['frames'])} (special)")
+            continue
         assert max(px) < 16, (name, "uses colour index >= 16")
         write_bmp4(os.path.join(GFX, name + ".bmp"), w, h, pal, pix)
         if name in ("ground",):
@@ -488,6 +494,57 @@ def export():
             json.dump(j, f, indent=4)
         tags = [(t["name"], t["from"], t["to"]) for t in meta["meta"].get("frameTags", [])]
         print(f"{name:14s} {w}x{h} frame {fw}x{fh} x{len(meta['frames'])} tags {tags}")
+
+
+def _json(name, j):
+    with open(os.path.join(GFX, name + ".json"), "w") as f:
+        json.dump(j, f, indent=4)
+
+
+def write_bmp8(path, w, h, pal, pix):
+    """Uncompressed 8 bpp indexed BMP (256-colour palette, bottom-up)."""
+    pal = list(pal)[:256] + [(0, 0, 0)] * (256 - len(pal))
+    row = (w + 3) & ~3
+    data = bytearray()
+    for y in range(h - 1, -1, -1):
+        data += bytes(pix[y]) + b"\0" * (row - w)
+    pb = b"".join(struct.pack("<BBBx", b, g, r) for (r, g, b) in pal)
+    off = 14 + 40 + len(pb)
+    with open(path, "wb") as f:
+        f.write(b"BM" + struct.pack("<IHHI", off + len(data), 0, 0, off))
+        f.write(struct.pack("<IiiHHIIiiII", 40, w, h, 1, 8, 0, len(data), 2835, 2835, 256, 256))
+        f.write(pb + data)
+
+
+def _export_title_bg(pal, fullpal, pix, w, h, fh):
+    write_bmp8(os.path.join(GFX, "title_bg.bmp"), w, h, fullpal, pix)
+    _json("title_bg", {"type": "regular_bg", "bpp_mode": "bpp_8"})
+
+
+def _export_logo(pal, fullpal, pix, w, h, fh):
+    # 192x64 logo -> 64x32 cells, row-major (frame k at x = (k % 3) * 64, y = (k // 3) * 32)
+    cells = []
+    for cy in range(0, h, 32):
+        for cx in range(0, w, 64):
+            cells += [r[cx:cx + 64] for r in pix[cy:cy + 32]]
+    write_bmp4(os.path.join(GFX, "logo.bmp"), 64, len(cells), pal, cells)
+    _json("logo", {"type": "sprite", "height": 32})
+
+
+def _export_card(pal, fullpal, pix, w, h, fh):
+    # 64x80 frames (normal, selected) -> card 64x64 (rows 0-63) + card_base 64x32 (rows 48-79, overlaps 16)
+    top, base = [], []
+    for k in range(h // fh):
+        fr = pix[k * fh:(k + 1) * fh]
+        top += fr[0:64]
+        base += fr[48:80]
+    write_bmp4(os.path.join(GFX, "card.bmp"), 64, len(top), pal, top)
+    write_bmp4(os.path.join(GFX, "card_base.bmp"), 64, len(base), pal, base)
+    _json("card", {"type": "sprite", "height": 64})
+    _json("card_base", {"type": "sprite", "height": 32})
+
+
+SPECIAL_EXPORT = {"title_bg": _export_title_bg, "logo": _export_logo, "card": _export_card}
 
 
 def write_props_palette(pal):
