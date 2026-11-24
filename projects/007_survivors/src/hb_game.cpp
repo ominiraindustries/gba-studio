@@ -92,6 +92,8 @@ volatile int test_gold_bosses;
 volatile int test_nova_pulled;         // gems pulled by Novas with Lodestone >= 3
 volatile int test_charge_offscreen;    // Warchief charges warned with the boss off screen (review: 0)
 volatile int test_curse_elites;        // most elites alive during a cursed wave (<= 5)
+volatile int test_tiles_menu;         // peak with a menu open (cards, pause, summary)
+volatile int test_tiles_menu_mode;
 volatile int test_tiles_used;         // peak bn::sprite_tiles::used_tiles_count() during play (§C6: <= 900)
 
 // perf: the hottest per-frame loops run as ARM code from IWRAM (measured in G-45; see README "Rendimiento").
@@ -908,6 +910,13 @@ namespace
                 _update_screen_fade();
                 test_mode = int(_mode);
                 test_tiles_used = bn::max(int(test_tiles_used), bn::sprite_tiles::used_tiles_count());   // cards too
+
+                if(_mode != game_mode::play)
+                {
+                    test_tiles_menu = bn::max(int(test_tiles_menu), bn::sprite_tiles::used_tiles_count());
+                    test_tiles_menu_mode = test_tiles_menu == bn::sprite_tiles::used_tiles_count() ? int(_mode) :
+                                                                                                    test_tiles_menu_mode;
+                }
                 _tick_sounds();
                 bool measured = _mode == game_mode::play && _play_streak >= 2;
                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
@@ -993,6 +1002,7 @@ namespace
         bn::vector<damage_number, max_damage_numbers> _numbers;
 
         bn::array<bn::color, 16> _white_colors;
+        bn::array<bn::color, 16> _gold_arrow_colors;   // G-55: Treasure Goblin edge arrow, gold ramp by brightness
         bn::array<bn::color, 16> _elite_colors[type_count][4];   // swift, shielded, splitting, treasure gold
         bn::array<bn::color, 16> _boss_white_colors;
         bn::array<bn::color, 16> _wolf_red_colors;
@@ -1251,6 +1261,10 @@ namespace
         static constexpr int create_budget_per_frame = 4;
         // Wolves crouching at once (review block 2 said 3; G-52: 3 gave 44 dash hits in 8:00-9:00).
         static constexpr int wolf_max_crouching = 2;
+        // G-55 (provisional number tweak, lead decision): frames between two wolves starting a crouch, so the pack
+        // takes turns (420 f cooldown + max 2 still gave 45 dash hits in 8:00-9:00, target <= 25).
+        static constexpr int wolf_pack_gap = 75;
+        int _wolf_pack_cd = 0;
         int _create_budget = create_budget_per_frame;
         int _chain_jumps = 0;
         int _chain_damage = 0;
@@ -1351,6 +1365,17 @@ namespace
             {
                 bn::color c = wolf_colors[k];
                 _wolf_red_colors[k] = k == 0 ? c : bn::color(bn::min(31, 12 + c.red()), c.green() / 3, c.blue() / 3);
+            }
+
+            // G-55: the coin palette did not match the arrow's indices (it read pale blue); a gold ramp instead.
+            bn::span<const bn::color> arrow_colors = art::edge_arrow.palette_item().colors_ref();
+
+            for(int k = 0; k < 16 && k < arrow_colors.size(); ++k)
+            {
+                bn::color c = arrow_colors[k];
+                int lum = (c.red() * 3 + c.green() * 6 + c.blue()) / 10;
+                int level = bn::min(31, 6 + lum);
+                _gold_arrow_colors[k] = k == 0 ? c : bn::color(level, level * 4 / 5, level / 5);
             }
 
             // Elite tint (§4 2b): Swift = gold, Shielded = cyan; computed from whatever palette the item has.
@@ -2805,7 +2830,7 @@ namespace
                 _show_hint("TREASURE GOBLIN!", 2 * fps);
                 _play(art::sfx_coin_burst, fixed(0.6));
                 bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
-                arrow.set_palette(art::coin.palette_item());   // review block 2: gold, the coin's palette
+                arrow.set_palette(bn::sprite_palette_item(_gold_arrow_colors, bn::bpp_mode::BPP_4));   // G-55: gold ramp
                 arrow.set_bg_priority(0);
                 _treasure_arrow = bn::move(arrow);
             }
@@ -3940,6 +3965,11 @@ namespace
         {
             _crouching = _crouching_now;
             _crouching_now = 0;
+
+            if(_wolf_pack_cd > 0)
+            {
+                --_wolf_pack_cd;
+            }
             int px = to_int(_pos.x());
             int py = to_int(_pos.y());
             int n = _enemies.size();
@@ -4061,7 +4091,7 @@ namespace
                             else
                             {
                                 e.state = 0;
-                                e.cd = 150;   // 300 f (G-52: 180 f gave 47 dash hits in 8:00-9:00)
+                                e.cd = 210;   // 420 f (G-55 lead decision; 300 f gave 41 dash hits in 8:00-9:00)
                                 e.vel = fixed_point();
                                 e.sprite.set_tiles(_horde_tiles[_type_slot[e.type]][0]);
                             }
@@ -4108,13 +4138,14 @@ namespace
                             step = step * fixed(1.6);
                         }
 
-                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < wolf_max_crouching &&
+                        if(def.kind == kind_dash && e.cd == 0 && e.mode == mode_chase && _crouching < wolf_max_crouching && _wolf_pack_cd == 0 &&
                            abs_int(dx) <= 100 && abs_int(dy) <= 60 && dx * dx + dy * dy <= 96 * 96)
                         {
                             // Direction fixed when the warning starts; only on screen (the crouch is the warning).
                             e.state = 1;
                             e.timer = 30;
                             ++_crouching;
+                            _wolf_pack_cd = wolf_pack_gap;
                             e.vel = unit(dx, dy) * 3;
                             e.sprite.set_tiles(def.look->item->tiles_item(), art::wolf_crouch);
                             e.sprite.set_horizontal_flip(dx < 0);
@@ -5978,17 +6009,12 @@ namespace
                 g.sprite.set_visible(! hide);
             }
 
-            for(particle& p : _particles)
+            if(hide)
             {
-                p.sprite.set_visible(! hide);
-            }
-
-            for(damage_number& d : _numbers)
-            {
-                for(bn::sprite_ptr& s : d.sprites)
-                {
-                    s.set_visible(! hide);
-                }
+                // G-55 (§C6 VRAM <= 900 with the cards open): short-lived effects are dropped instead of hidden, so
+                // their tiles are free for the cards. Nobody sees them go: the world is hidden behind the menu.
+                _particles.clear();
+                _numbers.clear();
             }
 
             for(bn::sprite_ptr& s : _hint)
@@ -6107,10 +6133,9 @@ namespace
                 s_hud.set_visible(false);
             }
 
-            for(bn::sprite_ptr& s_hud : _hud_clock)
-            {
-                s_hud.set_visible(false);
-            }
+            // G-55 (VRAM): the clock is dropped and redrawn when the cards close (_last_clock_s = -1).
+            _hud_clock.clear();
+            _last_clock_s = -1;
 
             // Card = card (64x64) + card_base (64x32) 48 px lower; texts inside the parchment (art/LÉEME.md).
             _text.set_palette_item(art::text_ink);
@@ -6266,6 +6291,12 @@ namespace
 
                 if(_burst_t == 24)
                 {
+                    if(_card_count == 3)
+                    {
+                        // G-55 (VRAM <= 900): the middle card covers the 64x64 burst entirely; free its 64 tiles.
+                        _burst.reset();
+                    }
+
                     _draw_cards();
                     return;
                 }

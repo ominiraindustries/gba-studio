@@ -84,7 +84,7 @@ def main():
     cmd = [sys.executable, "-I", os.path.join(ROOT, "tools", "scripts", "gbarun.py"), ROM, "--frames", str(frames),
            "--shot", shots, "--input", str(inp), "--out", out, "--timeout", "600", "--nonblank"]
     syms = []
-    for sym in ["test_tiles_used", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
+    for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
                 "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen"]:
         syms.append(f"{sym}.32>=-99999999")
