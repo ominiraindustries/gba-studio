@@ -235,3 +235,37 @@ python -I art/tools/build_hordes.py seed [nombres]  # ghost, imp (código), garg
   death = se vuelve piedra y se desmorona.
 - `ghost` (sábana con dobladillo ondulado, ojos cian) e `imp` (diablillo rojo de frente, alas de murciélago, `cast`
   con bola de fuego sobre la cabeza) están dibujados en código.
+
+## Bloque 4: meta, armas nuevas y personajes (G-51, `tools/build_block4.py`)
+
+```
+python -I art/tools/build_block4.py seed [nombres]  # shop_icons, stage_cards, fx_lance, fx_star y los *_palette (si faltan)
+python -I art/tools/build_block4.py extend          # icons +10..16; oro en la paleta FX + fx_rune gold (copias en old_style/pre_g51/)
+```
+
+| Fichero (código) | Tipo | Frame | Etiquetas | Paleta / notas |
+|---|---|---|---|---|
+| `shop_icons` | sprite | 16×16 | might 0, vitality 1, haste 2, magnet 3, greed 4, growth 5, armor 6, recovery 7, reroll 8, charged 9, revival 10 | **UI** (= `hud_xp`) |
+| `stage_cards` | sprite | 64×64 | meadow 0, graveyard 1, keep 2, locked 3 | propia: miniatura de cada fase (suelo + atrezzo con su paleta, reducido) con marco; locked = cementerio a oscuras + candado |
+| `fx_lance` | sprite | 32×16 | beam 0–2 (40/60/60 ms) | FX: tramo horizontal del haz (se encadenan), 0 arranque fino, 1 lleno, 2 se deshace |
+| `fx_star` | sprite | 16×16 | fall 0–3 | FX: estrella dorada cayendo desde arriba a la derecha con estela magenta; 3 = impacto |
+| `fx_rune` | sprite | 8×8 | loop 0–1, **gold 2–3** | FX: runa dorada de Ward of Ages |
+| `icons` | sprite | 16×16 | … storm_chain 9, **moon_lance 10, lens 11, ward_stone 12, starfall 13, blizzard 14, ward_of_ages 15, locked 16** | recogibles |
+
+- **Paleta FX con oro**: los índices 3, 11 y 13 eran copias de 2 (blanco) y 5 (magenta); sus píxeles pasaron al gemelo
+  (sin cambio visible) y ahora son oros `#a06818 #ffc838 #fff4b0`. Los 12 ficheros de paleta FX la comparten igual.
+- **Ficheros `*_palette.aseprite`** (sólo paleta): el dibujo es una vista previa; la exportación escribe sólo la
+  paleta como `graphics/<nombre>.bmp/json` (`sprite_palette`; `bg_palette` si empieza por `ground_` o `props_`).
+  Cambia colores en Aseprite sin mover índices. Mismos tiles que el original, otra paleta:
+
+| Paleta (código) | Para | Sobre | Idea |
+|---|---|---|---|
+| `wizard_cinda_palette` | Cinda | `wizard` | brasa/rojo, cristal oro-naranja, borde cálido `#eecf74` |
+| `wizard_morrow_palette` | Morrow | `wizard` | azul noche/verde mar, cristal cian, borde `#abc4d2` |
+| `rotten_palette` | Ghoul, Grave Brute | `goblin`, `orc` | piel verde azulada podrida, ojos rojos |
+| `crow_palette` | Crow | `bat` | negro, ojos y pico oro |
+| `grey_flesh_palette` | Grave Walker | `skeleton` | carne gris, ojos magenta |
+| `red_bone_palette` | Bone Archer | `skeleton` | hueso rojo/rosa, ojos oro |
+| `violet_palette` | Wraith | `ghost` | sábana magenta/violeta, ojos cian |
+| `ground_graveyard_palette` / `props_graveyard_palette` | F2 | `ground` / `props` (bg_palette) | verde musgo frío, brillos magenta |
+| `ground_keep_palette` / `props_keep_palette` | F3 (adelanto) | `ground` / `props` | ceniza y brasa, brillos oro |

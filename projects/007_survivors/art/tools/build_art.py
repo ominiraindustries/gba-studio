@@ -475,6 +475,14 @@ def export():
         w, h = im.size
         px = list(im.getdata())
         pix = [px[y * w:(y + 1) * w] for y in range(h)]
+        if name.endswith("_palette") and name != "props_palette":  # G-51: palette-only items (preview + palette)
+            bg = name.startswith(("ground_", "props_"))
+            pp = [[(x + (8 if y >= 4 else 0)) % 16 for x in range(8)] for y in range(8)]
+            write_bmp4(os.path.join(GFX, name + ".bmp"), 8, 8, pal, pp)
+            _json(name, {"type": "bg_palette", "bpp_mode": "bpp_4", "colors_count": 16} if bg
+                  else {"type": "sprite_palette", "bpp_mode": "bpp_4"})
+            print(f"{name:14s} palette ({'bg' if bg else 'sprite'})")
+            continue
         if name in SPECIAL_EXPORT:  # set 2 (build_ui.py): 8 bpp title, sliced logo, split card
             fullpal = im.getpalette()[:768]
             fullpal = [tuple(fullpal[i:i + 3]) for i in range(0, len(fullpal), 3)]
