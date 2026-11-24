@@ -306,9 +306,15 @@ namespace
 
                     int tpl = chunk_template(kx, ky);
 
+                    // A 64x64 regular BG map is stored as four 32x32 screen blocks (hardware layout, see
+                    // bn::regular_bg_map_item::cell_index), not as 64-cell rows: writing plain rows interleaved the
+                    // prop rows with the next block ("cut" props in game).
                     for(int row = 0; row < chunk_cells; ++row)
                     {
-                        bn::regular_bg_map_cell* out = prop_cells + (sy * chunk_cells + row) * map_cells + sx * chunk_cells;
+                        int map_y = sy * chunk_cells + row;
+                        int map_x = sx * chunk_cells;
+                        int block = (map_y / 32) * (map_cells / 32) + map_x / 32;
+                        bn::regular_bg_map_cell* out = prop_cells + block * 1024 + (map_y % 32) * 32 + (map_x % 32);
 
                         for(int col = 0; col < chunk_cells; ++col)
                         {
@@ -346,7 +352,7 @@ namespace
     const enemy_def enemy_defs[type_count] = {
         { &art::slime, 6, fixed(0.35), 5, false },
         { &art::bat, 3, fixed(1.1), 4, true },
-        { &art::skeleton, 14, fixed(0.55), 8, false },
+        { &art::skeleton, 14, fixed(0.55), 6, false },   // damage 8 -> 6 (§19.2)
     };
 
     enum upgrade_id : uint8_t
@@ -374,13 +380,13 @@ namespace
 
     // §9
     const upgrade_text upgrade_texts[up_count] = {
-        { "Spark Bolt", &art::icons, art::icon_spark_bolt, { "Auto bolt", "+1 bolt", "+3 dmg", "+1 bolt", "Pierce 2" } },
-        { "Rune Orbit", &art::icons, art::icon_rune_orbit, { "2 runes", "+1 rune", "Wider", "+1 rune", "Always on" } },
-        { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slow ring", "+3 dmg", "Big ring", "Faster", "Freeze" } },
-        { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% spd", "+8% spd", "+8% spd", "+8% spd", "+8% spd" } },
+        { "Spark Bolt", &art::icons, art::icon_spark_bolt, { "Auto", "+1 bolt", "+3 dmg", "+1 bolt", "Pierce" } },
+        { "Rune Orbit", &art::icons, art::icon_rune_orbit, { "2 runes", "+1 rune", "Wider", "+1 rune", "Always" } },
+        { "Frost Ring", &art::icons, art::icon_frost_ring, { "Slows", "+3 dmg", "Bigger", "Faster", "Freeze" } },
+        { "Swift Boots", &art::icons, art::icon_swift_boots, { "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD", "+8% SPD" } },
         { "Heart Amulet", &art::icons, art::icon_heart_amulet, { "+20 HP", "+20 HP", "+20 HP", "+20 HP", "+20 HP" } },
         { "Heal", &art::heart, 0, { "Heal 30", "", "", "", "" } },
-        { "Gold", &art::coin, 0, { "+10 gold", "", "", "", "" } },
+        { "Gold", &art::coin, 0, { "+10 G", "", "", "", "" } },
     };
 
     enum blessing_id : uint8_t
@@ -394,9 +400,9 @@ namespace
 
     // §4 2a
     const upgrade_text blessing_texts[bless_count] = {
-        { "Fury", &art::icons, art::icon_star, { "+30% dmg", "60 s", "", "", "" } },
-        { "Haste", &art::icons, art::icon_swift_boots, { "+30% spd", "60 s", "", "", "" } },
-        { "Magnet", &art::icons, art::icon_magnet, { "All gems", "60 s", "", "", "" } },
+        { "Fury", &art::icons, art::icon_star, { "DMG+30%", "60 s", "", "", "" } },
+        { "Haste", &art::icons, art::icon_swift_boots, { "SPD+30%", "60 s", "", "", "" } },
+        { "Magnet", &art::icons, art::icon_magnet, { "Get all", "60 s", "", "", "" } },
         { "Mend", &art::heart, 0, { "Heal 40", "now", "", "", "" } },
     };
 
@@ -535,6 +541,7 @@ namespace
             _grid_clear();
             _build_palettes();
             _white_pal = _white_palette().create_palette();
+            _wizard_pal = art::wizard.palette_item().create_palette();
 
             for(int t = 0; t < type_count; ++t)
             {
@@ -658,6 +665,14 @@ namespace
                             _show_summary();
                         }
                     }
+                    else if(_summary_lock > 0)
+                    {
+                        if(--_summary_lock == 0)
+                        {
+                            _text.set_center_alignment();
+                            _text.generate(0, 28, "A: RETRY    B: TITLE", _menu);
+                        }
+                    }
                     else if(bn::keypad::a_pressed())
                     {
                         return run_end::retry;
@@ -771,6 +786,13 @@ namespace
         int _player_hp = 0;
         int _player_max_hp = 0;
         int _invulnerable = 0;
+        int _grace = 0;              // frames without contact damage after closing the cards (§19.3), no flash
+        bool _wizard_white = false;
+        int _summary_lock = 0;       // frames the summary ignores A/B (§19.5)
+        bool _cards_shown = false;
+        int _card_blink = 0;
+        int _sel_card_sprite = -1;
+        bn::optional<bn::sprite_palette_ptr> _wizard_pal;
         int _level = 1;
         int _xp = 0;
         int _pending_levels = 0;
@@ -788,7 +810,7 @@ namespace
         int _blink_cd = 0;
         int _blink_invulnerable = 0;
         bool _blink_hint_done = false;
-        static constexpr int nova_max = 150;   // ~50 s of early play (2 per kill, 1 per gem XP)
+        static constexpr int nova_max = 120;   // §19.6 (was 150)   // ~50 s of early play (2 per kill, 1 per gem XP)
         int _nova = 0;
         int _nova_flash = 0;
         bool _nova_hint_done = false;
@@ -820,6 +842,7 @@ namespace
         bool _stress = false;
         bool _nova_cast_frame = false;
         int _nova_pending = 0;
+        bool _nova_hint_shown = false;
 
         // Spatial buckets (perf + separation): enemies linked by index into 32 px cells of a wrapped 16x16
         // window (512x512 px; enemies live within 260 px of the wizard). Kept valid on spawn, move and remove.
@@ -1267,6 +1290,7 @@ namespace
             {
                 _nova_hint_done = true;
                 _show_hint("A: NOVA READY!", 3 * fps);
+                _nova_hint_shown = true;
             }
         }
 
@@ -1297,6 +1321,13 @@ namespace
             }
 
             _nova_step = 0;
+
+            if(_nova_hint_shown)
+            {
+                _nova_hint_shown = false;
+                _hint.clear();
+                _hint_t = 0;
+            }
 
             if(_boss && _boss_state != 3)
             {
@@ -1482,7 +1513,14 @@ namespace
             _wizard_frame = frame;
             _wizard.set_tiles(art::wizard.tiles_item(), frame);
             _wizard.set_position(_pos.x(), _pos.y() + art::wizard_y_offset);
-            _wizard.set_visible(_invulnerable == 0 || (_invulnerable & 2) == 0);
+            // Hurt: white 2 f / normal 2 f; the wizard never disappears (§19.1).
+            bool white = _invulnerable > 0 && (_invulnerable & 2) != 0;
+
+            if(white != _wizard_white)
+            {
+                _wizard_white = white;
+                _wizard.set_palette(white ? *_white_pal : *_wizard_pal);
+            }
             _wizard_shadow.set_position(_pos.x(), _pos.y() + 5);
             _hp_bar.set_position(_pos.x(), _pos.y() + 12);
             _hp_bar.set_tiles(art::hp_bar.tiles_item(), (_player_hp * art::hp_bar_frames + _player_max_hp - 1) / _player_max_hp);
@@ -1491,11 +1529,16 @@ namespace
             {
                 --_invulnerable;
             }
+
+            if(_grace > 0)
+            {
+                --_grace;
+            }
         }
 
         void _hurt_player(int damage)
         {
-            if(_invulnerable > 0 || _blink_invulnerable > 0 || _fx.god_mode)
+            if(_invulnerable > 0 || _blink_invulnerable > 0 || _grace > 0 || _fx.god_mode)
             {
                 return;
             }
@@ -1534,7 +1577,7 @@ namespace
                 return 6 + (8 * s) / 60;
             }
 
-            constexpr int per_minute[5] = { 14, 20, 26, 32, 38 };
+            constexpr int per_minute[5] = { 14, 16, 26, 32, 38 };   // minute 1: 20 -> 16 (DISENO §19 fallback)
             return per_minute[bn::min(s / 60, 4)];
         }
 
@@ -1755,14 +1798,16 @@ namespace
             int s = _t / fps;
             int r = _random.get_int(100);
 
-            if(s < 60)
+            if(s < 70)
             {
                 return type_slime;
             }
 
             if(s < 120)
             {
-                return r < 65 ? type_slime : type_skeleton;
+                // §19.2: skeletons join at 1:10, 15 % ramping to 35 % at 1:40.
+                int skeleton_pct = 15 + (20 * bn::min(s - 70, 30)) / 30;
+                return r < skeleton_pct ? type_skeleton : type_slime;
             }
 
             if(s < 180)
@@ -1789,13 +1834,7 @@ namespace
                 _spawn_enemy(type_slime, _spawn_point(136, 150, true), 0);
             }
 
-            // 1:00 two lone skeletons (§5).
-            if(_t == 60 * fps)
-            {
-                _make_room(2);
-                _spawn_enemy(type_skeleton, _spawn_point(140, 160, true), 0);
-                _spawn_enemy(type_skeleton, _spawn_point(140, 160, true), 0);
-            }
+            // §19.2: no scripted skeleton pair at 1:00 any more; they enter the spawn pool from 1:10.
 
             // Shrines at 1:30, 3:00, 4:30 (§4 2a, §6).
             if(second && s > 0 && s % 90 == 0 && _t < boss_time)
@@ -3420,6 +3459,12 @@ namespace
                 return;
             }
 
+            if(_cards_shown)
+            {
+                bn::bg_palettes::set_fade(bn::color(0, 0, 0), fixed(0.5));
+                return;
+            }
+
             if(_level_flash > 0)
             {
                 --_level_flash;
@@ -3660,11 +3705,24 @@ namespace
             // Card = card (64x64) + card_base (64x32) 48 px lower; texts inside the parchment (art/LÉEME.md).
             _text.set_palette_item(art::text_ink);
 
+            if(! _cards_shown)
+            {
+                _set_cards_world(true);
+            }
+
+            _card_blink = 0;
+
             for(int i = 0; i < _card_count; ++i)
             {
                 int x = _card_x(i);
                 bool selected = i == _cursor;
-                int cy = selected ? -8 : -4;
+                int cy = selected ? -8 : -4;   // the selected card stands 4 px higher and blinks (§19.7)
+
+                if(selected)
+                {
+                    _sel_card_sprite = _menu.size();
+                }
+
                 bn::sprite_ptr c = art::card.create_sprite(x, cy, selected ? 1 : 0);
                 c.set_bg_priority(1);
                 _menu.push_back(bn::move(c));
@@ -3728,6 +3786,61 @@ namespace
                 _text.generate(0, 72, "D-PAD + A", _menu);
             }
         }
+        // Cards on screen: background dimmed, enemies and weapon effects hidden behind the cards (§19.7).
+        void _set_cards_world(bool cards)
+        {
+            _cards_shown = cards;
+
+            for(enemy& e : _enemies)
+            {
+                e.sprite.set_visible(! cards);
+
+                if(e.aura)
+                {
+                    e.aura->set_visible(! cards);
+                }
+            }
+
+            for(bolt& b : _bolts)
+            {
+                b.sprite.set_visible(! cards);
+            }
+
+            for(bn::sprite_ptr& r : _runes)
+            {
+                r.set_visible(! cards);
+            }
+
+            if(_frost_t >= 0)
+            {
+                for(bn::sprite_ptr& f : _frost)
+                {
+                    f.set_visible(! cards);
+                }
+            }
+
+            _wizard.set_visible(! cards);
+            _wizard_shadow.set_visible(! cards && _fx.shadows);
+            _hp_bar.set_visible(! cards);
+        }
+
+        void _push_enemies_out(int radius)
+        {
+            for(int i = 0, n = _enemies.size(); i < n; ++i)
+            {
+                enemy& e = _enemies[i];
+                int dx = to_int(e.pos.x() - _pos.x());
+                int dy = to_int(e.pos.y() - _pos.y());
+
+                if(dx * dx + dy * dy < radius * radius)
+                {
+                    fixed_point dir = dx == 0 && dy == 0 ? fixed_point(1, 0) : unit(dx, dy);
+                    e.pos = _pos + dir * radius;
+                    _grid_refresh(i);
+                }
+            }
+        }
+
         void _update_cards()
         {
             if(_burst)
@@ -3746,6 +3859,14 @@ namespace
                     _draw_cards();
                     return;
                 }
+            }
+
+            if(_cards_shown && _sel_card_sprite >= 0 && _sel_card_sprite + 1 < _menu.size())
+            {
+                ++_card_blink;
+                int frame = (_card_blink & 8) ? 0 : 1;
+                _menu[_sel_card_sprite].set_tiles(art::card.tiles_item(), frame);
+                _menu[_sel_card_sprite + 1].set_tiles(art::card_base.tiles_item(), frame);
             }
 
             if(bn::keypad::left_pressed() && _cursor > 0)
@@ -3791,8 +3912,11 @@ namespace
                     s_hud.set_visible(true);
                 }
                 _hide_world_extras(false);
+                _set_cards_world(false);
                 _mode = game_mode::play;
                 _refresh_hud(true);
+                _grace = 45;
+                _push_enemies_out(32);
 
                 if(_pending_levels > 0 || _free_upgrades > 0)
                 {
@@ -4129,7 +4253,10 @@ namespace
             line.append(bn::to_string<6>(_gold));
             _text.generate(0, 4, line, _menu);
 
-            _text.generate(0, 28, "A: RETRY    B: TITLE", _menu);
+            _summary_lock = 60;
+            _wizard.set_visible(false);
+            _wizard_shadow.set_visible(false);
+            _hp_bar.set_visible(false);
         }
     };
 }

@@ -25,7 +25,7 @@ namespace hb
     constexpr int player_hp = 100;
     constexpr int player_invulnerable_frames = 30;
     constexpr int player_half_box = 4;                     // 8x8 hurt box
-    constexpr int pickup_radius = 24;
+    constexpr int pickup_radius = 32;                      // §19.4 (was 24)
     constexpr bn::fixed gem_fly_speed = 3;
 
     // Enemies (§2, §13)
@@ -57,6 +57,11 @@ namespace hb
     // XP (§10)
     [[nodiscard]] constexpr int xp_needed(int level)
     {
+        if(level == 1)
+        {
+            return 3;   // §19.4: first level-up sooner (was 5)
+        }
+
         return level <= 20 ? 5 + 3 * (level - 1) : 5 + 3 * 19 + 6 * (level - 20);
     }
 }
