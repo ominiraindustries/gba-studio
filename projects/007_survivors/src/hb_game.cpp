@@ -387,7 +387,7 @@ namespace
 
     // §7
     const enemy_def enemy_defs[type_count] = {
-        { &art::slime, 6, fixed(0.35), 5, false },
+        { &art::slime, 6, fixed(0.35), 4, false },      // contact 5 -> 4 (§19.1, G-45.2)
         { &art::bat, 3, fixed(1.1), 4, true },
         { &art::skeleton, 14, fixed(0.55), 6, false },   // damage 8 -> 6 (§19.2)
     };
@@ -1595,7 +1595,7 @@ namespace
             frame = moving ? art::wizard_walk[drawn].frame(_walk_anim, true) : art::wizard_idle[drawn].frame(_idle_anim, true);
             _wizard.set_horizontal_flip(art::dir_flipped(_wizard_dir));
 
-            if(_invulnerable > 20)
+            if(_invulnerable > player_invulnerable_frames - 10)   // hurt pose for the first 10 f
             {
                 frame = art::wizard_hurt.frame(player_invulnerable_frames - _invulnerable, true);
             }
@@ -1667,7 +1667,7 @@ namespace
                 return 6 + (8 * s) / 60;
             }
 
-            constexpr int per_minute[5] = { 14, 16, 26, 32, 38 };   // minute 1: 20 -> 16 (DISENO §19 fallback)
+            constexpr int per_minute[5] = { 14, 12, 26, 32, 38 };   // minute 1: 20 -> 16 -> 12 (DISENO §19.1, G-45.2)
             return per_minute[bn::min(s / 60, 4)];
         }
 
