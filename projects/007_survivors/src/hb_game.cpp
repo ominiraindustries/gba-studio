@@ -56,6 +56,7 @@ volatile int test_frames;
 volatile int test_nova;           // Hex Nova meter (0..nova_max)
 volatile int test_novas_cast;
 volatile int test_blinks;
+volatile int test_wizard_dir;      // art::dir index the wizard is drawn facing
 volatile int test_sounds;
 volatile int test_last_sound_frame;
 volatile int test_last_sound_id;
@@ -90,6 +91,42 @@ namespace
     [[nodiscard]] int abs_int(int value)
     {
         return value < 0 ? -value : value;
+    }
+
+    // 8-direction index (art::dir_*: 0 S, 1 SE, 2 E, 3 NE, 4 N, 5 NW, 6 W, 7 SW) of a delta, 22.5 degree sectors;
+    // a zero delta keeps the current direction.
+    [[nodiscard]] int dir_towards(int dx, int dy, int current)
+    {
+        int ax = abs_int(dx);
+        int ay = abs_int(dy);
+        int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+        int sy = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+
+        if(ay * 12 < ax * 5)   // tan(22.5) ~= 5 / 12
+        {
+            sy = 0;
+        }
+        else if(ax * 12 < ay * 5)
+        {
+            sx = 0;
+        }
+
+        constexpr int8_t dirs[9] = { 5, 4, 3, 6, -1, 2, 7, 0, 1 };
+        int dir = dirs[(sy + 1) * 3 + sx + 1];
+        return dir < 0 ? current : dir;
+    }
+
+    // One 45 degree step from current towards target, the short way (180 degrees: always +1, via the next index).
+    [[nodiscard]] int turn_step(int current, int target)
+    {
+        int diff = (target - current) & 7;
+
+        if(diff == 0)
+        {
+            return current;
+        }
+
+        return (current + (diff <= 4 ? 1 : 7)) & 7;
     }
 
     // Unit vector (approximately) from an integer delta; returns {0, 0} for a zero delta.
@@ -434,6 +471,7 @@ namespace
         uint8_t shield = 0;
         uint8_t rune_cd = 0;
         uint8_t frost_pulse = 0;
+        uint8_t dir = 0;        // facing (art::dir_*), only for monsters with walk_dirs > 1
         uint8_t nova = 0;       // 1: caught by a Hex Nova, hit in a later frame (perf: spread over frames)
         int16_t slow = 0;
         int16_t freeze = 0;
@@ -526,7 +564,7 @@ namespace
             _camera(bn::camera_ptr::create(0, 0)),
             _text(common::variable_8x8_sprite_font),
             _big_text(common::variable_16x16_sprite_font),
-            _wizard(art::wizard.create_sprite(0, art::wizard_y_offset, art::wizard_idle.first)),
+            _wizard(art::wizard.create_sprite(0, art::wizard_y_offset, art::wizard_idle[0].first)),
             _wizard_shadow(art::shadow_small.create_sprite(0, 5)),
             _hp_bar(art::hp_bar.create_sprite(0, 12, art::hp_bar_frames))
         {
@@ -548,9 +586,13 @@ namespace
                 const art::monster_art& look = *enemy_defs[t].look;
                 _type_pal[t] = look.item->palette_item().create_palette();
 
-                for(int f = 0; f < look.move.count; ++f)
+                // Cached as [drawn dir][frame]; every direction must have the same frame count.
+                for(int d = 0; d < look.walk_dirs; ++d)
                 {
-                    _move_tiles[t].push_back(look.item->tiles_item().create_tiles(look.move.first + f));
+                    for(int f = 0; f < look.move[0].count; ++f)
+                    {
+                        _move_tiles[t].push_back(look.item->tiles_item().create_tiles(look.move[d].first + f));
+                    }
                 }
             }
 
@@ -777,7 +819,7 @@ namespace
         // Hot-path caches (perf): enemies swap palettes and animation frames by handle, without a VRAM lookup.
         bn::optional<bn::sprite_palette_ptr> _white_pal;
         bn::optional<bn::sprite_palette_ptr> _type_pal[type_count];
-        bn::vector<bn::sprite_tiles_ptr, 8> _move_tiles[type_count];
+        bn::vector<bn::sprite_tiles_ptr, art::drawn_dirs * 4> _move_tiles[type_count];
 
         // Player
         fixed_point _pos;
@@ -804,6 +846,8 @@ namespace
         int _idle_anim = 0;
         int _death_anim = 0;
         int _wizard_frame = 0;
+        int _wizard_dir = 2;    // art::dir index (2 = east)
+        int _wizard_turn = 0;
         bool _has_aim = false;
         int _aim_dx = 0;
         int _aim_dy = 0;
@@ -853,6 +897,9 @@ namespace
         uint8_t _grid_cell[max_enemies];
         int _number_frame = -1;
         int _nova_step = 0;
+        bn::optional<bn::sprite_ptr> _nova_ring;
+        int _nova_ring_t = 0;
+        static constexpr int nova_sparks = 12;
         int _nova_damage = 0;
         static constexpr int nova_hit_frames = 6;
         static constexpr int nova_hits_per_frame = 12;
@@ -1261,11 +1308,16 @@ namespace
             _play(art::sfx_menu, 1, fixed(0.7));
             test_blinks = test_blinks + 1;
 
-            // PROVISIONAL afterimages (fx_blink pending): translucent copies of the current wizard frame.
+            // Implosion where he leaves, flash where he lands, translucent ghosts in between.
+            _spawn_particle(fixed_point(start.x(), start.y() + art::wizard_y_offset), fixed_point(), art::blink,
+                            art::blink_out, art::blink_out.count * art::blink_out.frame_time, 4);
+            _spawn_particle(fixed_point(end.x(), end.y() + art::wizard_y_offset), fixed_point(), art::blink,
+                            art::blink_in, art::blink_in.count * art::blink_in.frame_time, 4);
+
             for(int i = 1; i <= 3; ++i)
             {
                 fixed_point p = start + (end - start) * i / 4;
-                _spawn_particle(fixed_point(p.x(), p.y() + art::wizard_y_offset), fixed_point(), art::wizard,
+                _spawn_particle(fixed_point(p.x(), p.y() + art::wizard_y_offset), fixed_point(), art::wizard_ghost,
                                 { _wizard_frame, 1, 1 }, 6 + i * 3, 7, _wizard.horizontal_flip());
 
                 if(! _particles.empty())
@@ -1334,7 +1386,49 @@ namespace
                 _hit_boss(_damage(60));
             }
 
-            _spawn_poof(_pos, 6);
+            // fx_nova ring at the wizard, scaled up 1x -> 2x while it plays (affine, double size), plus sparks.
+            _nova_ring.reset();
+            _nova_ring = art::nova_ring.create_sprite_optional(_pos, art::nova_ring_anim.first);
+
+            if(_nova_ring)
+            {
+                _nova_ring->set_camera(_camera);
+                _nova_ring->set_bg_priority(2);
+                _nova_ring->set_z_order(3);
+                _nova_ring_t = 0;
+            }
+
+            for(int i = 0; i < nova_sparks; ++i)
+            {
+                fixed_point v = angle_vector(i * (2048 / nova_sparks) + 64) * fixed(2.5);
+                _spawn_particle(_pos + v * 4, v, art::nova_spark, art::nova_spark_anim, 22, 3);
+            }
+        }
+
+        void _update_nova_ring()
+        {
+            if(! _nova_ring)
+            {
+                return;
+            }
+
+            ++_nova_ring_t;
+            int length = art::nova_ring_anim.count * art::nova_ring_anim.frame_time;
+
+            if(_nova_ring_t >= length)
+            {
+                _nova_ring.reset();
+                return;
+            }
+
+            _nova_ring->set_position(_pos);
+
+            if(_nova_ring_t % art::nova_ring_anim.frame_time == 0)
+            {
+                _nova_ring->set_tiles(art::nova_ring.tiles_item(), art::nova_ring_anim.frame(_nova_ring_t, false));
+            }
+
+            _nova_ring->set_scale(1 + fixed(_nova_ring_t) / length);
         }
 
         // Hex Nova hits, a few per frame (perf): the cast frame used to resolve up to 56 hits and kills at once.
@@ -1473,37 +1567,33 @@ namespace
             ++_idle_anim;
 
             // User decision: Wendel faces where he shoots (nearest target), not where he walks; with no target he
-            // faces the movement direction. Walking backwards plays the walk cycle of the aim side.
-            int look_x = ax;
-            int look_y = ay;
-
-            if(! moving)
-            {
-                look_x = _facing.x() > 0 ? 1 : _facing.x() < 0 ? -1 : 0;
-                look_y = _facing.y() > 0 ? 1 : _facing.y() < 0 ? -1 : 0;
-            }
+            // faces the movement direction. 8 directions, turning one 45 degree step every few frames (never a
+            // 180 degree snap). Walking backwards plays the walk cycle of the aim direction.
+            int target = _wizard_dir;
 
             if(_has_aim)
             {
-                int adx = abs_int(_aim_dx);
-                int ady = abs_int(_aim_dy);
-                look_x = adx * 2 >= ady ? (_aim_dx < 0 ? -1 : 1) : 0;
-                look_y = look_x ? 0 : (_aim_dy < 0 ? -1 : 1);
+                target = dir_towards(_aim_dx, _aim_dy, _wizard_dir);
+            }
+            else if(moving)
+            {
+                target = dir_towards(ax, ay, _wizard_dir);
             }
 
-            if(look_x)
+            if(_wizard_turn > 0)
             {
-                frame = moving ? art::wizard_walk_side.frame(_walk_anim, true) : art::wizard_idle_side.frame(_idle_anim, true);
-                _wizard.set_horizontal_flip(look_x < 0);
+                --_wizard_turn;
             }
-            else if(look_y < 0)
+            else if(target != _wizard_dir)
             {
-                frame = moving ? art::wizard_walk_up.frame(_walk_anim, true) : art::wizard_idle_up.frame(_idle_anim, true);
+                _wizard_dir = turn_step(_wizard_dir, target);
+                _wizard_turn = art::wizard_turn_frames - 1;
             }
-            else
-            {
-                frame = moving ? art::wizard_walk_down.frame(_walk_anim, true) : art::wizard_idle.frame(_idle_anim, true);
-            }
+
+            test_wizard_dir = _wizard_dir;
+            int drawn = art::drawn_dir(_wizard_dir);
+            frame = moving ? art::wizard_walk[drawn].frame(_walk_anim, true) : art::wizard_idle[drawn].frame(_idle_anim, true);
+            _wizard.set_horizontal_flip(art::dir_flipped(_wizard_dir));
 
             if(_invulnerable > 20)
             {
@@ -2017,6 +2107,7 @@ namespace
         void _update_weapons()
         {
             _update_nova();
+            _update_nova_ring();
             _update_spark();
             _prof(2);
             _update_runes();
@@ -2725,13 +2816,35 @@ namespace
                 }
 
                 e.sprite.set_position(draw);
-                e.sprite.set_horizontal_flip(dx < 0);
 
-                const art::anim& move_anim = def.look->move;
+                const art::monster_art& look = *def.look;
+                const art::anim& move_anim = look.move[0];
+                bool retile = ((_t + e.uid) % move_anim.frame_time) == 0;
 
-                if(((_t + e.uid) % move_anim.frame_time) == 0)
+                if(look.walk_dirs > 1)
                 {
-                    e.sprite.set_tiles(_move_tiles[e.type][move_anim.frame(_t + e.uid, true) - move_anim.first]);
+                    // Turns towards the wizard one 45 degree step every 4 frames.
+                    if(((_t + e.uid) & 3) == 0)
+                    {
+                        int target = dir_towards(dx, dy, e.dir);
+
+                        if(target != e.dir)
+                        {
+                            e.dir = uint8_t(turn_step(e.dir, target));
+                            e.sprite.set_horizontal_flip(art::dir_flipped(e.dir));
+                            retile = true;
+                        }
+                    }
+                }
+                else
+                {
+                    e.sprite.set_horizontal_flip(dx < 0);
+                }
+
+                if(retile)
+                {
+                    int base = look.walk_dirs > 1 ? art::drawn_dir(e.dir) * move_anim.count : 0;
+                    e.sprite.set_tiles(_move_tiles[e.type][base + move_anim.frame(_t + e.uid, true) - move_anim.first]);
                 }
 
                 if(e.aura)
@@ -3500,22 +3613,17 @@ namespace
 
             if(_nova_bar.empty())
             {
-                for(int i = 0; i < 2; ++i)
-                {
-                    bn::sprite_ptr bar = art::xp_bar.create_sprite(-96 + i * 32, 72, 0);
-                    bar.set_bg_priority(0);
-                    _nova_bar.push_back(bn::move(bar));
-                }
-            }
-
-            int nova_px = (_nova * 64) / nova_max;
-
-            for(int i = 0; i < 2; ++i)
-            {
-                _nova_bar[i].set_tiles(art::xp_bar.tiles_item(), bn::max(0, bn::min(32, nova_px - i * 32)) / 2);
+                bn::sprite_ptr meter = art::nova_meter.create_sprite(-108, 70, 0);
+                meter.set_bg_priority(0);
+                _nova_bar.push_back(bn::move(meter));
             }
 
             bool ready = _nova >= nova_max;
+            int meter_frame = ready ? art::nova_meter_full.frame(_t, true) :
+                                      bn::min(art::nova_meter_charge_frames - 1,
+                                              (_nova * art::nova_meter_charge_frames) / nova_max);
+            _nova_bar[0].set_tiles(art::nova_meter.tiles_item(), meter_frame);
+
             int nova_state = ready ? 1 + ((_t >> 4) & 1) : 0;
 
             if(force || nova_state != _last_nova_shown)
@@ -3527,7 +3635,7 @@ namespace
                 if(nova_state == 1)
                 {
                     _text.set_palette_item(art::text_gold);
-                    _text.generate(-56, 72, "A", _nova_text);
+                    _text.generate(-98, 71, "A", _nova_text);
                     _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
                 }
             }
@@ -4179,6 +4287,8 @@ namespace
 
                     _player_max_hp = player_hp + 20 * max_upgrade_level;
                     _player_hp = _player_max_hp;
+                    _nova = nova_max;   // test convenience: Nova ready at once
+                    test_nova = _nova;
                 }
                 else if(_cursor == fx_rows + 2)
                 {

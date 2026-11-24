@@ -9,6 +9,7 @@
 #include "bn_regular_bg_tiles_items_props.h"
 #include "bn_bg_palette_items_props_palette.h"
 #include "bn_sprite_items_wizard.h"
+#include "bn_sprite_items_wizard_ghost.h"
 #include "bn_sprite_items_slime.h"
 #include "bn_sprite_items_bat.h"
 #include "bn_sprite_items_skeleton.h"
@@ -27,6 +28,10 @@
 #include "bn_sprite_items_fx_aura.h"
 #include "bn_sprite_items_shadow_small.h"
 #include "bn_sprite_items_shadow_big.h"
+#include "bn_sprite_items_fx_nova.h"
+#include "bn_sprite_items_fx_nova_spark.h"
+#include "bn_sprite_items_fx_blink.h"
+#include "bn_sprite_items_hud_nova.h"
 #include "bn_sprite_items_tmp_fx.h"
 #include "bn_sprite_items_tmp_wave.h"
 #include "bn_sprite_items_tmp_bossbar.h"
@@ -104,30 +109,52 @@ namespace hb::art
         { 184, 104, 32, 24, 0, 0, 0, 0 },   // rocks_small
     };
 
-    // ---- Wizard 32x32 (feet 1 px above the bottom row).
+    // ---- Facing: 8 directions, index 0 S, 1 SE, 2 E, 3 NE, 4 N, 5 NW, 6 W, 7 SW. Only S..N (0-4) are drawn;
+    // 5-7 are 3-1 mirrored (art faces right).
+    constexpr int dir_count = 8;
+    constexpr int drawn_dirs = 5;
+
+    [[nodiscard]] constexpr int drawn_dir(int dir)
+    {
+        return dir <= 4 ? dir : 8 - dir;
+    }
+
+    [[nodiscard]] constexpr bool dir_flipped(int dir)
+    {
+        return dir > 4;
+    }
+
+    // ---- Wizard 32x32 (feet 1 px above the bottom row). wizard_ghost has the same 59-frame layout.
     inline constexpr const bn::sprite_item& wizard = bn::sprite_items::wizard;
-    constexpr anim wizard_idle = { 0, 4, 12 };
-    constexpr anim wizard_idle_side = { 4, 4, 12 };
-    constexpr anim wizard_walk_down = { 8, 6, 6 };
-    constexpr anim wizard_walk_side = { 14, 6, 6 };   // faces right; left = horizontal flip
-    constexpr anim wizard_walk_up = { 20, 6, 6 };
-    constexpr anim wizard_idle_up = { 20, 1, 12 };    // no idle_up tag: first walk_up frame
+    inline constexpr const bn::sprite_item& wizard_ghost = bn::sprite_items::wizard_ghost;   // Blink trail
+    constexpr anim wizard_idle[drawn_dirs] = {
+        { 0, 4, 12 }, { 35, 4, 12 }, { 4, 4, 12 }, { 39, 4, 12 }, { 43, 4, 12 }   // idle_s/se/e/ne/n
+    };
+    constexpr anim wizard_walk[drawn_dirs] = {
+        { 8, 6, 6 }, { 47, 6, 6 }, { 14, 6, 6 }, { 53, 6, 6 }, { 20, 6, 6 }       // walk_s/se/e/ne/n
+    };
     constexpr anim wizard_hurt = { 26, 2, 5 };
     constexpr anim wizard_death = { 28, 7, 8 };
     constexpr int wizard_y_offset = -10;              // sprite centre relative to the 8x8 hurt box centre
+    constexpr int wizard_turn_frames = 3;             // one 45 degree step every N frames (never a 180 snap)
 
     // ---- Monsters. y offset = sprite centre relative to the 14x14 body box centre.
+    // walk_dirs = 1: one move cycle facing right (left = flip). walk_dirs = 5: move[] = walk_s/se/e/ne/n and the
+    // monster turns towards the wizard in 8 directions (a goblin/orc with those tags only needs a new row here).
     struct monster_art
     {
         const bn::sprite_item* item;
-        anim move;
+        anim move[drawn_dirs];
+        int walk_dirs;
         anim death;
         int y_offset;
     };
 
-    constexpr monster_art slime = { &bn::sprite_items::slime, { 0, 4, 8 }, { 4, 4, 4 }, 0 };
-    constexpr monster_art bat = { &bn::sprite_items::bat, { 0, 4, 6 }, { 4, 3, 5 }, 0 };
-    constexpr monster_art skeleton = { &bn::sprite_items::skeleton, { 0, 4, 10 }, { 4, 4, 5 }, -8 };
+    constexpr monster_art slime = { &bn::sprite_items::slime, { { 0, 4, 8 } }, 1, { 4, 4, 4 }, 0 };
+    constexpr monster_art bat = { &bn::sprite_items::bat, { { 0, 4, 6 } }, 1, { 4, 3, 5 }, 0 };
+    constexpr monster_art skeleton = { &bn::sprite_items::skeleton,
+                                       { { 8, 4, 10 }, { 12, 4, 10 }, { 0, 4, 10 }, { 16, 4, 10 }, { 20, 4, 10 } },
+                                       5, { 4, 4, 5 }, -8 };
 
     inline constexpr const bn::sprite_item& slime_king = bn::sprite_items::slime_king;
     constexpr anim king_idle = { 0, 4, 10 };
@@ -163,6 +190,13 @@ namespace hb::art
     inline constexpr const bn::sprite_item& fx_impact = bn::sprite_items::fx_impact;   // 8x8, 0-2
     inline constexpr const bn::sprite_item& fx_poof = bn::sprite_items::fx_poof;       // 8x8, 0-3
     inline constexpr const bn::sprite_item& fx_aura = bn::sprite_items::fx_aura;       // 16x16, 2 frames
+    inline constexpr const bn::sprite_item& nova_ring = bn::sprite_items::fx_nova;        // 64x64, burst 0-7
+    constexpr anim nova_ring_anim = { 0, 8, 3 };
+    inline constexpr const bn::sprite_item& nova_spark = bn::sprite_items::fx_nova_spark; // 8x8, twinkle 0-3
+    constexpr anim nova_spark_anim = { 0, 4, 4 };
+    inline constexpr const bn::sprite_item& blink = bn::sprite_items::fx_blink;          // 32x32
+    constexpr anim blink_out = { 0, 3, 3 };     // implosion where the wizard leaves
+    constexpr anim blink_in = { 3, 3, 3 };      // flash where he lands
     inline constexpr const bn::sprite_item& shadow_small = bn::sprite_items::shadow_small;   // 16x8
     inline constexpr const bn::sprite_item& shadow_big = bn::sprite_items::shadow_big;       // 32x16
 
@@ -180,6 +214,9 @@ namespace hb::art
     constexpr int arrow_east = 0;
     constexpr int arrow_north_east = 1;
     constexpr int arrow_north = 2;
+    inline constexpr const bn::sprite_item& nova_meter = bn::sprite_items::hud_nova; // 16x16, charge 0-4, full 5-6
+    constexpr int nova_meter_charge_frames = 5;
+    constexpr anim nova_meter_full = { 5, 2, 9 };
     inline constexpr const bn::sprite_item& alert = bn::sprite_items::hud_alert;     // 16x16, blink 0-1
     inline constexpr const bn::sprite_item& level_burst = bn::sprite_items::fx_levelup;   // 64x64, 0-2 grow, 2<->3 loop
     inline constexpr const bn::sprite_item& card = bn::sprite_items::card;           // 64x64 top, 0 normal 1 selected
