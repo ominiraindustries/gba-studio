@@ -427,3 +427,29 @@ Métricas (prueba del implementador, mismos perfiles, `prof.py ROM OUT A|B 9000 
 B vivo a 2:10; Nv2 ≤ 0:25 en ambos (sin cambios). Si en la prueba del usuario el minuto 1 se siente vacío, primer
 paso atrás: invulnerable 40 → 35 f (no el tope).
 
+
+## 20. Diseño completo del juego (G-47, 2026-11-24)
+
+El juego entero queda diseñado en tres ficheros más; con ellos se implementa sin nuevas decisiones de diseño:
+
+| Fichero | Contenido | Sustituye a |
+|---|---|---|
+| `DISENO_CONTENIDO.md` | §C1 reglas de monstruos y arquetipos · §C2 bestiario de las 3 fases + élites · §C3 6 armas, 6 pasivas, 6 evoluciones, cartas · §C4 oro, tienda, desbloqueos, personajes, guardado, récords · §C5 trozos, eventos, Hexes, reliquias · §C6 presupuesto GBA (VRAM, sprites, paletas, CPU) | §4, §7, §9, §11, §13 (donde choquen) |
+| `DISENO_FASES.md` | §E1 estructura, música y formaciones · §E2–§E4 línea temporal minuto a minuto de las 3 fases · §E5 9 jefes y final · §E6 curva de dificultad y cómo medirla | §3 (tabla de fases), §6, §8 |
+| `DISENO_RUTA.md` | §R0 pantallas · §R1 bloques 2–8 con pruebas de aceptación y lista de arte · §R2 preguntas abiertas | §14–§15 (resto), §18 |
+
+Lo de §0–§2, §5, §10, §12 y §19 sigue vigente (núcleo medido). Las preguntas 1, 2 y 4 de §18 se dan por respondidas
+con la opción recomendada (el bloque 1 se construyó así); si el usuario cambia algo, coste bajo.
+
+### Decisiones de diseño G-47
+
+| Decisión | Principio / regla | Métrica que lo comprobará |
+|---|---|---|
+| 3 fases × 15 min, una idea nueva por fase (cuerpos → distancia/suelo → fuego/muros) | R3, R8, alcance | perfil C: muertes por causa distintas por fase |
+| 9 jefes con 3 fases cada uno y aviso ≥ 30 f en todo ataque | R11, R5 | 0 golpes de jefe sin aviso; TTK en rango (§E6 #6) |
+| Variantes de paleta en vez de arte nuevo: 23 monstruos con 4 artes nuevos | R14 alcance, presupuesto | arte nuevo por bloque ≤ 6 recursos grandes |
+| No subir el tope de 56; dificultad por HP (+7 %/min), mezcla y élites | CPU medida 97,7 % peor caso | `test_cpu_max` ≤ 85 % en minuto 14 |
+| Fotograma global compartido para horda (80 tiles un 32×32 en 5 direcciones) o, si no sale, 32×32 sólo de lado | presupuesto VRAM (fallo de G-44) | `test_tiles_used` ≤ 900 |
+| Jefes 64×64 sin afín; reciclados sembrados ampliando 2× | CPU y línea de OBJ | sin parpadeo con jefe + 56 |
+| Tienda de 11 mejoras (8510 oro) con REFUND gratis | R10, R12 | jugador medio vence F1 en 4–6 partidas |
+| Corte de seguridad: tras el bloque 4 el juego es publicable | CLAUDE.md alcance | — |
