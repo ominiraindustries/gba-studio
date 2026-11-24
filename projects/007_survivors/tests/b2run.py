@@ -130,6 +130,33 @@ def main():
             marks.append(inp.f)
             inp.press("right", 20)
             marks.append(inp.f)
+        elif os.environ.get("PHASE") == "3":
+            # Reroll: Meta preset, quit, buy Reroll 1, play, wait for a level-up, R.
+            inp.press("a", 20)
+            inp.press("a", 60)
+            inp.press("select", 10)
+            inp.row(ROW_FORCE + 1)
+            inp.press("select", 20)
+            inp.press("start", 20)
+            inp.press("down", 8)
+            inp.press("a", 40)
+            inp.press("down", 10)
+            inp.press("a", 30)
+            for _ in range(8):
+                inp.press("down", 6)
+            inp.press("a", 20)
+            inp.press("b", 30)
+            inp.press("up", 10)
+            inp.press("a", 20)
+            inp.press("a", 60)
+            # kite without A until the first level-up is waiting (cards stay open: nobody presses A)
+            dirs = ["right", "down", "left", "up"]
+            for k in range(40):
+                inp.parts.append(f"{inp.f}-{inp.f + 39}:{dirs[k % 4]}")
+                inp.f += 40
+            marks.append(inp.f)
+            inp.press("r", 20)
+            marks.append(inp.f)
         else:
             inp.press("down", 10)
             inp.press("a", 30)

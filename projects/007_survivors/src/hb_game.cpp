@@ -3938,7 +3938,12 @@ namespace
                     if(abs_int(dx) < enemy_half_box + 4 && abs_int(dy) < enemy_half_box + 4)
                     {
                         e.rune_cd = 20;
-                        _hit_enemy(i, damage, p);
+
+                        if(_hit_enemy(i, damage, p) && ages && ++_ward_kills >= 25)
+                        {
+                            _ward_kills = 0;   // Ward of Ages (§C3): every 25 rune kills heal 2 HP
+                            _player_hp = bn::min(_player_max_hp, _player_hp + 2);
+                        }
                     }
                 }
 
@@ -4109,6 +4114,11 @@ namespace
             if(e.safe)
             {
                 return false;
+            }
+
+            if((_evolved & evo_blizzard) && e.freeze > 0)
+            {
+                damage = damage * 3 / 2;   // Blizzard (§C3): frozen monsters take +50 % from any weapon
             }
 
             if(e.shield > 0)

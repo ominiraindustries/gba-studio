@@ -104,7 +104,41 @@ al subir el arma, no en el primer disparo; Max power escalona los enfriamientos)
 <= 25 aún no). Parche de rendimiento en pruebas (perfil C 90 -> 86 %, pero rompe la subida de nivel; sin integrar):
 `tests/tmp_g52_perf_wip.patch`.
 
+## Bloque 4 (G-55): meta, juego completo de una fase
+
+Flujo: título (PRESS START) -> menú PLAY / SHOP / RECORDS -> elegir fase (cartas `stage_cards`; Grim Graveyard y
+Ashen Keep "COMING SOON") y personaje con L/R -> partida -> resumen (oro ganado y total, NEW BEST, "NEW: ...") ->
+A: RETRY / B: MENU. Salir desde la pausa también guarda el oro.
+
+- Guardado `bn::sram` (`include/hb_save.h`, `src/hb_save.cpp`): struct de §C4 con magic "HXB1", versión y checksum;
+  cabecera mala -> guardado nuevo; versión antigua -> campos nuevos a 0 (`version_size`). Se escribe al acabar la
+  partida, al comprar o devolver. Mesen lo deja en `Documents/Mesen2/Saves/007_survivors.sav`.
+- Tienda (`src/hb_meta.cpp`): 11 mejoras de §C4 + Cinda (300, tras superar F1) y Morrow (600, tras F2). A compra,
+  SELECT devuelve todo (con confirmación). Efectos en la partida: Might, Vitality, Haste, Magnet, Greed (al banco),
+  Growth, Armor, Recovery, Reroll (R en las cartas), Charged, Revival.
+- Oro al banco = oro de la partida + 5/minuto + 100 si se supera la fase, x Greed.
+- Desbloqueos: Ember Toss (5:00), Storm Chain (Slime King), Lens of Reach (500 muertes), Ward Stone (Warchief),
+  Moon Lance (10:00), F2 (superar F1). Antes no salen en las cartas.
+- Personajes: paletas `wizard_cinda_palette` / `wizard_morrow_palette` sobre Wendel; Cinda empieza con Ember Toss,
+  +10 % área, -10 HP; Morrow con Storm Chain, +10 % velocidad, Blink -20 %, -15 % daño.
+- Armas: Moon Lance (haz de 4 tramos `fx_lance` con matriz afín, 8 direcciones, Nv4 también detrás), Lens of Reach
+  (+10 % área), Ward Stone (-6 % daño recibido, Nv5 +10 f invulnerable). Evoluciones al abrir cofre de jefe/élite:
+  Starfall (estrellas `fx_star`), Blizzard (r 96, congela 60 f), Ward of Ages (6 runas doradas r 40).
+- Muro de zarzas G-52.1: elipse de 24 zarzas centrada en el mago, cámara fija (-12 px), brotes 60 f, sólido.
+- Lobo: 420 f de espera tras embestir + máx. 2 agachados + **75 f entre dos lobos que empiezan a agacharse**
+  (provisional, G-55: sin esto 45 golpes en 8:00-9:00; con él 0).
+- VRAM con cartas: partículas y números se descartan al abrir un menú, el destello de subida se libera bajo 3 cartas
+  y el reloj se redibuja al cerrar (Start 9:45: 992 -> 898 tiles).
+
+DBG nuevo: "Meta preset" (+3000 oro, desbloqueos de F1 y Moon Lance Nv5; se guarda al momento).
+
+Pruebas (`tests/b2run.py`): `meta` (PHASE=1 compra/devuelve/récords/selección; luego `KEEP_SAVE=1 PHASE=2` comprueba
+que lo comprado sigue tras reiniciar), `times` (SEED 1-5, Tiempos), `start` con `MAX=1 META=1 FORCE=1` (evolución y
+Moon Lance). Por defecto cada prueba borra el `.sav` de Mesen.
+
 ## Provisionales
+
+- Brotes del muro de zarzas: las mismas zarzas parpadeando (no hay arte de brote). Separación de 75 f entre lobos.
 
 - Sonidos `audio/tmp_*.wav` (`tests/gen_tmp_sfx.py`) y gráficos `graphics/tmp_fx` (chispa de estela), `tmp_wave`
   (onda del rey) y `tmp_bossbar` (`tests/gen_tmp_gfx.py`). Todo el arte se elige en `include/hb_art.h`.
