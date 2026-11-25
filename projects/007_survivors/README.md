@@ -162,6 +162,23 @@ pantalla de elegir fase abre F2 sin superar F1. Todo el código de F1 se reutili
 
 Pruebas: `STAGE=2` en `tests/b2run.py` (`START_AT=-1` = desde 0:00). Ver tabla de resultados en la nota de G-56.
 
+Rendimiento G-56 (peor frame; mismas partidas antes/después):
+
+| Medida | Antes | Después |
+|---|---|---|
+| F2 Stress + Max power (40 s, PROF) | 106,1 %, 906 tiles, 2 paletas rechazadas | 97,2 %, 890 tiles, 0 |
+| Bot C semilla 5 (490 s, Lv 42 a 7:44) | 112,7 % | 99,0 % |
+| Cordura F1: Start 4:30 + 60 s (God) | Lv 14, 83,6 % | **Lv 14** (referencia), 77,1 % |
+
+- Sprites del mundo (partículas, recogidas, monstruos, `_world_sprite`) con `bn::sprite_builder`: cámara, prioridad y
+  z ya puestas (antes cada `set_bg_priority`/`set_z_order` movía el sprite de capa de orden dos veces).
+- Muerte de variantes creada directamente con la paleta del tipo (antes cargaba la del arte: 144 -> 10 ticks y sin
+  rechazos de paleta).
+- `_spawn_gem`: recuento y gema más lejana calculados una vez por frame (una Nova mata hasta 12 en un frame).
+- Fragmentos de Frost Ring y piezas de Storm Chain comparten un `sprite_tiles_ptr` por cambio de frame.
+- Menú SELECT: las filas DBG llevan su valor en la misma línea (menos sprites de texto; el pico de tiles era ahí).
+- Cordura F1 Lv 14 (antes 16): sólo balance de 97453c3; con murciélago 1.1 y 100 HP la misma prueba da Lv 16.
+
 ## Provisionales
 
 - Brotes del muro de zarzas: las mismas zarzas parpadeando (no hay arte de brote). Separación de 75 f entre lobos.

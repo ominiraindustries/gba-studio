@@ -33,6 +33,7 @@
 #include "bn_sprite_palette_item.h"
 #include "bn_sprite_palette_ptr.h"
 #include "bn_sprite_tiles_ptr.h"
+#include "bn_sprite_builder.h"
 #include "bn_sprite_ptr.h"
 #include "bn_sprite_text_generator.h"
 #include "bn_sprites_mosaic.h"
@@ -1686,11 +1687,12 @@ namespace
 
         bn::sprite_ptr _world_sprite(const bn::sprite_item& item, const fixed_point& p, int frame, int z)
         {
-            bn::sprite_ptr s = item.create_sprite(p, frame);
-            s.set_camera(_camera);
-            s.set_bg_priority(2);
-            s.set_z_order(z);
-            return s;
+            bn::sprite_builder builder(item, frame);
+            builder.set_position(p);
+            builder.set_camera(_camera);
+            builder.set_bg_priority(2);
+            builder.set_z_order(z);
+            return builder.release_build();
         }
 
         void _show_hint(const char* text, int frames)
@@ -2713,11 +2715,20 @@ namespace
                 test_shooters_max = bn::max(int(test_shooters_max), _type_alive[type]);
             }
             const bn::sprite_tiles_ptr& tiles = _horde_tiles[_type_slot[type]][def.look->walk_dirs > 1 ? 2 : 0];
-            bn::sprite_ptr sprite = bn::sprite_ptr::create(p, def.look->item->shape_size(), tiles, *_type_pal[type]);
-            sprite.set_camera(_camera);
-            sprite.set_bg_priority(2);
-            sprite.set_z_order(10);
-            enemy& e = _enemies.emplace_back(bn::move(sprite));
+            bn::sprite_builder builder(def.look->item->shape_size(), tiles, *_type_pal[type]);
+            bn::optional<bn::sprite_ptr> sprite = _build_world_sprite(builder, p, 10, false);
+
+            if(! sprite)
+            {
+                if(--_type_alive[type] == 0)
+                {
+                    _type_pal[type].reset();
+                }
+
+                return nullptr;
+            }
+
+            enemy& e = _enemies.emplace_back(bn::move(*sprite));
             e.pos = p;
             _grid_link(_enemies.size() - 1);
             e.type = uint8_t(type);
@@ -3819,9 +3830,14 @@ namespace
             }
             else if(_chain_show > 0 && (_chain_show & 1) == 0)
             {
-                for(bn::sprite_ptr& s : _chain_sprites)
+                // perf (G-56): one tiles lookup shared by the 16 bolt pieces.
+                if(bn::optional<bn::sprite_tiles_ptr> tiles =
+                        art::fx_chain.tiles_item().create_tiles_optional((_chain_show >> 1) % 3))
                 {
-                    s.set_tiles(art::fx_chain.tiles_item(), (_chain_show >> 1) % 3);
+                    for(bn::sprite_ptr& s : _chain_sprites)
+                    {
+                        s.set_tiles(*tiles);
+                    }
                 }
             }
 
@@ -4492,6 +4508,14 @@ namespace
             _ensure_frost_shards();
             int frost_frame = bn::min(2, _frost_t / 8);
 
+            // perf (G-56): one tiles lookup per frame change, shared by every shard.
+            bn::optional<bn::sprite_tiles_ptr> frost_tiles;
+
+            if(_frost_t % 8 == 0)
+            {
+                frost_tiles = art::fx_frost.tiles_item().create_tiles_optional(frost_frame);
+            }
+
             for(int i = 0, n = _frost.size(); i < n; ++i)
             {
                 _frost[i].set_position(_pos + angle_vector(i * 256 + _frost_t * 8) * r);
@@ -4501,9 +4525,9 @@ namespace
                     _frost[i].set_visible(true);
                 }
 
-                if(_frost_t % 8 == 0)
+                if(frost_tiles)
                 {
-                    _frost[i].set_tiles(art::fx_frost.tiles_item(), frost_frame);
+                    _frost[i].set_tiles(*frost_tiles);
                 }
             }
 
@@ -4703,15 +4727,10 @@ namespace
             const art::anim& death = look.death;
             if(_create_budget-- > 0)
             {
-                int before = _particles.size();
+                const bn::sprite_palette_ptr* pal = enemy_defs[e.type].pal && _type_pal[e.type] ?
+                            &*_type_pal[e.type] : nullptr;
                 _spawn_particle(fixed_point(p.x(), p.y() + look.y_offset), fixed_point(), *look.item, death,
-                                death.count * death.frame_time, 14, e.sprite.horizontal_flip());
-
-                if(_particles.size() > before && enemy_defs[e.type].pal && _type_pal[e.type])
-                {
-                    // Palette variants die in their own colours (the art's palette would cost one more of 16).
-                    _particles.back().sprite.set_palette(*_type_pal[e.type]);
-                }
+                                death.count * death.frame_time, 14, e.sprite.horizontal_flip(), pal);
             }
 
             if(_fx.death_poof)
@@ -7505,28 +7524,46 @@ namespace
         // -----------------------------------------------------------------------------------------------------
         // Pickups, gems, particles
 
+        // perf (G-56): gem count and farthest gem are scanned once and kept while only gems are appended in the
+        // same frame (a Nova kills up to 12 monsters in a frame; each kill rescanned every pickup). Pickups are only
+        // moved or removed in _update_pickups, which drops the cache.
+        int _gem_scan_t = -1;
+        int _gem_scan_size = 0;
+        int _gem_scan_count = 0;
+        int _gem_scan_far_i = -1;
+        int _gem_scan_far_d = -1;
+
         void _spawn_gem(const fixed_point& p, int value)
         {
-            int gems = 0;
-            int far_i = -1;
-            int far_d = -1;
-
-            for(int i = 0, n = _pickups.size(); i < n; ++i)
+            if(_gem_scan_t != _t || _gem_scan_size != _pickups.size())
             {
-                if(_pickups[i].kind != pickup_gem)
+                _gem_scan_t = _t;
+                _gem_scan_count = 0;
+                _gem_scan_far_i = -1;
+                _gem_scan_far_d = -1;
+
+                for(int i = 0, n = _pickups.size(); i < n; ++i)
                 {
-                    continue;
+                    if(_pickups[i].kind != pickup_gem)
+                    {
+                        continue;
+                    }
+
+                    ++_gem_scan_count;
+                    int d = abs_int(to_int(_pickups[i].pos.x() - _pos.x())) + abs_int(to_int(_pickups[i].pos.y() - _pos.y()));
+
+                    if(d > _gem_scan_far_d)
+                    {
+                        _gem_scan_far_d = d;
+                        _gem_scan_far_i = i;
+                    }
                 }
 
-                ++gems;
-                int d = abs_int(to_int(_pickups[i].pos.x() - _pos.x())) + abs_int(to_int(_pickups[i].pos.y() - _pos.y()));
-
-                if(d > far_d)
-                {
-                    far_d = d;
-                    far_i = i;
-                }
+                _gem_scan_size = _pickups.size();
             }
+
+            int gems = _gem_scan_count;
+            int far_i = _gem_scan_far_i;
 
             // Over the cap (or the sprite creation budget) the value goes to the farthest gem (§13).
             if(gems >= max_gems || _pickups.full() || (_create_budget <= 0 && far_i >= 0))
@@ -7534,8 +7571,13 @@ namespace
                 if(far_i >= 0)
                 {
                     pickup& g = _pickups[far_i];
+                    int old_frame = _gem_frame(g.value);
                     g.value += value;
-                    g.sprite.set_tiles(art::gems.tiles_item(), _gem_frame(g.value));
+
+                    if(_gem_frame(g.value) != old_frame)
+                    {
+                        g.sprite.set_tiles(art::gems.tiles_item(), _gem_frame(g.value));
+                    }
                 }
                 else
                 {
@@ -7547,10 +7589,25 @@ namespace
 
             --_create_budget;
 
-            if(_spawn_pickup(p, pickup_gem, value) && ! _gem_hint_done)
+            if(_spawn_pickup(p, pickup_gem, value))
             {
-                _gem_hint_done = true;
-                _show_world_hint("GRAB GEMS", p, 2 * fps);
+                // The new gem is the last pickup: keep the cache exact (a later index only wins when farther).
+                const pickup& g = _pickups.back();
+                int d = abs_int(to_int(g.pos.x() - _pos.x())) + abs_int(to_int(g.pos.y() - _pos.y()));
+                ++_gem_scan_count;
+                ++_gem_scan_size;
+
+                if(d > _gem_scan_far_d)
+                {
+                    _gem_scan_far_d = d;
+                    _gem_scan_far_i = _pickups.size() - 1;
+                }
+
+                if(! _gem_hint_done)
+                {
+                    _gem_hint_done = true;
+                    _show_world_hint("GRAB GEMS", p, 2 * fps);
+                }
             }
         }
 
@@ -7566,29 +7623,35 @@ namespace
                 return false;
             }
 
-            bn::optional<bn::sprite_ptr> s;
+            const bn::sprite_item* item = &art::gems;
+            int index = 0;
 
             if(kind == pickup_chest || kind == pickup_cursed)
             {
-                s = art::chest.create_sprite_optional(p, kind == pickup_cursed ? art::chest_cursed_closed : 0);
+                item = &art::chest;
+                index = kind == pickup_cursed ? art::chest_cursed_closed : 0;
             }
             else if(kind == pickup_heart)
             {
-                s = art::heart.create_sprite_optional(p, 0);
+                item = &art::heart;
+            }
+            else if(kind == pickup_coin)
+            {
+                item = &art::coin;
             }
             else
             {
-                s = kind == pickup_coin ? art::coin.create_sprite_optional(p, 0) : art::gems.create_sprite_optional(p, _gem_frame(value));
+                index = _gem_frame(value);
             }
+
+            bn::sprite_builder builder(*item, index);
+            bn::optional<bn::sprite_ptr> s = _build_world_sprite(builder, p, 20, false);
 
             if(! s)
             {
                 return false;
             }
 
-            s->set_camera(_camera);
-            s->set_bg_priority(2);
-            s->set_z_order(20);
             pickup& g = _pickups.emplace_back(bn::move(*s));
             g.pos = p;
             g.kind = uint8_t(kind);
@@ -7616,6 +7679,7 @@ namespace
 
         void _update_pickups()
         {
+            _gem_scan_t = -1;
             // Lodestone: +25 % pickup radius per level (§C3 pasivas).
             int radius = _blessing == bless_magnet ? 400 :
                          pickup_radius * (4 + _levels[up_lodestone]) * (100 + 15 * _shop[shop_magnet]) / 400;
@@ -7722,25 +7786,54 @@ namespace
             }
         }
 
+        // perf (G-56): world sprites are built with camera, priority, z order and flip already set; creating them
+        // and then calling set_bg_priority / set_z_order moved each one twice between sort layers.
+        [[nodiscard]] bn::optional<bn::sprite_ptr> _build_world_sprite(bn::sprite_builder& builder,
+                                                                       const fixed_point& p, int z, bool flip)
+        {
+            builder.set_position(p);
+            builder.set_camera(_camera);
+            builder.set_bg_priority(2);
+            builder.set_z_order(z);
+            builder.set_horizontal_flip(flip);
+            return builder.release_build_optional();
+        }
+
         void _spawn_particle(const fixed_point& p, const fixed_point& v, const bn::sprite_item& item,
-                             const art::anim& frames, int life, int z, bool flip = false)
+                             const art::anim& frames, int life, int z, bool flip = false,
+                             const bn::sprite_palette_ptr* palette = nullptr)
         {
             if(_particles.full())
             {
                 return;
             }
 
-            bn::optional<bn::sprite_ptr> s = item.create_sprite_optional(p, frames.first);
+            bn::optional<bn::sprite_ptr> s;
+
+            if(palette)
+            {
+                // Palette variants die in their own colours (the art's palette would cost one more of 16).
+                bn::optional<bn::sprite_tiles_ptr> tiles = item.tiles_item().create_tiles_optional(frames.first);
+
+                if(! tiles)
+                {
+                    return;
+                }
+
+                bn::sprite_builder builder(item.shape_size(), bn::move(*tiles), *palette);
+                s = _build_world_sprite(builder, p, z, flip);
+            }
+            else
+            {
+                bn::sprite_builder builder(item, frames.first);
+                s = _build_world_sprite(builder, p, z, flip);
+            }
 
             if(! s)
             {
                 return;
             }
 
-            s->set_camera(_camera);
-            s->set_bg_priority(2);
-            s->set_z_order(z);
-            s->set_horizontal_flip(flip);
             particle& pt = _particles.emplace_back(bn::move(*s));
             pt.pos = p;
             pt.vel = v;
@@ -8903,9 +8996,8 @@ namespace
 
             for(int r = 0; r < rows; ++r)
             {
-                bn::string<32> line(r == _cursor ? "> " : "  ");
+                bn::string<48> line(r == _cursor ? "> " : "  ");
                 line.append(names[r]);
-                _text.generate(-100, -64 + r * 8, line, _menu);
 
                 const char* state = "";
 
@@ -8935,10 +9027,26 @@ namespace
                 }
                 else
                 {
-                    state = "A";
+                    state = "";   // action rows (Max power, Meta preset): A runs them
                 }
 
-                _text.generate(60, -64 + r * 8, state, _menu);
+                if(r < fx_rows)
+                {
+                    _text.generate(-100, -64 + r * 8, line, _menu);
+                    _text.generate(60, -64 + r * 8, state, _menu);
+                }
+                else
+                {
+                    // G-56 (§C6 VRAM <= 900): DBG rows carry their value on the same line (one text run per row,
+                    // fewer 8x8 text sprites with the Stress horde and every weapon alive).
+                    if(*state)
+                    {
+                        line.append(": ");
+                        line.append(state);
+                    }
+
+                    _text.generate(-100, -64 + r * 8, line, _menu);
+                }
             }
         }
 
