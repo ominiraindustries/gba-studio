@@ -126,6 +126,10 @@ volatile int test_f2_events;          // 4 grave ring, 8 bone ring, 16 stampede,
                                       // 256 intangible, 512 banshee teleport, 1024 skulls, 2048 raise, 4096 lich
                                       // teleport, 16384 haunted ghost, 32768 wraith blink, 1 murder, 2 ghost swarm
 volatile int test_palette_refusals;   // spawns refused to keep a sprite palette free
+volatile int test_pal_refused;        // G-63: every palette _palette refused (spawns and visual extras)
+volatile int test_pal_peak;           // G-63: most sprite palettes used at once (of 16)
+volatile int test_pal_sheds;          // G-63: times the visual extras were dropped for a must-have palette
+volatile int test_pal_fallbacks;      // G-63: must-have sprites built with the white palette (none free at all)
 volatile int test_bursts;             // G-57: BURST explosions done
 volatile int test_burst_frame_max;    // most BURST explosions in one frame (<= 2)
 volatile int test_burst_queued;       // BURST explosions that waited for a later frame
@@ -239,6 +243,14 @@ namespace
 
     // ---------------------------------------------------------------------------------------------------------
     // Map: BG0 ground (64x64 cells, hardware wrap) + BG1 props written chunk by chunk (§3 "Mapa infinito").
+
+    // G-63: sprite palettes (16) left free after a runtime creation (same thresholds as before G-63, so spawns do not
+    // change). A new monster type keeps one free for must-haves (shots, boss, shrine, menus, text); purely visual
+    // variants (elite tint, wolf red, green fireball, gold arrow, effects) keep two. A must-have that still finds
+    // none drops the visual extras (_shed_palettes) and, as a last resort, is drawn white: never create_bpp_4 failed.
+    constexpr int pal_reserve_must = 0;
+    constexpr int pal_reserve_type = 1;
+    constexpr int pal_reserve_visual = 2;
 
     constexpr int map_cells = 64;
     constexpr int chunk_cells = 16;
@@ -781,7 +793,7 @@ namespace
         bool small = false;     // Splitting copy: does not split again
         bool tiny = false;      // Splitting elite copy: 50 % logical size
         bool flank = false;     // goblins: +30 or -30 degrees while far (§C1 CHASE flank)
-        bool tinted = false;    // elite palette held (false: out of sprite palettes, the type's palette)
+        bn::optional<bn::sprite_palette_ptr> tint;   // G-63: elite palette held (none: out of palettes, type's)
         bool ghostly = false;   // PHASE: intangible right now (50 % alpha)
 
         explicit enemy(bn::sprite_ptr&& s) :
@@ -1170,6 +1182,7 @@ namespace
             while(true)
             {
                 test_frames = test_frames + 1;
+                _note_palettes();
 
                 switch(_mode)
                 {
@@ -1216,7 +1229,7 @@ namespace
                         if(--_summary_lock == 0)
                         {
                             _text.set_center_alignment();
-                            _text.generate(0, 66, _ending_pending ? "A: CONTINUE" : "A: RETRY    B: MENU", _menu);
+                            static_cast<void>(_text.generate_optional(0, 66, _ending_pending ? "A: CONTINUE" : "A: RETRY    B: MENU", _menu));
                         }
                     }
                     else if(_ending_pending && (bn::keypad::a_pressed() || bn::keypad::b_pressed()))
@@ -1353,6 +1366,8 @@ namespace
         bn::array<bn::color, 16> _wolf_red_colors;
         bn::array<bn::color, 16> _fireball_colors;     // G-61: enemy fireball, sickly green (not Ember Toss orange)
         bn::optional<bn::sprite_palette_ptr> _wolf_red_pal;
+        bn::optional<bn::sprite_palette_ptr> _boss_base_pal;   // G-63
+        bn::optional<bn::sprite_palette_ptr> _shrine_pal;      // G-63
         int _crouching = 0;        // wolves crouching in the previous frame (max 3 at once)
         int _crouching_now = 0;
 
@@ -1928,14 +1943,94 @@ namespace
             e.sprite.set_palette(*_white_pal);
         }
 
-        // 16 sprite palettes (§C6): an elite palette only while 2 are still free ("create_bpp_4 failed" otherwise).
+        // 16 sprite palettes (§C6, G-63): the elite palette is a visual extra (pal_reserve_visual); the enemy holds
+        // it so a white flash does not release it (restoring it would then need a new palette).
         void _tint_elite(enemy& e)
         {
-            e.tinted = bn::sprite_palettes::available_colors_count() >= 48;
+            e.tint = _palette(_enemy_palette(e), pal_reserve_visual);
 
-            if(e.tinted)
+            if(e.tint)
             {
-                e.sprite.set_palette(_enemy_palette(e));
+                e.sprite.set_palette(*e.tint);
+            }
+        }
+
+        // G-63: every runtime sprite palette goes through here. An identical palette already in VRAM is shared for
+        // free (find_palette); a new one is created only while `reserve` palettes stay free after it. Empty = the
+        // caller falls back (the art's palette, white, or no effect). Never create_bpp_4 failed.
+        [[nodiscard]] bn::optional<bn::sprite_palette_ptr> _palette(const bn::sprite_palette_item& item, int reserve)
+        {
+            bn::optional<bn::sprite_palette_ptr> result = item.find_palette();
+
+            if(! result)
+            {
+                if(bn::sprite_palettes::available_colors_count() >= (reserve + 1) * 16)
+                {
+                    result = item.create_palette_optional();
+                }
+
+                if(! result)
+                {
+                    test_pal_refused = test_pal_refused + 1;
+                }
+            }
+
+            _note_palettes();
+            return result;
+        }
+
+        static void _note_palettes()
+        {
+            int used = bn::sprite_palettes::used_colors_count() / 16;
+
+            if(used > test_pal_peak)
+            {
+                test_pal_peak = used;
+            }
+        }
+
+        // G-63: a must-have sprite (shots, boss, shrine, menu icons) needs `item`'s palette. True when it is already
+        // in VRAM or one is free; otherwise the visual extras are dropped first (elite tints, wolf red, gold arrow).
+        bool _ensure_palette(const bn::sprite_palette_item& item)
+        {
+            if(bn::sprite_palettes::available_colors_count() >= 16 || item.find_palette())
+            {
+                return true;
+            }
+
+            _shed_palettes();
+            return bn::sprite_palettes::available_colors_count() >= 16;
+        }
+
+        void _shed_palettes()
+        {
+            test_pal_sheds = test_pal_sheds + 1;
+
+            for(enemy& e : _enemies)
+            {
+                if(e.tint)
+                {
+                    e.tint.reset();
+                    e.sprite.set_palette(*_type_pal[e.type]);
+                }
+            }
+
+            if(_wolf_red_pal)
+            {
+                for(enemy& e : _enemies)
+                {
+                    if(e.sprite.palette() == *_wolf_red_pal)
+                    {
+                        e.sprite.set_palette(*_type_pal[e.type]);
+                    }
+                }
+
+                _wolf_red_pal.reset();
+            }
+
+            if(_treasure_arrow)
+            {
+                _treasure_arrow->set_palette(art::edge_arrow.palette_item());   // the HUD palette, always held
             }
         }
 
@@ -1946,9 +2041,9 @@ namespace
 
         void _restore_palette(enemy& e)
         {
-            if(e.elite && e.tinted)
+            if(e.tint)
             {
-                e.sprite.set_palette(_enemy_palette(e));
+                e.sprite.set_palette(*e.tint);
             }
             else
             {
@@ -1974,6 +2069,19 @@ namespace
 
         bn::sprite_ptr _world_sprite(const bn::sprite_item& item, const fixed_point& p, int frame, int z)
         {
+            // G-63: must-have world sprites (shots, boss, shrine, marks) never fail on palettes: the visual extras
+            // give theirs up first and, with none left at all, the sprite is drawn white (test_pal_fallbacks).
+            if(! _ensure_palette(item.palette_item()))
+            {
+                test_pal_fallbacks = test_pal_fallbacks + 1;
+                bn::sprite_builder builder(item.shape_size(), item.tiles_item().create_tiles(frame), *_white_pal);
+                builder.set_position(p);
+                builder.set_camera(_camera);
+                builder.set_bg_priority(2);
+                builder.set_z_order(z);
+                return builder.release_build();
+            }
+
             bn::sprite_builder builder(item, frame);
             builder.set_position(p);
             builder.set_camera(_camera);
@@ -1986,7 +2094,7 @@ namespace
         {
             _hint.clear();
             _text.set_center_alignment();
-            _text.generate(0, 40, text, _hint);
+            static_cast<void>(_text.generate_optional(0, 40, text, _hint));
             _hint_t = frames;
         }
 
@@ -1994,7 +2102,7 @@ namespace
         {
             _world_hint.clear();
             _text.set_center_alignment();
-            _text.generate(p.x(), p.y() - 12, text, _world_hint);
+            static_cast<void>(_text.generate_optional(p.x(), p.y() - 12, text, _world_hint));
 
             for(bn::sprite_ptr& s : _world_hint)
             {
@@ -3122,21 +3230,22 @@ namespace
 
             // 16 sprite palettes (§C6): a type whose palette is not held yet only enters while one stays free
             // for banners and effects ("create_bpp_4 failed" in the Lich fight otherwise).
-            if(! _type_pal[type] && bn::sprite_palettes::available_colors_count() < 32)
+            // Palettes are held only while a monster of the type is alive (16 sprite palettes in total; holding all
+            // 8 types from the start ran out of palettes during the Slime King). G-63: pal_reserve_type stay free.
+            if(! _type_pal[type])
             {
-                test_palette_refusals = test_palette_refusals + 1;
-                return nullptr;
+                _type_pal[type] = _palette(type == type_treasure ?
+                            bn::sprite_palette_item(_elite_colors[type][3], bn::bpp_mode::BPP_4) : def_palette(type),
+                            pal_reserve_type);
+
+                if(! _type_pal[type])
+                {
+                    test_palette_refusals = test_palette_refusals + 1;
+                    return nullptr;
+                }
             }
 
             const enemy_def& def = enemy_defs[type];
-            // Palettes are held only while a monster of the type is alive (16 sprite palettes in total; holding all
-            // 8 types from the start ran out of palettes during the Slime King).
-            if(! _type_pal[type])
-            {
-                _type_pal[type] = type == type_treasure ?
-                            bn::sprite_palette_item(_elite_colors[type][3], bn::bpp_mode::BPP_4).create_palette() :
-                            def_palette(type).create_palette();
-            }
 
             ++_type_alive[type];
 
@@ -3316,6 +3425,22 @@ namespace
         // Big centred banner (boss names, CURSED!, THE HEX MOON RISES, STAGE CLEAR).
         // perf (G-59): a 16x16 banner built in one frame cost ~1000 ticks on top of a boss spawn / evolution /
         // kill frame. The text (always a literal) is written on the next play frames, one half per frame.
+        // G-63: text never crashes on palettes: generate_optional everywhere, and its colours make room first.
+        void _text_palette(bn::sprite_text_generator& generator, const bn::sprite_palette_item& palette)
+        {
+            // Out of palettes, the font's own colours (held by the HUD text) instead of missing text.
+            if(! _ensure_palette(palette))
+            {
+                test_pal_fallbacks = test_pal_fallbacks + 1;
+                generator.set_palette_item(&generator == &_big_text ?
+                                           common::variable_16x16_sprite_font.item().palette_item() :
+                                           common::variable_8x8_sprite_font.item().palette_item());
+                return;
+            }
+
+            generator.set_palette_item(palette);
+        }
+
         void _show_banner(const char* text, const bn::sprite_palette_item& palette, int frames)
         {
             _boss_title.clear();
@@ -3355,9 +3480,9 @@ namespace
             }
 
             _big_text.set_left_alignment();
-            _big_text.set_palette_item(*_banner_palette);
+            _text_palette(_big_text, *_banner_palette);
             static_cast<void>(_big_text.generate_optional(x, -30, part, _boss_title));
-            _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
+            _text_palette(_big_text, common::variable_16x16_sprite_font.item().palette_item());
 
             if(++_banner_step >= 2)
             {
@@ -3494,7 +3619,9 @@ namespace
             {
                 _type_pal[type].reset();
 
-                if(type == type_wolf)
+                // G-63: hellhounds crouch red too; the red palette stayed held for the rest of a stage 3 run.
+                if((type == type_wolf || type == type_hellhound) && ! _type_alive[type_wolf] &&
+                   ! _type_alive[type_hellhound])
                 {
                     _wolf_red_pal.reset();
                 }
@@ -3916,7 +4043,13 @@ namespace
                 _show_hint("TREASURE GOBLIN!", 2 * fps);
                 _play(art::sfx_coin_burst, fixed(0.6));
                 bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
-                arrow.set_palette(bn::sprite_palette_item(_gold_arrow_colors, bn::bpp_mode::BPP_4));   // G-55: gold ramp
+                // G-55: gold ramp; G-63: a visual extra (the HUD arrow colours out of palettes).
+                if(bn::optional<bn::sprite_palette_ptr> gold = _palette(bn::sprite_palette_item(_gold_arrow_colors,
+                                                                         bn::bpp_mode::BPP_4), pal_reserve_visual))
+                {
+                    arrow.set_palette(*gold);
+                }
+
                 arrow.set_bg_priority(0);
                 _treasure_arrow = bn::move(arrow);
             }
@@ -5642,13 +5775,15 @@ namespace
                                 if(e.timer & 4)
                                 {
                                     // perf: one red palette held while wolves live (creating it per blink cost ~30 %).
-                                    if(! _wolf_red_pal)
+                                    // G-63: a visual extra; out of palettes the crouch blinks white instead.
+                                    if(! _wolf_red_pal && e.type != type_gargoyle)
                                     {
-                                        _wolf_red_pal = bn::sprite_palette_item(_wolf_red_colors,
-                                                                                bn::bpp_mode::BPP_4).create_palette();
+                                        _wolf_red_pal = _palette(bn::sprite_palette_item(_wolf_red_colors,
+                                                                 bn::bpp_mode::BPP_4), pal_reserve_visual);
                                     }
 
-                                    e.sprite.set_palette(e.type == type_gargoyle ? *_white_pal : *_wolf_red_pal);
+                                    e.sprite.set_palette(e.type == type_gargoyle || ! _wolf_red_pal ? *_white_pal :
+                                                                                                      *_wolf_red_pal);
                                 }
                                 else
                                 {
@@ -6829,9 +6964,12 @@ namespace
                     shared = shared || o.green;
                 }
 
-                if(shared || bn::sprite_palettes::available_colors_count() >= 48)
+                bn::optional<bn::sprite_palette_ptr> green = _palette(bn::sprite_palette_item(_fireball_colors,
+                                            bn::bpp_mode::BPP_4), shared ? pal_reserve_must : pal_reserve_visual);
+
+                if(green)
                 {
-                    s.sprite.set_palette(bn::sprite_palette_item(_fireball_colors, bn::bpp_mode::BPP_4));
+                    s.sprite.set_palette(*green);
                     s.green = true;
                 }
             }
@@ -7109,7 +7247,7 @@ namespace
             case fb_roar:
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     _boss_state = fb_walk;
                     _boss_timer = 30;
 
@@ -7197,8 +7335,7 @@ namespace
 
         void _boss_glow(int timer)
         {
-            _boss->set_palette((timer & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
-                                             _boss_palette_item());
+            _boss_tint((timer & 4) ? &_boss_white_colors : nullptr);
         }
 
         // Bone Colossus (5:00): bones in a 20 degree fan every 150 f after a 30 f arm flash; < 50 % the pile
@@ -7251,7 +7388,7 @@ namespace
 
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     _set_boss_frame(art::colossus_throw, art::colossus_throw.frame_time, false);
                     int n = _boss_phase == 3 ? 5 : 3;
                     fixed_point to = unit(dx, dy);
@@ -7513,7 +7650,7 @@ namespace
 
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     fixed_point to = unit(dx, dy);
 
                     for(int k = 0; k < 5; ++k)
@@ -7581,7 +7718,7 @@ namespace
 
                 if(--_lord_stone_t == 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     _boss_state = fb_walk;
                     _boss_timer = 60;
                     _boss_frame = -1;
@@ -7594,7 +7731,7 @@ namespace
             {
                 _lord_stone_cd = 15 * fps;
                 _lord_stone_t = 4 * fps;
-                _boss->set_palette(bn::sprite_palette_item(_boss_grey_colors, bn::bpp_mode::BPP_4));
+                _boss_tint(&_boss_grey_colors);
                 _boss->set_tiles(_boss_item().tiles_item(), art::lord_stone);
                 _boss_frame = art::lord_stone;
                 _play(art::sfx_slam, fixed(0.6));
@@ -7765,7 +7902,7 @@ namespace
 
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     _slash->set_tiles(art::fx_slash.tiles_item(), 1);
                     _play(art::sfx_slash, fixed(0.7));
                     int px = to_int(_pos.x() - _boss_pos.x());
@@ -7918,7 +8055,7 @@ namespace
 
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(_boss_palette_item());
+                    _boss_base();
                     _breath.clear();
 
                     for(int k = 0; k < 9; ++k)
@@ -8107,7 +8244,8 @@ namespace
             bn::sprite_ptr b = _world_sprite(_boss_item(), _boss_pos, 0, 8);
             b.set_mosaic_enabled(_fx.boss_mosaic);
             _boss = bn::move(b);
-            _boss->set_palette(_boss_palette_item());
+            _boss_base_pal.reset();
+            _boss_base();
             _boss_face = unit(to_int(_pos.x() - _boss_pos.x()), to_int(_pos.y() - _boss_pos.y()));
             _boss_lift = 0;
             _boss_shadow_target = false;
@@ -8204,7 +8342,7 @@ namespace
             {
                 _boss_flash = boss_flash_frames;
                 _boss_flash_cd = boss_flash_frames + boss_flash_gap;
-                _boss->set_palette(bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4));
+                _boss_tint(&_boss_white_colors);
             }
 
             if(_hit_sound_cd == 0)
@@ -8276,7 +8414,7 @@ namespace
 
             if(_boss_flash && --_boss_flash == 0)
             {
-                _boss->set_palette(_boss_palette_item());
+                _boss_base();
             }
 
             if(_boss_hp <= 0)
@@ -8492,6 +8630,42 @@ namespace
             }
         }
 
+        // G-63: the boss holds its own palette while alive, so a white or grey flash never releases it (restoring it
+        // would need a free palette); white shares _white_pal, grey is skipped out of palettes.
+        void _boss_base()
+        {
+            if(! _boss)
+            {
+                return;
+            }
+
+            if(! _boss_base_pal)
+            {
+                _boss_base_pal = _palette(_boss_palette_item(), pal_reserve_must);
+            }
+
+            if(_boss_base_pal)
+            {
+                _boss->set_palette(*_boss_base_pal);
+            }
+        }
+
+        void _boss_tint(const bn::array<bn::color, 16>* colors)
+        {
+            if(! colors)
+            {
+                _boss_base();
+            }
+            else if(_boss)
+            {
+                if(bn::optional<bn::sprite_palette_ptr> pal = _palette(bn::sprite_palette_item(*colors,
+                                                                       bn::bpp_mode::BPP_4), pal_reserve_must))
+                {
+                    _boss->set_palette(*pal);
+                }
+            }
+        }
+
         [[nodiscard]] bn::sprite_palette_item _boss_palette_item() const
         {
             return _boss_kind == 7 ? art::iron_champion_palette : _boss_item().palette_item();
@@ -8565,8 +8739,7 @@ namespace
             if(_boss_invuln > 0)
             {
                 --_boss_invuln;
-                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
-                                                        art::warchief.palette_item());
+                _boss_tint((_boss_invuln & 4) ? &_boss_white_colors : nullptr);
             }
 
             switch(_boss_state)
@@ -8815,8 +8988,7 @@ namespace
             if(_boss_invuln > 0)
             {
                 --_boss_invuln;
-                _boss->set_palette((_boss_invuln & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
-                                                        art::treant.palette_item());
+                _boss_tint((_boss_invuln & 4) ? &_boss_white_colors : nullptr);
             }
 
             switch(_boss_state)
@@ -8881,12 +9053,11 @@ namespace
 
             case tr_glow:
                 _set_boss_frame(art::treant_idle, _t, true);
-                _boss->set_palette((_boss_timer & 4) ? bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4) :
-                                                       art::treant.palette_item());
+                _boss_tint((_boss_timer & 4) ? &_boss_white_colors : nullptr);
 
                 if(--_boss_timer <= 0)
                 {
-                    _boss->set_palette(art::treant.palette_item());
+                    _boss_base();
                     _seeds_pending = 8;
                     _seed_cd = 5 * fps;
                     _boss_state = tr_walk;
@@ -9119,7 +9290,15 @@ namespace
             if(! _thorn_tiles)
             {
                 _thorn_tiles = bn::sprite_tiles_ptr::create(art::fx_thorn.tiles_item(), 0);
-                _thorn_pal = art::fx_thorn.palette_item().create_palette();
+                // G-63: shared with the Treant's palette; out of palettes the wall is drawn white (it still hurts).
+                _thorn_pal = _ensure_palette(art::fx_thorn.palette_item()) ?
+                            _palette(art::fx_thorn.palette_item(), pal_reserve_must) : bn::optional<bn::sprite_palette_ptr>();
+
+                if(! _thorn_pal)
+                {
+                    test_pal_fallbacks = test_pal_fallbacks + 1;
+                    _thorn_pal = _white_pal;
+                }
             }
 
             if((_thorn_t & 15) == 0)
@@ -9276,6 +9455,7 @@ namespace
             _spawn_gem(_boss_pos, 25);
             _spawn_pickup(_boss_pos + fixed_point(12, 0), pickup_coin, 10, gold_bosses);
             _boss.reset();
+            _boss_base_pal.reset();
             _boss_shadow.reset();
             _boss_bar.clear();
             _boss_warn.clear();
@@ -9666,6 +9846,13 @@ namespace
 
             bn::optional<bn::sprite_ptr> s;
 
+            // G-63: an effect whose palette is not in VRAM only takes one while pal_reserve_visual stay free.
+            if(! palette && bn::sprite_palettes::available_colors_count() < (pal_reserve_visual + 1) * 16 &&
+               ! item.palette_item().find_palette())
+            {
+                return;
+            }
+
             if(palette)
             {
                 // Palette variants die in their own colours (the art's palette would cost one more of 16).
@@ -9843,6 +10030,7 @@ namespace
             }
 
             _shrine = _world_sprite(art::shrine, _shrine_pos, 0, 12);
+            _shrine_pal = _shrine->palette();   // G-63: held, so the white flash never releases it
             bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
             arrow.set_bg_priority(0);
             _shrine_arrow = bn::move(arrow);
@@ -9871,16 +10059,17 @@ namespace
                 ++_shrine_touch;
                 if(_shrine_touch & 4)
                 {
-                    _shrine->set_palette(_white_palette());
+                    _shrine->set_palette(*_white_pal);
                 }
                 else
                 {
-                    _shrine->set_palette(art::shrine.palette_item());
+                    _shrine->set_palette(*_shrine_pal);
                 }
 
                 if(_shrine_touch >= fps)
                 {
                     _shrine.reset();
+                    _shrine_pal.reset();
                     _shrine_arrow.reset();
                     _open_shrine_pick();
                 }
@@ -9888,7 +10077,7 @@ namespace
             else if(_shrine_touch)
             {
                 _shrine_touch = 0;
-                _shrine->set_palette(art::shrine.palette_item());
+                _shrine->set_palette(*_shrine_pal);
             }
         }
 
@@ -10036,9 +10225,9 @@ namespace
 
                 if(nova_state == 1)
                 {
-                    _text.set_palette_item(art::text_gold);
-                    _text.generate(-98, 71, "A", _nova_text);
-                    _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+                    _text_palette(_text, art::text_gold);
+                    static_cast<void>(_text.generate_optional(-98, 71, "A", _nova_text));
+                    _text_palette(_text, common::variable_8x8_sprite_font.item().palette_item());
                 }
             }
 
@@ -10057,7 +10246,7 @@ namespace
                 clock.push_back(char('0' + sec % 10));
                 _hud_clock.clear();
                 _text.set_center_alignment();
-                _text.generate(0, -64, clock, _hud_clock);
+                static_cast<void>(_text.generate_optional(0, -64, clock, _hud_clock));
             }
 
             if(force || _level != _last_level_shown)
@@ -10067,7 +10256,7 @@ namespace
                 lv.append(bn::to_string<4>(_level));
                 _hud_level.clear();
                 _text.set_left_alignment();
-                _text.generate(-116, -64, lv, _hud_level);
+                static_cast<void>(_text.generate_optional(-116, -64, lv, _hud_level));
             }
 
             if(force || _gold != _last_gold_shown)
@@ -10077,7 +10266,7 @@ namespace
                 g.append(bn::to_string<6>(_gold));
                 _hud_gold.clear();
                 _text.set_right_alignment();
-                _text.generate(116, -64, g, _hud_gold);
+                static_cast<void>(_text.generate_optional(116, -64, g, _hud_gold));
             }
         }
 
@@ -10310,24 +10499,24 @@ namespace
             _menu.clear();
             bool shrine = _mode == game_mode::shrine_pick;
             _big_text.set_center_alignment();
-            _big_text.set_palette_item(art::text_gold);
-            _big_text.generate(0, -56, _relic_pick && shrine ? "RELIC" : shrine ? "SHRINE" : "LEVEL UP!", _menu);
-            _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
+            _text_palette(_big_text, art::text_gold);
+            static_cast<void>(_big_text.generate_optional(0, -56, _relic_pick && shrine ? "RELIC" : shrine ? "SHRINE" : "LEVEL UP!", _menu));
+            _text_palette(_big_text, common::variable_16x16_sprite_font.item().palette_item());
             _text.set_center_alignment();
 
             if(shrine)
             {
-                _text.generate(0, 72, _relic_pick ? "Pick a relic: D-PAD + A" : "Pick a blessing: D-PAD + A", _menu);
+                static_cast<void>(_text.generate_optional(0, 72, _relic_pick ? "Pick a relic: D-PAD + A" : "Pick a blessing: D-PAD + A", _menu));
             }
             else if(_rerolls > 0)
             {
                 bn::string<32> line(_pick_hint_done ? "R: REROLL x" : "D-PAD + A    R: REROLL x");
                 line.append(bn::to_string<4>(_rerolls));
-                _text.generate(0, 72, line, _menu);
+                static_cast<void>(_text.generate_optional(0, 72, line, _menu));
             }
             else if(! _pick_hint_done)
             {
-                _text.generate(0, 72, "PICK ONE: D-PAD + A", _menu);
+                static_cast<void>(_text.generate_optional(0, 72, "PICK ONE: D-PAD + A", _menu));
             }
 
             for(bn::sprite_ptr& s_hud : _hud_frame)
@@ -10340,7 +10529,7 @@ namespace
             _last_clock_s = -1;
 
             // Card = card (64x64) + card_base (64x32) 48 px lower; texts inside the parchment (art/LÉEME.md).
-            _text.set_palette_item(art::text_ink);
+            _text_palette(_text, art::text_ink);
 
             if(! _cards_shown)
             {
@@ -10369,9 +10558,13 @@ namespace
 
                 const upgrade_text& u = shrine ? (_relic_pick ? relic_texts[_card_ids[i]] : blessing_texts[_card_ids[i]]) :
                                                  upgrade_texts[_card_ids[i]];
-                bn::sprite_ptr icon = u.icon_item->create_sprite(x, cy - 14, u.icon);
-                icon.set_bg_priority(0);
-                _menu.push_back(bn::move(icon));
+                static_cast<void>(_ensure_palette(u.icon_item->palette_item()));   // G-63
+
+                if(bn::optional<bn::sprite_ptr> icon = u.icon_item->create_sprite_optional(x, cy - 14, u.icon))
+                {
+                    icon->set_bg_priority(0);
+                    _menu.push_back(bn::move(*icon));
+                }
 
                 // Name in two lines (the parchment is ~48 px wide).
                 bn::string_view name(u.name);
@@ -10388,23 +10581,23 @@ namespace
 
                 if(space >= 0)
                 {
-                    _text.generate(x, cy, name.substr(0, space), _menu);
-                    _text.generate(x, cy + 9, name.substr(space + 1), _menu);
+                    static_cast<void>(_text.generate_optional(x, cy, name.substr(0, space), _menu));
+                    static_cast<void>(_text.generate_optional(x, cy + 9, name.substr(space + 1), _menu));
                 }
                 else
                 {
-                    _text.generate(x, cy + 4, name, _menu);
+                    static_cast<void>(_text.generate_optional(x, cy + 4, name, _menu));
                 }
 
                 if(shrine && _relic_pick)
                 {
-                    _text.generate(x, cy + 22, u.desc[0], _menu);
-                    _text.generate(x, cy + 31, u.desc[1], _menu);
+                    static_cast<void>(_text.generate_optional(x, cy + 22, u.desc[0], _menu));
+                    static_cast<void>(_text.generate_optional(x, cy + 31, u.desc[1], _menu));
                 }
                 else if(shrine)
                 {
-                    _text.generate(x, cy + 22, u.desc[1], _menu);
-                    _text.generate(x, cy + 31, u.desc[0], _menu);
+                    static_cast<void>(_text.generate_optional(x, cy + 22, u.desc[1], _menu));
+                    static_cast<void>(_text.generate_optional(x, cy + 31, u.desc[0], _menu));
                 }
                 else
                 {
@@ -10415,18 +10608,18 @@ namespace
                     {
                         bn::string<8> l("Lv ");
                         l.append(bn::to_string<2>(lv + 1));
-                        _text.generate(x, cy + 22, lv == 0 ? bn::string<8>("NEW!") : l, _menu);
+                        static_cast<void>(_text.generate_optional(x, cy + 22, lv == 0 ? bn::string<8>("NEW!") : l, _menu));
                     }
 
-                    _text.generate(x, cy + 31, u.desc[lv], _menu);
+                    static_cast<void>(_text.generate_optional(x, cy + 31, u.desc[lv], _menu));
                 }
             }
 
-            _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+            _text_palette(_text, common::variable_8x8_sprite_font.item().palette_item());
 
             if(_pick_hint_done && ! shrine)
             {
-                _text.generate(0, 72, "D-PAD + A", _menu);
+                static_cast<void>(_text.generate_optional(0, 72, "D-PAD + A", _menu));
             }
         }
         // Cards on screen: background dimmed, enemies and weapon effects hidden behind the cards (§19.7).
@@ -10665,9 +10858,13 @@ namespace
 
             _blessing = id;
             _blessing_t = blessing_frames;
-            bn::sprite_ptr icon = blessing_texts[id].icon_item->create_sprite(108, -50, blessing_texts[id].icon);
-            icon.set_bg_priority(0);
-            _hud_blessing = bn::move(icon);
+            static_cast<void>(_ensure_palette(blessing_texts[id].icon_item->palette_item()));   // G-63
+            _hud_blessing = blessing_texts[id].icon_item->create_sprite_optional(108, -50, blessing_texts[id].icon);
+
+            if(_hud_blessing)
+            {
+                _hud_blessing->set_bg_priority(0);
+            }
         }
 
         // -----------------------------------------------------------------------------------------------------
@@ -10685,7 +10882,7 @@ namespace
         {
             _menu.clear();
             _big_text.set_center_alignment();
-            _big_text.generate(0, -64, "PAUSED", _menu);
+            static_cast<void>(_big_text.generate_optional(0, -64, "PAUSED", _menu));
             _text.set_left_alignment();
             int y = -42;
 
@@ -10704,36 +10901,45 @@ namespace
                 int x = weapon ? -104 : 6;
                 int& row_y = weapon ? y : y_passive;
                 int icon = _upgrade_icon(i);
-                bn::sprite_ptr slot = icon < 8 ?
-                            art::slots.create_sprite(x, row_y, (weapon ? art::slot_weapon_first : art::slot_passive_first) + icon) :
-                            icon >= 100 ? art::evo_icons.create_sprite(x, row_y, icon - 100) :
-                            art::icons.create_sprite(x, row_y, icon);
-                slot.set_bg_priority(0);
-                _menu.push_back(bn::move(slot));
+                static_cast<void>(_ensure_palette(art::icons.palette_item()));   // G-63: slots/evo/icons share it
+                bn::optional<bn::sprite_ptr> slot = icon < 8 ?
+                            art::slots.create_sprite_optional(x, row_y, (weapon ? art::slot_weapon_first : art::slot_passive_first) + icon) :
+                            icon >= 100 ? art::evo_icons.create_sprite_optional(x, row_y, icon - 100) :
+                            art::icons.create_sprite_optional(x, row_y, icon);
+
+                if(slot)
+                {
+                    slot->set_bg_priority(0);
+                    _menu.push_back(bn::move(*slot));
+                }
 
                 bn::string<24> line(upgrade_texts[i].name);
                 line.append(" ");
                 line.append(bn::to_string<2>(_levels[i]));
-                _text.generate(x + 12, row_y, line, _menu);
+                static_cast<void>(_text.generate_optional(x + 12, row_y, line, _menu));
                 row_y += 20;
             }
 
             // Block 6: relic (icon + name), active hexes and the seed (§C5 "SEED 4F2A").
             if(_relic >= 0)
             {
-                bn::sprite_ptr r = art::relics.create_sprite(-104, 38, _relic);
-                r.set_bg_priority(0);
-                _menu.push_back(bn::move(r));
-                _text.generate(-92, 38, relic_texts[_relic].name, _menu);
+                if(bn::optional<bn::sprite_ptr> r = art::relics.create_sprite_optional(-104, 38, _relic))
+                {
+                    r->set_bg_priority(0);
+                    _menu.push_back(bn::move(*r));
+                }
+                static_cast<void>(_text.generate_optional(-92, 38, relic_texts[_relic].name, _menu));
             }
 
             for(int h = 0, hx = 30; h < hex_count; ++h)
             {
                 if(_hexes & (1 << h))
                 {
-                    bn::sprite_ptr hs = art::hex_icons.create_sprite(hx, 38, h);
-                    hs.set_bg_priority(0);
-                    _menu.push_back(bn::move(hs));
+                    if(bn::optional<bn::sprite_ptr> hs = art::hex_icons.create_sprite_optional(hx, 38, h))
+                    {
+                        hs->set_bg_priority(0);
+                        _menu.push_back(bn::move(*hs));
+                    }
                     hx += 10;
                 }
             }
@@ -10747,9 +10953,9 @@ namespace
                 seed_line.push_back(hex_digits[(seed16 >> (4 * k)) & 15]);
             }
 
-            _text.generate(40, 62, seed_line, _menu);
-            _text.generate(-60, 50, _cursor == 0 ? "> Resume" : "  Resume", _menu);
-            _text.generate(-60, 62, _cursor == 1 ? "> Quit" : "  Quit", _menu);
+            static_cast<void>(_text.generate_optional(40, 62, seed_line, _menu));
+            static_cast<void>(_text.generate_optional(-60, 50, _cursor == 0 ? "> Resume" : "  Resume", _menu));
+            static_cast<void>(_text.generate_optional(-60, 62, _cursor == 1 ? "> Quit" : "  Quit", _menu));
         }
 
         bool _update_pause()
@@ -11056,7 +11262,7 @@ namespace
 
             _menu.clear();
             _text.set_left_alignment();
-            _text.generate(-100, -74, "EFFECTS (SELECT: close)", _menu);
+            static_cast<void>(_text.generate_optional(-100, -74, "EFFECTS (SELECT: close)", _menu));
             int rows = _fx_row_count();
 
             for(int r = 0; r < rows; ++r)
@@ -11097,8 +11303,8 @@ namespace
 
                 if(r < fx_rows)
                 {
-                    _text.generate(-100, -64 + r * 8, line, _menu);
-                    _text.generate(60, -64 + r * 8, state, _menu);
+                    static_cast<void>(_text.generate_optional(-100, -64 + r * 8, line, _menu));
+                    static_cast<void>(_text.generate_optional(60, -64 + r * 8, state, _menu));
                 }
                 else
                 {
@@ -11110,7 +11316,7 @@ namespace
                         line.append(state);
                     }
 
-                    _text.generate(-100, -64 + r * 8, line, _menu);
+                    static_cast<void>(_text.generate_optional(-100, -64 + r * 8, line, _menu));
                 }
             }
         }
@@ -11335,11 +11541,12 @@ namespace
             _boss_bar.clear();
             _boss_wave.reset();
             _shrine.reset();
+            _shrine_pal.reset();
             _shrine_arrow.reset();
             _hud_blessing.reset();
             _hint.clear();
             _big_text.set_center_alignment();
-            _big_text.generate(0, -44, won ? "STAGE CLEAR" : "YOU FELL", _menu);
+            static_cast<void>(_big_text.generate_optional(0, -44, won ? "STAGE CLEAR" : "YOU FELL", _menu));
             _text.set_center_alignment();
 
             _commit_meta();
@@ -11354,7 +11561,7 @@ namespace
             line.append(bn::to_string<4>(_level));
             line.append("   Kills ");
             line.append(bn::to_string<6>(_kills));
-            _text.generate(0, -22, line, _menu);
+            static_cast<void>(_text.generate_optional(0, -22, line, _menu));
 
             if(_new_best)
             {
@@ -11363,9 +11570,9 @@ namespace
                 line.append((_new_best & 1) ? " TIME" : "");
                 line.append((_new_best & 2) ? " KILLS" : "");
                 line.append((_new_best & 4) ? " LEVEL" : "");
-                _text.set_palette_item(art::text_gold);
-                _text.generate(0, -11, line, _menu);
-                _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+                _text_palette(_text, art::text_gold);
+                static_cast<void>(_text.generate_optional(0, -11, line, _menu));
+                _text_palette(_text, common::variable_8x8_sprite_font.item().palette_item());
             }
 
             line = "Gold +";
@@ -11380,9 +11587,9 @@ namespace
 
             line.append("   Total ");
             line.append(bn::to_string<8>(int(save().gold)));
-            _text.set_palette_item(art::text_gold);
-            _text.generate(0, 2, line, _menu);
-            _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+            _text_palette(_text, art::text_gold);
+            static_cast<void>(_text.generate_optional(0, 2, line, _menu));
+            _text_palette(_text, common::variable_8x8_sprite_font.item().palette_item());
 
             // E5.4: gold broken down by source.
             line = "Drops ";
@@ -11393,7 +11600,7 @@ namespace
             line.append(bn::to_string<6>(_gold_from[gold_bosses]));
             line.append("  Cards ");
             line.append(bn::to_string<6>(_gold_from[gold_cards]));
-            _text.generate(0, 13, line, _menu);
+            static_cast<void>(_text.generate_optional(0, 13, line, _menu));
 
             // §C4 "Desbloqueos": NEW: ... (one line each, up to 3).
             int y_new = 28;
@@ -11404,9 +11611,9 @@ namespace
                 {
                     line = "NEW: ";
                     line.append(unlock_name(b));
-                    _text.set_palette_item(art::text_gold);
-                    _text.generate(0, y_new, line, _menu);
-                    _text.set_palette_item(common::variable_8x8_sprite_font.item().palette_item());
+                    _text_palette(_text, art::text_gold);
+                    static_cast<void>(_text.generate_optional(0, y_new, line, _menu));
+                    _text_palette(_text, common::variable_8x8_sprite_font.item().palette_item());
                     y_new += 10;
                 }
             }

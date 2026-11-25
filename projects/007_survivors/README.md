@@ -161,6 +161,12 @@ pantalla de elegir fase abre F2 sin superar F1. Todo el código de F1 se reutili
   STAGE CLEAR y resumen como en F1.
 - Paletas (16): un tipo nuevo sólo entra si queda una paleta libre; la élite sólo se tiñe si quedan 2; las muertes de
   variantes usan la paleta del tipo (`test_palette_refusals`).
+- G-63 (crash "BPP4 palette create failed"): toda paleta de sprite creada en juego pasa por `_palette(item, reserva)`
+  (comparte una idéntica ya cargada; crea sólo si quedan `reserva` libres: tipo 1, extras visuales 2). Lo
+  imprescindible (disparos, jefe, santuario, menús, texto) usa `_ensure_palette`: si no hay hueco suelta los extras
+  (tinte de élite, lobo rojo, flecha dorada) y, en último caso, se dibuja blanco o con la paleta de la fuente; el texto
+  usa `generate_optional`. Jefe y santuario retienen su paleta durante el destello blanco. Contadores: `test_pal_peak`
+  (pico de paletas usadas), `test_pal_refused`, `test_pal_sheds`, `test_pal_fallbacks`.
 
 Pruebas: `STAGE=2` en `tests/b2run.py` (`START_AT=-1` = desde 0:00). Ver tabla de resultados en la nota de G-56.
 
