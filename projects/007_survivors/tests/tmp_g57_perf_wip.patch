@@ -1,0 +1,450 @@
+diff --git a/projects/007_survivors/src/hb_game.cpp b/projects/007_survivors/src/hb_game.cpp
+index 06f6d48..1834a94 100644
+--- a/projects/007_survivors/src/hb_game.cpp
++++ b/projects/007_survivors/src/hb_game.cpp
+@@ -17,6 +17,7 @@
+ #include "bn_blending.h"
+ #include "bn_camera_ptr.h"
+ #include "bn_core.h"
++#include "bn_sprites.h"
+ #include "bn_keypad.h"
+ #include "bn_math.h"
+ #include "bn_memory.h"
+@@ -77,10 +78,12 @@ volatile int test_cpu_nova_max;   // worst frame in which a Hex Nova was cast
+ // 0 player, 1 director, 2 spark, 3 runes, 4 frost, 5 bolts, 6 enemies, 7 boss, 8 pickups, 9 particles,
+ // 10 rest of the logic, 11 engine (bn::core::update until the next frame starts), 12 ticks inside _kill_enemy,
+ // 13 kills in the frame, 14 ticks of _update_horde_frames (inside 6), 15 enemies alive.
+-volatile int test_prof[16];
+-volatile int test_prof_worst[16];     // worst frame without a Nova cast
+-volatile int test_prof_nova[16];      // worst Nova frame
++volatile int test_prof[22];   // 11 engine update before vblank, 16 cpu ticks when the play logic starts, 17 after it, 18 bolts, 19 damage-number text, 20 vblank commit counted in the frame, 21 sprites (G-57)
++volatile int test_prof_worst[22];     // worst frame without a Nova cast
++volatile int test_prof_nova[22];      // worst Nova frame
+ volatile int test_cpu_max_plain;      // worst frame without a Nova cast
++volatile int test_cpu_over90;         // measured play frames above 90 % / 100 % (G-57)
++volatile int test_cpu_over100;
+ volatile int test_prof_worst_frame;    // test_frames of that frame
+ volatile int test_wolf_crouches;      // DASH warnings started
+ volatile int test_wolf_dashes;        // dashes started (each one after a 30 f crouch)
+@@ -870,6 +873,7 @@ namespace
+         int age = 0;
+         const bn::sprite_item* item = nullptr;
+         art::anim frames = { 0, 1, 1 };
++        bn::ivector<bn::sprite_ptr>* pool = nullptr;   // pooled sprite (hit spark, poof): hidden and returned
+ 
+         explicit particle(bn::sprite_ptr&& s) :
+             sprite(bn::move(s))
+@@ -1065,6 +1069,32 @@ namespace
+                     g.set_visible(false);
+                     _glow_pool.push_back(bn::move(g));
+                 }
++
++                // perf (G-57): BURST explosions from hidden 32x32 sprites too (one shared tiles block while hidden).
++                for(int k = 0; k < 4; ++k)
++                {
++                    bn::sprite_ptr x = _world_sprite(art::fx_explosion, fixed_point(), 0, 4);
++                    x.set_visible(false);
++                    _explosion_pool.push_back(bn::move(x));
++                }
++            }
++
++            // perf (G-57): hit sparks come from hidden fx_impact sprites created here (they share one tiles block);
++            // building one per bolt hit cost ~450 ticks (10 % of a frame) in a minute-14 Starfall frame.
++            for(int k = 0; k < max_particles; ++k)
++            {
++                bn::sprite_ptr spark = _world_sprite(art::fx_impact, fixed_point(), 0, 2);
++                spark.set_visible(false);
++                _impact_pool.push_back(bn::move(spark));
++                bn::sprite_ptr poof = _world_sprite(art::fx_poof, fixed_point(), 0, 15);
++                poof.set_visible(false);
++                _poof_pool.push_back(bn::move(poof));
++                bn::sprite_ptr nova_spark = _world_sprite(art::nova_spark, fixed_point(), 0, 3);
++                nova_spark.set_visible(false);
++                _spark_pool.push_back(bn::move(nova_spark));
++                bn::sprite_ptr trail = _world_sprite(art::tmp_fx, fixed_point(), art::tmp_trail, 22);
++                trail.set_visible(false);
++                _trail_pool.push_back(bn::move(trail));
+             }
+ 
+             // perf: the Storm Chain sprites are created once, hidden (creating 16 in one frame cost ~60 %).
+@@ -1184,14 +1214,24 @@ namespace
+                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
+                 bool nova_frame = _nova_cast_frame;
+                 _nova_cast_frame = false;
+-                _prof_timer.restart();
++                test_prof[20] = _vblank_ticks;
++                test_prof[21] = bn::sprites::used_items_count();
++                int before_update = bn::core::current_cpu_ticks();
++                test_prof[17] = before_update - _logic_end_ticks;
+                 bn::core::update();
+-                test_prof[11] = _prof_timer.elapsed_ticks();
++                test_prof[11] = bn::core::last_cpu_ticks() - before_update;
++                _vblank_ticks = bn::core::last_vblank_ticks();
+ 
+                 // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
+                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
+                 test_cpu = cpu;
+ 
++                if(measured && _mode == game_mode::play)
++                {
++                    test_cpu_over90 = test_cpu_over90 + (cpu > 9000);
++                    test_cpu_over100 = test_cpu_over100 + (cpu > 10000);
++                }
++
+                 if(measured && _mode == game_mode::play && cpu > test_cpu_max)
+                 {
+                     test_cpu_max = cpu;
+@@ -1204,7 +1244,7 @@ namespace
+                     {
+                         test_cpu_nova_max = cpu;
+ 
+-                        for(int k = 0; k < 16; ++k)
++                        for(int k = 0; k < 22; ++k)
+                         {
+                             test_prof_nova[k] = test_prof[k];
+                         }
+@@ -1214,7 +1254,7 @@ namespace
+                         test_cpu_max_plain = cpu;
+                         test_prof_worst_frame = test_frames;
+ 
+-                        for(int k = 0; k < 16; ++k)
++                        for(int k = 0; k < 22; ++k)
+                         {
+                             test_prof_worst[k] = test_prof[k];
+                         }
+@@ -1224,6 +1264,7 @@ namespace
+                 // Per-frame kill accumulators are cleared after the worst frame copied them (they always read 0).
+                 test_prof[12] = 0;
+                 test_prof[13] = 0;
++                test_prof[19] = 0;
+             }
+         }
+ 
+@@ -1261,6 +1302,11 @@ namespace
+         bn::vector<bn::sprite_ptr, frost_shards> _frost;
+         bn::vector<pickup, max_gems + 4> _pickups;
+         bn::vector<particle, max_particles> _particles;
++        bn::vector<bn::sprite_ptr, max_particles> _impact_pool;
++        bn::vector<bn::sprite_ptr, max_particles> _poof_pool;
++        bn::vector<bn::sprite_ptr, max_particles> _spark_pool;
++        bn::vector<bn::sprite_ptr, max_particles> _trail_pool;
++        bn::vector<bn::sprite_ptr, max_particles> _explosion_pool;
+         bn::vector<damage_number, max_damage_numbers> _numbers;
+ 
+         bn::array<bn::color, 16> _white_colors;
+@@ -1415,6 +1461,8 @@ namespace
+         static constexpr int nova_hit_frames = 6;
+         static constexpr int nova_hits_per_frame = 12;
+         bn::timer _prof_timer;
++        int _vblank_ticks = 0;
++        int _logic_end_ticks = 0;
+ 
+         // Feel
+         int _shake = 0;
+@@ -1461,6 +1509,9 @@ namespace
+         uint8_t _boss_frost_pulse = 0;
+         int _boss_wave_t = 0;
+         int _boss_title_t = 0;
++        bn::string<24> _banner_rest;
++        int _banner_x = 0;
++        bn::optional<bn::sprite_palette_item> _banner_pal;
+         int _boss_fight_t = 0;
+         int _boss_phase = 1;
+         int _boss_invuln = 0;
+@@ -1876,6 +1927,7 @@ namespace
+ 
+             ++_t;
+             _create_budget = create_budget_per_frame;
++            test_prof[16] = bn::core::current_cpu_ticks();
+             _prof_timer.restart();
+             _update_player();
+             _prof(0);
+@@ -1998,6 +2050,7 @@ namespace
+             test_projectiles = _bolts.size() + _runes.size() + (_frost_t >= 0 ? _frost.size() : 0);
+             test_gems = _pickups.size();
+             _prof(10);
++            _logic_end_ticks = bn::core::current_cpu_ticks();
+         }
+ 
+         void _prof(int section)
+@@ -2220,7 +2273,7 @@ namespace
+             for(int i = 0; i < nova_sparks; ++i)
+             {
+                 fixed_point v = angle_vector(i * (2048 / nova_sparks) + 64) * fixed(2.5);
+-                _spawn_particle(_pos + v * 4, v, art::nova_spark, art::nova_spark_anim, 22, 3);
++                _spawn_pooled_particle(_spark_pool, _pos + v * 4, v, art::nova_spark, art::nova_spark_anim, 22, 3);
+             }
+         }
+ 
+@@ -2255,9 +2308,9 @@ namespace
+         // and every target is hit within nova_hit_frames frames.
+         void _update_nova()
+         {
+-            if(_nova_pending <= 0)
++            if(_nova_pending <= 0 || _nova_cast_frame)
+             {
+-                return;
++                return;   // perf (G-57): the hits start the frame after the cast (ring + sparks are built then)
+             }
+ 
+             ++_nova_step;
+@@ -3068,13 +3121,52 @@ namespace
+ 
+         // Big centred banner (boss names, CURSED!, THE HEX MOON RISES, STAGE CLEAR).
+         void _show_banner(const char* text, const bn::sprite_palette_item& palette, int frames)
++        {
++            _generate_banner(text, palette);
++            _boss_title_t = frames;
++        }
++
++        // perf (G-57): a 16x16 banner cost ~1000 ticks in one frame (an evolution chest at minute 14 gave 113 %);
++        // the first half is written now and the rest on the next play frame (_update_banner_rest).
++        void _generate_banner(const char* text, const bn::sprite_palette_item& palette)
+         {
+             _boss_title.clear();
+-            _big_text.set_center_alignment();
++            _banner_rest.clear();
++            bn::string_view all(text);
++            int split = all.size() / 2;
++
++            for(int k = split; k < all.size(); ++k)
++            {
++                if(all[k] == ' ')
++                {
++                    split = k;   // the first space after the middle
++                    break;
++                }
++            }
++
++            bn::string_view first = all.substr(0, split);
++            _banner_x = -_big_text.width(all) / 2;
++            _banner_pal = palette;
++            _big_text.set_left_alignment();
+             _big_text.set_palette_item(palette);
+-            _big_text.generate(0, -30, text, _boss_title);
++            _big_text.generate(_banner_x, -30, first, _boss_title);
+             _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
+-            _boss_title_t = frames;
++            _banner_x += _big_text.width(first);
++            _banner_rest = all.substr(split);
++        }
++
++        void _update_banner_rest()
++        {
++            if(_banner_rest.empty() || ! _banner_pal)
++            {
++                return;
++            }
++
++            _big_text.set_left_alignment();
++            _big_text.set_palette_item(*_banner_pal);
++            static_cast<void>(_big_text.generate_optional(_banner_x, -30, _banner_rest, _boss_title));
++            _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
++            _banner_rest.clear();
+         }
+ 
+         void _make_room(int needed)
+@@ -4222,9 +4314,14 @@ namespace
+                 test_prof_chain = bn::max(int(test_prof_chain), c);
+             }
+             _prof(4);
+-            _update_lance();
+-            _update_stars();
+-            _update_bolts();
++            {
++                bn::timer t;
++                _update_lance();
++                _update_stars();
++                t.restart();
++                _update_bolts();
++                test_prof[18] = t.elapsed_ticks();
++            }
+             _prof(5);
+         }
+ 
+@@ -5372,7 +5469,8 @@ namespace
+ 
+                 // Separation (§13): pushed away from up to 3 overlapping neighbours of the nearby buckets, so a
+                 // crowd spreads into a ring instead of one ball. Swarm bats keep their formation.
+-                if(e.mode != mode_swarm)
++                // perf (G-57): each enemy separates every other frame (uid parity) with a double push, same average.
++                if(e.mode != mode_swarm && ((_t + e.uid) & 1) == 0)
+                 {
+                     int ex2 = to_int(e.pos.x());
+                     int ey2 = to_int(e.pos.y());
+@@ -5406,9 +5504,10 @@ namespace
+                                 if(abs_int(sx) < separation_distance && abs_int(sy) < separation_distance)
+                                 {
+                                     // Identical spots split by uid so two stacked enemies do not move together.
+-                                    fixed side = e.uid > o.uid ? separation_push : -separation_push;
+-                                    push += fixed_point(sx > 0 ? separation_push : sx < 0 ? -separation_push : side,
+-                                                        sy > 0 ? separation_push : sy < 0 ? -separation_push : side);
++                                    constexpr fixed sep = separation_push * 2;
++                                    fixed side = e.uid > o.uid ? sep : -sep;
++                                    push += fixed_point(sx > 0 ? sep : sx < 0 ? -sep : side,
++                                                        sy > 0 ? sep : sy < 0 ? -sep : side);
+                                     ++pushes;
+                                 }
+                             }
+@@ -5907,8 +6006,8 @@ namespace
+         {
+             if(_create_budget-- > 0)
+             {
+-                _spawn_particle(p, fixed_point(), art::fx_explosion, art::explosion_anim,
+-                                art::explosion_anim.count * art::explosion_anim.frame_time, 4);
++                _spawn_pooled_particle(_explosion_pool, p, fixed_point(), art::fx_explosion, art::explosion_anim,
++                                       art::explosion_anim.count * art::explosion_anim.frame_time, 4);
+             }
+ 
+             _play(art::sfx_explosion, fixed(0.4));
+@@ -7644,12 +7743,10 @@ namespace
+                 _boss_bar.push_back(bn::move(notch));
+             }
+ 
+-            _boss_title.clear();
+-            _big_text.set_center_alignment();
+             constexpr const char* names[9] = { "SLIME KING", "ORC WARCHIEF", "THORNWOOD TREANT", "BONE COLOSSUS",
+                                                "BANSHEE", "THE LICH", "GARGOYLE LORD", "IRON CHAMPION",
+                                                "EMBER DRAGON" };
+-            _big_text.generate(0, -30, names[kind], _boss_title);
++            _generate_banner(names[kind], common::variable_16x16_sprite_font.item().palette_item());
+             _boss_title_t = 2 * fps;
+             _shake = 12;
+             _play(art::sfx_boss);
+@@ -7715,9 +7812,12 @@ namespace
+ 
+         void _update_boss()
+         {
++            _update_banner_rest();
++
+             if(_boss_title_t > 0 && --_boss_title_t == 0)
+             {
+                 _boss_title.clear();
++                _banner_rest.clear();
+             }
+ 
+             if(_boss_wave)
+@@ -9056,7 +9156,8 @@ namespace
+ 
+                     if(_fx.gem_trail && ((_t + i) & 3) == 0)
+                     {
+-                        _spawn_particle(g.pos, fixed_point(), art::tmp_fx, { art::tmp_trail, 1, 8 }, 8, 22);
++                        _spawn_pooled_particle(_trail_pool, g.pos, fixed_point(), art::tmp_fx, { art::tmp_trail, 1, 8 }, 8,
++                                               22);
+                     }
+ 
+                     if(d2 < 6 * 6)
+@@ -9171,15 +9272,56 @@ namespace
+             {
+                 --_create_budget;
+                 fixed_point v = angle_vector(i * (2048 / count) + 256) * fixed(0.8);
+-                _spawn_particle(p + v * 2, v, art::fx_poof, { 0, 4, 3 }, 12, 15);
++                _spawn_pooled_particle(_poof_pool, p + v * 2, v, art::fx_poof, { 0, 4, 3 }, 12, 15);
+             }
+         }
+ 
+         void _spawn_hit_spark(const fixed_point& p)
+         {
+-            if(_fx.hit_flash)
++            if(! _fx.hit_flash || _particles.full())
++            {
++                return;
++            }
++
++            _spawn_pooled_particle(_impact_pool, p, fixed_point(), art::fx_impact, { 0, 3, 2 }, 6, 2);
++        }
++
++        // A short particle from a pool of hidden sprites of one item (perf G-57: building a sprite costs ~80-100
++        // ticks with ~160 sprites alive); falls back to a new sprite when the pool is empty.
++        void _spawn_pooled_particle(bn::ivector<bn::sprite_ptr>& pool, const fixed_point& p, const fixed_point& v,
++                                    const bn::sprite_item& item, const art::anim& frames, int life, int z)
++        {
++            if(_particles.full())
++            {
++                return;
++            }
++
++            if(pool.empty())
+             {
+-                _spawn_particle(p, fixed_point(), art::fx_impact, { 0, 3, 2 }, 6, 2);
++                _spawn_particle(p, v, item, frames, life, z);
++                return;
++            }
++
++            bn::sprite_ptr s = bn::move(pool.back());
++            pool.pop_back();
++            s.set_tiles(item.tiles_item(), frames.first);
++            s.set_position(p);
++            s.set_visible(true);
++            particle& pt = _particles.emplace_back(bn::move(s));
++            pt.pos = p;
++            pt.vel = v;
++            pt.life = life;
++            pt.item = &item;
++            pt.frames = frames;
++            pt.pool = &pool;
++        }
++
++        void _release_particle(particle& pt)
++        {
++            if(pt.pool && ! pt.pool->full())
++            {
++                pt.sprite.set_visible(false);
++                pt.pool->push_back(pt.sprite);
+             }
+         }
+ 
+@@ -9191,6 +9333,7 @@ namespace
+ 
+                 if(--pt.life <= 0)
+                 {
++                    _release_particle(pt);
+                     _particles[i] = bn::move(_particles.back());
+                     _particles.pop_back();
+                     continue;
+@@ -9239,6 +9382,7 @@ namespace
+ 
+             _number_frame = _t;
+ 
++            bn::timer number_timer;
+             damage_number& d = _numbers.emplace_back();
+             _text.set_center_alignment();
+ 
+@@ -9255,6 +9399,7 @@ namespace
+             }
+ 
+             d.life = 30;
++            test_prof[19] = test_prof[19] + number_timer.elapsed_ticks();
+         }
+ 
+         // -----------------------------------------------------------------------------------------------------
+@@ -9549,6 +9694,11 @@ namespace
+             {
+                 // G-55 (§C6 VRAM <= 900 with the cards open): short-lived effects are dropped instead of hidden, so
+                 // their tiles are free for the cards. Nobody sees them go: the world is hidden behind the menu.
++                for(particle& pt : _particles)
++                {
++                    _release_particle(pt);
++                }
++
+                 _particles.clear();
+                 _numbers.clear();
+             }
+diff --git a/projects/007_survivors/tests/b2run.py b/projects/007_survivors/tests/b2run.py
+index d201dd6..0b5fdc8 100644
+--- a/projects/007_survivors/tests/b2run.py
++++ b/projects/007_survivors/tests/b2run.py
+@@ -261,10 +261,11 @@ def main():
+     syms = []
+     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
+                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
+-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending", "test_bursts", "test_burst_frame_max", "test_burst_queued", "test_narrow_gaps", "test_ring_postponed", "test_f3_events", "test_breath_hits", "test_meteor_hits", "test_shield_blocks", "test_warn_min", "test_title_star"]:
++                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_cpu_over90", "test_cpu_over100", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending", "test_bursts", "test_burst_frame_max", "test_burst_queued", "test_narrow_gaps", "test_ring_postponed", "test_f3_events", "test_breath_hits", "test_meteor_hits", "test_shield_blocks", "test_warn_min", "test_title_star"]:
+         syms.append(f"{sym}.32>=-99999999")
+     if os.environ.get("PROF"):
+-        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]
++        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(22)]
++        syms += [f"test_prof_nova+{4 * k}.32>=-99999999" for k in range(22)] + ["test_cpu_nova_max.32>=-99999999"]
+     cmd += ["--check", ",".join(checks + syms)]
+     # Block 4: the run reads the meta save (Mesen keeps it in Documents/Mesen2/Saves). A fresh save by default so
+     # the card pool and shop ranks are those of a first run; KEEP_SAVE=1 keeps it.
