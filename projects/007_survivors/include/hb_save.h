@@ -70,7 +70,8 @@ namespace hb
         uint16_t relic_bits;
         uint16_t boss_bits;
         uint8_t stages_cleared;
-        uint8_t pad1[3];
+        uint8_t flags;           // save_flag (was padding: old saves read 0, no version bump)
+        uint8_t pad1[2];
         stage_record records[3];
         uint32_t kills_total;
         uint16_t runs;
@@ -84,6 +85,11 @@ namespace hb
     };
 
     constexpr int save_version = 1;
+
+    enum save_flag : uint8_t
+    {
+        save_flag_ending_seen = 1u << 0   // E5.4: the ending after the first Ember Dragon kill (title star)
+    };
 
     enum option_bit : uint16_t
     {

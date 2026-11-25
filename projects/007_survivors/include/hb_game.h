@@ -25,7 +25,8 @@ namespace hb
     enum class run_end
     {
         retry,
-        title
+        title,
+        ending   // first Ember Dragon kill: ending screens and credits, then the title (E5.4 step 4)
     };
 
     // Chosen on the stage select screen (hb_meta.cpp).

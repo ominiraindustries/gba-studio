@@ -29,7 +29,8 @@
 #include "hb_save.h"
 
 extern volatile int test_mode;
-volatile int test_screen;   // 1 title, 2 menu, 3 stage select, 4 shop, 5 records, 6 options (headless tests)
+volatile int test_screen;   // 1 title, 2 menu, 3 stage select, 4 shop, 5 records, 6 options, 7 ending, 8 credits
+volatile int test_title_star;   // 1: the title shows the ending star
 
 namespace hb
 {
@@ -608,11 +609,12 @@ namespace
 
     [[nodiscard]] bool stage_open(int stage)
     {
-        return stage == 0 || (stage == 1 && (save().unlock_bits & unlock_stage2));
+        return stage == 0 || (stage == 1 && (save().unlock_bits & unlock_stage2)) ||
+               (stage == 2 && (save().unlock_bits & unlock_stage3));
     }
 
-    // ---- Stage select (§R0): 3 stage cards, L/R picks the character, A starts. Stage 3 "COMING SOON".
-    // DBG (debug_menu): SELECT opens stage 2 without clearing stage 1.
+    // ---- Stage select (§R0): 3 stage cards, L/R picks the character, A starts.
+    // DBG (debug_menu): SELECT opens stages 2 and 3 without clearing the previous ones.
     bool stage_select(run_setup& setup)
     {
         test_screen = 3;
@@ -663,7 +665,7 @@ namespace
                 }
                 else
                 {
-                    sc.text(0, 37, stage == 1 ? "CLEAR GLOAM MEADOW" : "COMING SOON", false, true);
+                    sc.text(0, 37, stage == 1 ? "CLEAR GLOAM MEADOW" : "CLEAR GRIM GRAVEYARD", false, true);
                 }
 
                 bn::string<32> who("L/R: ");
@@ -700,7 +702,7 @@ namespace
 
             if(debug_menu && bn::keypad::select_pressed())
             {
-                save().unlock_bits |= unlock_stage2;
+                save().unlock_bits |= unlock_stage2 | unlock_stage3;
                 play_sfx(bn::sound_items::sfx_menu_move);
                 redraw = true;
             }
@@ -764,6 +766,69 @@ namespace
     }
 }
 
+// E5.4: a gold star next to HEXBOUND once the ending has been seen.
+bn::optional<bn::sprite_ptr> title_star()
+{
+    bn::optional<bn::sprite_ptr> star;
+    test_title_star = (save().flags & save_flag_ending_seen) ? 1 : 0;
+
+    if(test_title_star)
+    {
+        star = art::icons.create_sprite(106, -66, art::icon_star);
+    }
+
+    return star;
+}
+
+void ending_sequence()
+{
+    // E5.4 step 4: 3 text screens over the 8 bpp illustration (like the title), then 20 s of credits.
+    test_screen = 7;
+    bn::regular_bg_ptr bg = art::ending_bg.create_bg(8, 48);
+    screen sc;
+    play_music(art::music_title);   // PROVISIONAL: no music_final yet (DISENO_RUTA block 7 audio)
+    constexpr const char* lines[3] = { "The Hex Moon fades.", "Wendel walks home at dawn.",
+                                       "THE END - thanks for playing" };
+
+    for(int k = 0; k < 3; ++k)
+    {
+        sc.clear();
+        sc.text(0, 58, lines[k], k == 2, true);
+
+        for(int f = 0; f < 6 * 60; ++f)
+        {
+            bn::core::update();
+
+            if(f >= 60 && (bn::keypad::a_pressed() || bn::keypad::start_pressed()))
+            {
+                break;
+            }
+        }
+    }
+
+    test_screen = 8;
+    sc.clear();
+    bn::bg_palettes::set_fade(bn::color(0, 0, 0), bn::fixed(0.6));
+    sc.title("HEXBOUND");
+    sc.text(0, -20, "A game by David", false, true);
+    sc.text(0, 0, "Made with Butano", false, true);
+    sc.text(0, 40, "Thanks for playing!", true, true);
+
+    for(int f = 0; f < 20 * 60; ++f)
+    {
+        bn::core::update();
+
+        if(f >= 30 && bn::keypad::start_pressed())
+        {
+            break;
+        }
+    }
+
+    sc.clear();
+    bn::bg_palettes::set_fade(bn::color(0, 0, 0), 0);
+    bn::core::update();
+}
+
 unsigned title_screen()
 {
     test_screen = 1;
@@ -778,6 +843,7 @@ unsigned title_screen()
         logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -60 + 32 * (k / 3), k));
     }
 
+    bn::optional<bn::sprite_ptr> star = title_star();
     bn::vector<bn::sprite_ptr, 4> press;
     unsigned frames = 0;
     play_music(art::music_title);
@@ -809,6 +875,7 @@ bool main_menu(run_setup& setup)
 {
     bn::optional<bn::regular_bg_ptr> title_bg;
     bn::vector<bn::sprite_ptr, 6> logo;
+    bn::optional<bn::sprite_ptr> star;
     constexpr const char* items[4] = { "PLAY", "SHOP", "RECORDS", "OPTIONS" };
     int cursor = 0;
 
@@ -825,6 +892,8 @@ bool main_menu(run_setup& setup)
             {
                 logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -60 + 32 * (k / 3), k));
             }
+
+            star = title_star();
         }
 
         screen sc;
@@ -871,6 +940,7 @@ bool main_menu(run_setup& setup)
 
         sc.clear();
         logo.clear();
+        star.reset();
         title_bg.reset();
         bn::core::update();
 

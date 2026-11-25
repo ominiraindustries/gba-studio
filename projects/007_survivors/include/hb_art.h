@@ -69,6 +69,23 @@
 #include "bn_sprite_items_bone_colossus.h"
 #include "bn_sprite_items_banshee.h"
 #include "bn_sprite_items_lich.h"
+#include "bn_sprite_items_imp.h"
+#include "bn_sprite_items_gargoyle.h"
+#include "bn_sprite_items_gargoyle_lord.h"
+#include "bn_sprite_items_ember_dragon.h"
+#include "bn_sprite_items_fx_fireball.h"
+#include "bn_sprite_items_fx_breath.h"
+#include "bn_sprite_items_fx_slash.h"
+#include "bn_regular_bg_items_ending_bg.h"
+#include "bn_sprite_palette_items_cinder_slime_palette.h"
+#include "bn_sprite_palette_items_ash_bat_palette.h"
+#include "bn_sprite_palette_items_cultist_palette.h"
+#include "bn_sprite_palette_items_ash_knight_palette.h"
+#include "bn_sprite_palette_items_ember_warden_palette.h"
+#include "bn_sprite_palette_items_hellhound_palette.h"
+#include "bn_sprite_palette_items_iron_champion_palette.h"
+#include "bn_bg_palette_items_ground_keep_palette.h"
+#include "bn_bg_palette_items_props_keep_palette.h"
 #include "bn_sprite_items_fx_arrow.h"
 #include "bn_sprite_items_fx_bone.h"
 #include "bn_sprite_items_fx_skull.h"
@@ -116,7 +133,8 @@ namespace hb::art
     {
         prop_tree, prop_pine, prop_arch, prop_pillar, prop_ruin_wall, prop_rock, prop_bush, prop_bush_flowers,
         prop_stump, prop_mushrooms, prop_pillar_stump, prop_rune_stone, prop_tall_grass, prop_flowers, prop_pond,
-        prop_crystal, prop_log, prop_rocks_small, prop_count
+        prop_crystal, prop_log, prop_rocks_small, prop_brazier, prop_banner, prop_lava_crack, prop_broken_throne,
+        prop_count
     };
 
     constexpr prop_def props[prop_count] = {
@@ -138,6 +156,11 @@ namespace hb::art
         { 120, 104, 32, 32, 1, 1, 2, 3 },   // crystal (thorns)
         { 152, 104, 32, 32, 0, 1, 4, 2 },   // log
         { 184, 104, 32, 24, 0, 0, 0, 0 },   // rocks_small
+        // Stage 3 Ashen Keep pieces (art/LÉEME.md "Adelanto bloque 7"; props is 256x200).
+        { 0, 136, 32, 32, 1, 2, 2, 2 },     // brazier: bowl and foot
+        { 32, 136, 16, 32, 0, 3, 2, 1 },    // banner: pole foot
+        { 48, 136, 32, 32, 0, 0, 0, 0 },    // lava_crack (decor, walk over)
+        { 80, 136, 64, 64, 1, 3, 6, 4 },    // broken_throne: seat and steps
     };
 
     // ---- Facing: 8 directions, index 0 S, 1 SE, 2 E, 3 NE, 4 N, 5 NW, 6 W, 7 SW. Only S..N (0-4) are drawn;
@@ -259,6 +282,39 @@ namespace hb::art
     inline constexpr const bn::sprite_palette_item& violet_palette = bn::sprite_palette_items::violet_palette;
     inline constexpr const bn::bg_palette_item& ground_graveyard_palette = bn::bg_palette_items::ground_graveyard_palette;
     inline constexpr const bn::bg_palette_item& props_graveyard_palette = bn::bg_palette_items::props_graveyard_palette;
+
+    // Stage 3 Ashen Keep (DISENO_RUTA block 7, art/LÉEME.md "Adelanto bloque 7").
+    // imp 16x16 (front): fly 0-3, cast 4, death 5-7. gargoyle 32x32 (faces right): perch 0, fly 1-4, dive 5, death 6-8.
+    constexpr monster_art imp = { &bn::sprite_items::imp, { { 0, 4, 6 } }, 1, { 5, 3, 5 }, -2 };
+    constexpr int imp_cast = 4;
+    constexpr monster_art gargoyle = { &bn::sprite_items::gargoyle, { { 1, 4, 6 } }, 1, { 6, 3, 5 }, -8 };
+    constexpr int gargoyle_perch = 0;
+    constexpr int gargoyle_dive = 5;
+    inline constexpr const bn::sprite_item& gargoyle_lord = bn::sprite_items::gargoyle_lord;   // faces right
+    constexpr anim lord_fly = { 0, 4, 8 };
+    constexpr int lord_dive = 4;
+    constexpr int lord_stone = 5;
+    constexpr anim lord_death = { 6, 4, 8 };
+    inline constexpr const bn::sprite_item& ember_dragon = bn::sprite_items::ember_dragon;     // faces right
+    constexpr anim dragon_idle = { 0, 4, 10 };
+    constexpr anim dragon_breath = { 4, 3, 14 };
+    constexpr anim dragon_fly = { 7, 2, 8 };
+    constexpr int dragon_land = 9;
+    constexpr anim dragon_death = { 10, 5, 8 };
+    inline constexpr const bn::sprite_item& fx_fireball = bn::sprite_items::fx_fireball;   // 8x8, fly 0-1 (right)
+    inline constexpr const bn::sprite_item& fx_breath = bn::sprite_items::fx_breath;       // 16x16, burn 0-2
+    inline constexpr const bn::sprite_item& fx_slash = bn::sprite_items::fx_slash;         // 32x32, warn 0, slash 1, fade 2
+    inline constexpr const bn::sprite_palette_item& cinder_slime_palette = bn::sprite_palette_items::cinder_slime_palette;
+    inline constexpr const bn::sprite_palette_item& ash_bat_palette = bn::sprite_palette_items::ash_bat_palette;
+    inline constexpr const bn::sprite_palette_item& cultist_palette = bn::sprite_palette_items::cultist_palette;
+    inline constexpr const bn::sprite_palette_item& ash_knight_palette = bn::sprite_palette_items::ash_knight_palette;
+    inline constexpr const bn::sprite_palette_item& ember_warden_palette = bn::sprite_palette_items::ember_warden_palette;
+    inline constexpr const bn::sprite_palette_item& hellhound_palette = bn::sprite_palette_items::hellhound_palette;
+    inline constexpr const bn::sprite_palette_item& iron_champion_palette =
+            bn::sprite_palette_items::iron_champion_palette;
+    inline constexpr const bn::bg_palette_item& ground_keep_palette = bn::bg_palette_items::ground_keep_palette;
+    inline constexpr const bn::bg_palette_item& props_keep_palette = bn::bg_palette_items::props_keep_palette;
+    inline constexpr const bn::regular_bg_item& ending_bg = bn::regular_bg_items::ending_bg;   // 8 bpp, like title_bg
 
     inline constexpr const bn::sprite_item& gems = bn::sprite_items::gems;
     constexpr int gem_blue = 0;      // 2 frames each
@@ -384,6 +440,7 @@ namespace hb::art
     inline constexpr const bn::music_item& music_meadow = bn::music_items::music_meadow;
     inline constexpr const bn::music_item& music_graveyard = bn::music_items::music_graveyard;
     inline constexpr const bn::music_item& music_boss = bn::music_items::music_boss;
+    inline constexpr const bn::music_item& music_keep = bn::music_items::music_keep;
     constexpr int music_volume_pct = 55;
 }
 

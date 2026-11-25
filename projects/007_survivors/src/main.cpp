@@ -25,6 +25,13 @@ int main()
             hb::run_end end = hb::play_run(seed, fx, setup);
             ++seed;
 
+            if(end == hb::run_end::ending)
+            {
+                hb::ending_sequence();
+                seed += hb::title_screen();
+                break;
+            }
+
             if(end == hb::run_end::title)
             {
                 bn::core::update();
