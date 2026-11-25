@@ -393,3 +393,60 @@ kit de itch.io (skill `gba-release`): capturas, GIF del minuto 14, descripción 
    como audio, no como módulo: no sirve para Maxmod sin pasar por tracker.)
 5. **Duración del juego**: un jugador medio lo termina en **15–20 partidas (~5 h)** (**recomendado**, §E6 #5).
    Alternativa: 8–10 partidas (precios de la tienda −40 % y HP de jefes −20 %).
+
+## Revisión pre-entrega (gba-designer, ROM 2026-11-25 02:56 de 7504ed8/7fbff55, guardado nuevo)
+
+Cómo: `gbarun.py` sin ventana, 9 ejecuciones. Primer minuto F1 con guardado nuevo (título → PLAY → fase → partida,
+cometa a ciegas 8 direcciones + A cada 2,5 s, y otra quieto + A); aperturas de F2/F3 y jefe de minuto 5 de cada fase
+(`b2run.py start`, DBG God, Start at 4:30).
+
+### Checklist del primer minuto (diseno-juegos.md)
+
+| Punto | Resultado | Evidencia / regla |
+|---|---|---|
+| Qué controlo en 10 s | **OK**. Título "PRESS START" → PLAY/SHOP/RECORDS/OPTIONS → CHOOSE STAGE (sólo Gloam Meadow abierta, "L/R: Wendel", "A: START B: BACK") → partida en ~3 s de menús | R14 simple |
+| Controles en su momento | **OK**. "D-PAD: MOVE" 0:00–0:03; "GRAB GEMS" junto a la 1.ª gema (0:07); "B: BLINK" al primer golpe (0:22 quieto); "A: NOVA READY!" al llenar el medidor (~0:40). Una línea cada vez, en el momento de uso | R6 |
+| Empiezo con lo necesario, sitio seguro | **OK**. Spark Bolt automático, 120 HP; 12 s sin enemigos; la 1.ª oleada (slimes) entra por el borde y se ve llegar | R3, R4, R5 |
+| Dificultad de la 1.ª sala | **OK**. Cometa a ciegas: Lv3, 33 muertes, 64/120 HP a 1:02. Quieto + A: primer golpe 0:22, muere a 1:22 (Lv6, 83 muertes). Enseña a moverse sin castigar al que prueba | flujo |
+| Nada mata sin aviso | **OK**. Barra de vida roja bajo el mago, silueta blanca al recibir daño, enemigos visibles antes de tocar; F2 grietas ≥ 72 f (`rise_min`), F3 avisos ≥ 45 f (`warn_min`) | R5 |
+| Cada acción responde | **OK con una pega**: A con el medidor vacío no hace nada (ni sonido ni parpadeo) | R14 |
+| Reintentar < 5 s | **OK**. YOU FELL con resumen → A: RETRY → partida nueva en ~4 s | R10 |
+
+### Legibilidad a 1x (aperturas y jefes)
+
+- F1: slimes (ojos amarillos, borde claro), gemas cian, corazones rojos y orbes rosas propios se distinguen. Flecha
+  dorada de borde OK (roza "G 0" del HUD, menor).
+- F2 0:00: ghouls verde-azulados sobre suelo violeta, legibles; **se apelotonan encima del mago** (2–3 muertes en
+  26 s quieto o a ciegas). Bot C sí sobrevive (77 muertes en 120 s, G-59): es dificultad de entrada, no fallo.
+- F3 0:00: grietas de lava del suelo y fuego enemigo usan el mismo naranja que **Ember Toss** del jugador
+  (`fx_fireball` y `fx_ember` son 8×8 naranja/amarillo). Lenguaje de color mezclado (peligro = propio).
+- Jefes min 5: King Slime (F1) y Gargoyle Lord (F3) claros con barra arriba y rótulo. **Bone Colossus (F2) sale como
+  silueta blanca en 2 de 2 capturas** (5:00 y 5:02): `_boss_flash = hit_flash_frames` (4 f) se reinicia en cada
+  golpe, y con 3–4 armas el jefe vive en blanco; tapa sus anticipaciones (R5, R11).
+
+### Veredicto: **OK para entregar** la ROM de la mañana. Nada bloquea el primer minuto.
+
+Cambios pedidos (no bloqueantes, por prioridad; tareas G-60, G-61, G-62 y nota en G-59):
+1. Destello de jefe con enfriamiento: blanco 2–4 f como mucho cada 12 f (métrica: en 10 capturas seguidas de un jefe
+   con Max power, ≤ 3 en blanco). R5/R11. Coste: ~5 líneas en `hb_game.cpp`.
+2. Proyectiles enemigos de F3 con otro lenguaje que Ember Toss: contorno oscuro + núcleo blanco/rojo en
+   `fx_fireball` (o Ember Toss hacia lila de la paleta del mago). Métrica: captura 1x de F3 7:00 donde se distingan
+   sin mirar el movimiento. Lenguaje de color.
+3. A con Nova vacía: parpadeo del medidor + clic sordo (respuesta a cada acción). Coste: 1 sonido existente.
+4. Revisar con el pase de rendimiento si un A de 1 frame se pierde en frames lentos (quieto a 1:21, A no lanzó la
+   Nova con el medidor lleno). Un humano mantiene A ≥ 3 f; riesgo bajo.
+
+### Preguntas para el usuario tras jugar (máx. 5)
+
+1. **Colores de goblin/lobo/orco (G-53)**: aplicado el clásico (goblin verde, orco oliva, lobo gris-pardo, borde
+   claro). **Recomendado: confirmar.** Alternativas: tonos fríos (azul/violeta, menos contraste con el suelo) o
+   mantener grises (no se distinguen a 1x).
+2. **OPTIONS (G-55.2)**: Music, Sound FX, Screen shake, Flash y Erase save. **Recomendado: así**; el resto de
+   efectos fijos como están. Alternativa: añadir "Hit numbers" o "Slow-mo" si al jugar molestan.
+3. **Nombre**: existe "Hexbound" en Steam (puzle, 2025). **Recomendado: renombrar antes de itch.io** (búsquedas y
+   confusión; coste: logo del título + 3 textos). Candidatos: *Moonwick* (ya en DISENO.md §16), *Hex Moon*
+   ("THE HEX MOON RISES" ya existe en el juego); comprobar en itch/Steam antes. Alternativa: mantener en itch.io.
+4. **Créditos**: hoy "A game by David". **Recomendado: nombre de estudio** igual a la cuenta de itch.io (no publica
+   tu nombre; coste 1 texto). Alternativa: tu nombre o alias.
+5. **Música final y SFX** (faltan `music_final` y sfx de aliento/meteoro/estallido/tajo; hay provisionales).
+   **Recomendado: .xm CC0 adaptados (R2 #4)** en el bloque 8. Alternativa: PixelLab + paso por tracker, o tuyos.
