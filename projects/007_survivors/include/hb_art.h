@@ -33,6 +33,9 @@
 #include "bn_sprite_items_chest.h"
 #include "bn_sprite_items_heart.h"
 #include "bn_sprite_items_icons.h"
+#include "bn_sprite_items_relics.h"
+#include "bn_sprite_items_hex_icons.h"
+#include "bn_sprite_items_evo_icons.h"
 #include "bn_sprite_items_shrine.h"
 #include "bn_sprite_items_fx_spark.h"
 #include "bn_sprite_items_fx_rune.h"
@@ -329,6 +332,11 @@ namespace hb::art
 
     // ---- Icons 16x16 for cards.
     inline constexpr const bn::sprite_item& icons = bn::sprite_items::icons;
+    // Block 6 (G-58), same palette as icons: relics in §C5 order, hex icons 8x8 (swarm frenzy frail dark_moon
+    // famine skull), evolution icons (phoenix tempest eclipse).
+    inline constexpr const bn::sprite_item& relics = bn::sprite_items::relics;
+    inline constexpr const bn::sprite_item& hex_icons = bn::sprite_items::hex_icons;
+    inline constexpr const bn::sprite_item& evo_icons = bn::sprite_items::evo_icons;
     constexpr int icon_spark_bolt = 0;
     constexpr int icon_rune_orbit = 1;
     constexpr int icon_frost_ring = 2;

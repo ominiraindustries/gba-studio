@@ -128,6 +128,12 @@ volatile int test_burst_frame_max;    // most BURST explosions in one frame (<= 
 volatile int test_burst_queued;       // BURST explosions that waited for a later frame
 volatile int test_narrow_gaps;        // stage 3: row/column gaps of 8-24 px between solid cells (12x12 chunks; 0)
 volatile int test_ring_postponed;     // RING formations postponed 10 s (< 70 % free cells in r 150)
+volatile int test_relic;              // G-58: relic of the run (-1 none)
+volatile int test_relic_fx;           // G-58: relic effects fired (Ember Heart bursts, Feather frost, Sigil heals...)
+volatile int test_phoenix;            // G-58: Phoenix Ember revivals
+volatile int test_evo_fx;             // G-58: Tempest strikes + Eclipse gem pulls
+volatile int test_landmark_dist;      // G-58: px from the start to the nearest landmark (9999 none within 5 chunks)
+volatile int test_landmark_events;    // G-58: 1 shrine in a Stone Circle, 2 Crypt Gate cursed chest, 4 throne chest
 volatile int test_f3_events;          // 1 ash swarm, 2 cinder ring, 4 imp swarm, 8 hound pack, 16 grand stampede,
                                       // 32 dive, 64 stone skin, 128 slash, 256 jump, 512 breath, 1024 flight,
                                       // 2048 meteor, 4096 fire, 8192 throne chest, 16384 blazing, 32768 intro burst
@@ -233,8 +239,10 @@ namespace
     constexpr int map_cells = 64;
     constexpr int chunk_cells = 16;
     constexpr int chunk_px = chunk_cells * 8;
-    constexpr int template_count = 13;   // 9-11: stage 3 walls / brazier / lava; 12: Broken Throne landmark
+    constexpr int template_count = 15;   // 9-11: stage 3 walls / brazier / lava; 12-14: landmarks (§C5 hito)
     constexpr int template_throne = 12;
+    constexpr int template_circle = 13;  // Stone Circle (stage 1): the next shrine appears inside
+    constexpr int template_crypt = 14;   // Crypt Gate (stage 2): a cursed chest in the doorway
     constexpr int template_graves = 8;   // stage 2 "lápidas": 4 tombstones (the `log` piece), RISE graves (§C5)
     constexpr int template_max_props = 4;
 
@@ -262,7 +270,12 @@ namespace
         { { art::prop_ruin_wall, 2, 1 }, { art::prop_ruin_wall, 6, 8 }, { art::prop_lava_crack, 11, 1 }, { -1, 0, 0 } },
         { { art::prop_brazier, 3, 3 }, { art::prop_banner, 11, 2 }, { art::prop_brazier, 9, 10 }, { art::prop_banner, 3, 10 } },
         { { art::prop_lava_crack, 3, 3 }, { art::prop_lava_crack, 9, 8 }, { art::prop_rocks_small, 2, 11 }, { -1, 0, 0 } },
-        { { art::prop_broken_throne, 5, 4 }, { art::prop_brazier, 1, 9 }, { art::prop_brazier, 11, 10 }, { -1, 0, 0 } }
+        { { art::prop_broken_throne, 5, 4 }, { art::prop_brazier, 1, 9 }, { art::prop_brazier, 11, 10 }, { -1, 0, 0 } },
+        // Block 6 landmarks, PROVISIONAL art: built from existing pieces (no new tiles) until the user draws
+        // stone_circle / crypt_gate (DISENO_RUTA block 6 resource table). Stone Circle = 4 rune stones in a ring
+        // (open middle 64 px); Crypt Gate = the arch walled by two pillar stumps (the doorway is the way in).
+        { { art::prop_rune_stone, 6, 0 }, { art::prop_rune_stone, 12, 6 }, { art::prop_rune_stone, 6, 11 }, { art::prop_rune_stone, 1, 6 } },
+        { { art::prop_pillar_stump, 1, 5 }, { art::prop_arch, 4, 2 }, { art::prop_pillar_stump, 11, 5 }, { art::prop_tall_grass, 6, 12 } }
     };
 
     // §C5 stage 2 weights over 20 draws: empty 4, grove 2, pines 1, ruin 2, walls 2, rocks 1, mushrooms 1,
@@ -401,7 +414,11 @@ namespace
             unsigned h = hash3(seed, kx, ky);
             int t;
 
-            if(stage == 1)
+            if(stage <= 1 && _landmark_chunk(kx, ky))
+            {
+                t = stage == 0 ? template_circle : template_crypt;
+            }
+            else if(stage == 1)
             {
                 t = graveyard_draws[(h >> 4) % 20];
             }
@@ -424,6 +441,26 @@ namespace
             template_cache_key[slot] = key;
             template_cache_value[slot] = int8_t(result);
             return result;
+        }
+
+        // §C5 landmark (stages 1-2): the centre chunk of a 3x3 block, 30 % of blocks; of the 4 blocks around the
+        // start exactly one has it (block 6 test: one within 600 px of the start).
+        [[nodiscard]] bool _landmark_chunk(int kx, int ky) const
+        {
+            int bx = kx >= 0 ? kx / 3 : (kx - 2) / 3;
+            int by = ky >= 0 ? ky / 3 : (ky - 2) / 3;
+
+            if(kx - bx * 3 != 1 || ky - by * 3 != 1)
+            {
+                return false;
+            }
+
+            if(bx >= -1 && bx <= 0 && by >= -1 && by <= 0)
+            {
+                return int((hash3(seed ^ 0x51A7u, 0, 0) >> 8) & 3) == ((bx + 1) | ((by + 1) << 1));
+            }
+
+            return (hash3(seed ^ 0x7417u, bx, by) >> 8) % 10 < 3;
         }
 
         mutable unsigned template_cache_key[16] = { 0x80008000u, 0x80008000u, 0x80008000u, 0x80008000u,
@@ -665,7 +702,10 @@ namespace
     {
         evo_starfall = 1,       // Spark Bolt + Spell Tome
         evo_blizzard = 2,       // Frost Ring + Lens of Reach
-        evo_ward_of_ages = 4    // Rune Orbit + Ward Stone
+        evo_ward_of_ages = 4,   // Rune Orbit + Ward Stone
+        evo_phoenix = 8,        // Ember Toss + Heart Amulet (block 6)
+        evo_tempest = 16,       // Storm Chain + Swift Boots
+        evo_eclipse = 32        // Moon Lance + Lodestone
     };
 
     enum blessing_id : uint8_t
@@ -683,6 +723,19 @@ namespace
         { "Haste", &art::icons, art::icon_swift_boots, { "SPD+30%", "60 s", "", "", "" } },
         { "Magnet", &art::icons, art::icon_magnet, { "Get all", "60 s", "", "", "" } },
         { "Mend", &art::heart, 0, { "Heal 40", "now", "", "", "" } },
+    };
+
+    // §C5 relics (card lines: desc[0] then desc[1]).
+    const upgrade_text relic_texts[relic_count] = {
+        { "Ember Heart", &art::relics, 0, { "Gem burst", "4 dmg", "", "", "" } },
+        { "Blink Feather", &art::relics, 1, { "Fast blink", "Frost", "", "", "" } },
+        { "Gold Tooth", &art::relics, 2, { "+50% gold", "-20 HP", "", "", "" } },
+        { "Frost Sigil", &art::relics, 3, { "5 frozen", "Heal 1", "", "", "" } },
+        { "Bone Charm", &art::relics, 4, { "Low HP", "+40% dmg", "", "", "" } },
+        { "Hex Battery", &art::relics, 5, { "Nova x1.5", "Blink +1s", "", "", "" } },
+        { "Lucky Coin", &art::relics, 6, { "4 cards", "3 shrine", "", "", "" } },
+        { "Glass Hourglass", &art::relics, 7, { "Foes -10%", "Hurt +10%", "", "", "" } },
+        { "Moon Shard", &art::relics, 8, { "Nova also", "freezes", "", "", "" } },
     };
 
     // ---------------------------------------------------------------------------------------------------------
@@ -917,7 +970,8 @@ namespace
             }
 
             _stage = bn::clamp(setup.stage, 0, 2);
-            _map.init(seed * 2654435761u + 1, _stage);
+            _map_seed = seed * 2654435761u + 1;
+            _map.init(_map_seed, _stage);
             _grid_clear();
             _build_palettes();
             _white_pal = _white_palette().create_palette();
@@ -1033,6 +1087,15 @@ namespace
             // Starting weapon per character; shop Vitality / Charged / Reroll / Revival (§C4).
             _levels[_setup.character == char_cinda ? up_ember : _setup.character == char_morrow ? up_chain : up_spark] = 1;
             _player_max_hp = player_hp + 10 * _shop[shop_vitality] - (_setup.character == char_cinda ? 10 : 0);
+            _hexes = _setup.hexes;
+            _boss_bits_start = save().boss_bits;
+
+            if(_hexes & hex_frail)
+            {
+                _player_max_hp = _player_max_hp * 7 / 10;   // §C5 Frail: -30 % max HP
+            }
+
+            _enemy_speed_mult = (_hexes & hex_frenzy) ? fixed(1.2) : fixed(1);   // §C5 Frenzy
             _player_hp = _player_max_hp;
             _rerolls = _shop[shop_reroll];
             _revivals = _shop[shop_revival];
@@ -1315,12 +1378,28 @@ namespace
         bool _meta_done = false;
         bool _dbg_started = false;   // DBG Start at used: the run credits gold only (no records, stats or unlocks)
         int _meta_earned = 0;
+        int _meta_bonus_pct = 0;   // hexes + Gold Tooth (§C5), shown next to the gold in the summary
+        bool _relic_pending = false;   // the minute-10 boss chest was opened: relic pick before the cards
+        int _sigil_hits = 0;           // Frost Sigil: monsters hit by the current Frost Ring pulse
+        int _ember_heart_t = -1;       // Ember Heart: frame of the last bursts and how many (<= 3 per frame, perf)
+        int _ember_heart_n = 0;
+        int _battery_frac = 0;         // Hex Battery: half Nova points carried over
+        int _boss_bits_start = 0;      // save boss_bits when the run started (relic pool)
         int _new_best = 0;          // 1 time, 2 kills, 4 level
         uint32_t _new_unlocks = 0;
         int _star_cd = 30;
         int _lance_cd = 60;
         int _lance_t = -1;
         bn::vector<bn::sprite_ptr, 8> _lance_sprites;
+        bn::optional<bn::sprite_affine_mat_ptr> _lance_mat_up;     // Eclipse cross
+        bn::optional<bn::sprite_affine_mat_ptr> _lance_mat_down;
+        int _tempest_t = 0;
+        int _eclipse_v_damage = 0;
+        int _eclipse_v_half = 0;
+        fixed_point _eclipse_v_pos;
+        bool _phoenix_used = false;
+        unsigned _map_seed = 0;
+        bool _landmark_scan_done = false;
         bn::optional<bn::sprite_affine_mat_ptr> _lance_mat;
         bn::optional<bn::sprite_affine_mat_ptr> _lance_mat_back;
         int _ward_kills = 0;
@@ -1436,7 +1515,13 @@ namespace
         // Menus
         int _cursor = 0;
         int _card_count = 0;
-        uint8_t _card_ids[3] = {};
+        uint8_t _card_ids[4] = {};
+
+        // Block 6 (G-58): hexes of this run, the relic (-1 none) and its pick, monster speed factor.
+        int _hexes = 0;
+        int _relic = -1;
+        bool _relic_pick = false;
+        fixed _enemy_speed_mult = 1;
 
         // Shrine
         bn::optional<bn::sprite_ptr> _shrine;
@@ -1605,8 +1690,8 @@ namespace
             }
         };
 
-        bn::vector<ember_ball, 2> _embers;
-        bn::vector<fire_patch, 4> _fires;
+        bn::vector<ember_ball, 3> _embers;
+        bn::vector<fire_patch, 6> _fires;
         int _ember_cd = 90;
         static constexpr int chain_sprites = 16;
         bn::vector<bn::sprite_ptr, chain_sprites> _chain_sprites;
@@ -1954,6 +2039,22 @@ namespace
 
             _refresh_hud(false);
 
+            if(_player_hp <= 0 && (_evolved & evo_phoenix) && ! _phoenix_used)
+            {
+                // Phoenix Ember (§C3): once per run, back with 30 % HP and a Nova burst (the meter is kept).
+                _phoenix_used = true;
+                _player_hp = bn::max(1, _player_max_hp * 3 / 10);
+                _invulnerable = 2 * fps;
+                int meter = _nova;
+                _cast_nova();
+                _nova = meter;
+                test_nova = meter;
+                _push_enemies_out(64);
+                _explode(_pos, 48, _damage(24));
+                _show_banner("PHOENIX REBIRTH!", art::text_gold, 2 * fps);
+                test_phoenix = test_phoenix + 1;
+            }
+
             if(_player_hp <= 0 && _revivals > 0)
             {
                 // Shop Revival: once, back with 50 % HP and a Nova-like burst (§C4).
@@ -1981,6 +2082,11 @@ namespace
                 bn::music::stop();
                 _play(art::sfx_hurt);
                 _play(art::jingle_defeat);
+            }
+            else if(_relic_pending)
+            {
+                _relic_pending = false;
+                _open_relic_pick();
             }
             else if(_pending_levels > 0 || _free_upgrades > 0)
             {
@@ -2106,7 +2212,32 @@ namespace
             }
 
             _pos = end;
-            _blink_cd = _cooldown(3 * fps) * (_setup.character == char_morrow ? 4 : 5) / 5;   // Morrow -20 %
+            // Morrow -20 %; Blink Feather 90 f base, Hex Battery +60 f (§C5).
+            _blink_cd = _cooldown(_relic == relic_blink_feather ? 90 : 3 * fps) * (_setup.character == char_morrow ? 4 : 5) / 5 +
+                        (_relic == relic_hex_battery ? 60 : 0);
+
+            if(_relic == relic_blink_feather)
+            {
+                // Blink Feather: frost r 24 where he leaves (6 damage, slows).
+                for(enemy& e : _enemies)
+                {
+                    int dx = to_int(e.pos.x() - start.x());
+                    int dy = to_int(e.pos.y() - start.y());
+
+                    if(dx * dx + dy * dy <= 24 * 24)
+                    {
+                        e.slow = 90;
+                    }
+                }
+
+                _area_damage(start, 24, _damage(6), true);
+                test_relic_fx = test_relic_fx + 1;
+
+                for(int k = 0; k < 4; ++k)
+                {
+                    _spawn_particle(start + angle_vector(k * 512 + 256) * 14, fixed_point(), art::fx_frost, { 0, 3, 4 }, 12, 4);
+                }
+            }
             _blink_invulnerable = 10;
             _play(art::sfx_blink, fixed(0.8));
             test_blinks = test_blinks + 1;
@@ -2136,6 +2267,14 @@ namespace
             if(_nova >= nova_max)
             {
                 return;
+            }
+
+            if(_relic == relic_hex_battery)
+            {
+                // Hex Battery: x1.5 (halves carried over).
+                _battery_frac += amount;
+                amount += _battery_frac / 2;
+                _battery_frac %= 2;
             }
 
             _nova = bn::min(nova_max, _nova + amount);
@@ -2188,6 +2327,12 @@ namespace
                 {
                     e.nova = 1;
                     ++_nova_pending;
+
+                    if(_relic == relic_moon_shard)
+                    {
+                        e.freeze = 90;   // Moon Shard: the Nova also freezes 90 f
+                        test_relic_fx = test_relic_fx + 1;
+                    }
                 }
             }
 
@@ -2480,6 +2625,7 @@ namespace
             fixed speed = player_speed * _speed_multiplier();
             fixed tx = speed * ax;
             fixed ty = speed * ay;
+            _update_tempest(ax || ay);
 
             if(ax && ay)
             {
@@ -2599,7 +2745,7 @@ namespace
             }
 
             // §C3: max(1, round(contact x (1 - Ward - Armor))); Ward Stone Nv5 +10 f invulnerability.
-            int cut = 6 * _levels[up_ward] + 5 * _shop[shop_armor];
+            int cut = 6 * _levels[up_ward] + 5 * _shop[shop_armor] - (_relic == relic_glass_hourglass ? 10 : 0);
             damage = bn::max(1, (damage * (100 - cut) + 50) / 100);
             _player_hp -= damage;
             _invulnerable = player_invulnerable_frames + (_levels[up_ward] >= 5 ? 10 : 0);
@@ -2611,6 +2757,14 @@ namespace
         // Director (§2 spawning, §5, §6)
 
         [[nodiscard]] int _target_alive() const
+        {
+            int cap = _target_alive_base();
+
+            // §C5 Swarm: every minute's cap +8, never past 56.
+            return (_hexes & hex_swarm) && ! _stress ? bn::min(cap + 8, max_enemies) : cap;
+        }
+
+        [[nodiscard]] int _target_alive_base() const
         {
             if(_stress)
             {
@@ -2922,6 +3076,12 @@ namespace
             _grid_link(_enemies.size() - 1);
             e.type = uint8_t(type);
             e.hp = scaled_hp(def.hp, _t / (60 * fps));
+
+            if(_hexes & hex_dark_moon)
+            {
+                e.hp = e.hp * 5 / 4;   // §C5 Dark Moon: monsters +25 % HP
+            }
+
             e.dir = 2;
             e.uid = _next_uid++;
 
@@ -3508,6 +3668,11 @@ namespace
                 _spawn_cd = intervals[bn::min(s / 60, 4)];
             }
 
+            if((_hexes & hex_swarm) && ! _stress)
+            {
+                group = (group * 5 + 3) / 4;   // §C5 Swarm: groups x1.25
+            }
+
             group = bn::min(group, target - alive);
             bool two_sides = s >= 30;
             fixed_point base = _spawn_point(spawn_min_distance, spawn_max_distance, true);
@@ -3909,7 +4074,8 @@ namespace
         {
             // §C3: max(1, base x (1 + Might + blessing)); Morrow -15 %.
             int pct = 100 + 5 * _shop[shop_might] + (_blessing == bless_fury ? 30 : 0) -
-                      (_setup.character == char_morrow ? 15 : 0);
+                      (_setup.character == char_morrow ? 15 : 0) +
+                      (_relic == relic_bone_charm && _player_hp * 10 < _player_max_hp * 3 ? 40 : 0);   // Bone Charm
             return bn::max(1, (base * pct + 50) / 100);
         }
 
@@ -3953,14 +4119,15 @@ namespace
 
                 if(b.t >= 40)
                 {
-                    _explode(b.pos, _area(lv >= 3 ? 32 : 24), _damage(lv >= 4 ? 20 : 14));
+                    bool phoenix = _evolved & evo_phoenix;
+                    _explode(b.pos, _area(phoenix ? 36 : lv >= 3 ? 32 : 24), _damage(phoenix ? 24 : lv >= 4 ? 20 : 14));
 
                     if(! _fires.full())
                     {
                         bn::sprite_ptr s = _world_sprite(art::fx_fire, b.pos, 0, 28);
                         fire_patch& f = _fires.emplace_back(bn::move(s));
                         f.pos = b.pos;
-                        f.life = lv >= 5 ? 120 : 60;
+                        f.life = phoenix ? 180 : lv >= 5 ? 120 : 60;
                     }
 
                     _embers.erase(_embers.begin() + k);
@@ -3999,11 +4166,11 @@ namespace
             }
 
             _ember_cd = _cooldown(lv >= 5 ? 100 : 120);
-            int balls = lv >= 2 ? 2 : 1;
+            int balls = (_evolved & evo_phoenix) ? 3 : lv >= 2 ? 2 : 1;
 
             for(int i = 0; i < balls && ! _embers.full(); ++i)
             {
-                int angle = balls == 1 ? 0 : (i ? 114 : -114);   // +-20 degrees
+                int angle = balls == 1 ? 0 : balls == 3 ? (i - 1) * 114 : (i ? 114 : -114);   // +-20 degrees
                 fixed_point r = angle_vector(angle);
                 fixed_point d(_facing.x() * r.x() - _facing.y() * r.y(), _facing.x() * r.y() + _facing.y() * r.x());
                 bn::sprite_ptr s = _world_sprite(art::fx_ember, _pos, 0, 3);
@@ -4085,9 +4252,10 @@ namespace
                 return;
             }
 
-            _chain_cd = _cooldown(lv >= 5 ? 70 : 100);
-            _chain_jumps = (lv >= 4 ? 6 : lv >= 2 ? 4 : 3) + 1;
-            _chain_damage = _damage(lv >= 3 ? 12 : 8);
+            bool tempest = _evolved & evo_tempest;
+            _chain_cd = _cooldown(tempest ? 50 : lv >= 5 ? 70 : 100);
+            _chain_jumps = (tempest ? 8 : lv >= 4 ? 6 : lv >= 2 ? 4 : 3) + 1;
+            _chain_damage = _damage(tempest ? 14 : lv >= 3 ? 12 : 8);
             _chain_from = fixed_point(_pos.x(), _pos.y() - 6);
             _chain_range = 160;
             _chain_hits = 0;
@@ -4109,6 +4277,36 @@ namespace
             }
 
             _play(art::sfx_zap, fixed(0.5));
+        }
+
+        // Tempest (§C3): while the wizard runs (always at full speed), a bolt r 16 (10 damage) falls next to him
+        // every 60 f.
+        void _update_tempest(bool moving)
+        {
+            if(! (_evolved & evo_tempest) || ! moving)
+            {
+                _tempest_t = 0;
+                return;
+            }
+
+            if(++_tempest_t < 60)
+            {
+                return;
+            }
+
+            _tempest_t = 0;
+            fixed_point at = _pos + _facing * 22;
+            _area_damage(at, 16, _damage(10), true);
+            _spawn_particle(at, fixed_point(), art::fx_impact, { 0, 3, 2 }, 6, 2);
+            _play(art::sfx_zap, fixed(0.4), fixed(1.3));
+            test_evo_fx = test_evo_fx + 1;
+
+            if(_chain_jumps <= 0 && _chain_show == 0)
+            {
+                int k = 0;
+                _chain_segment(at + fixed_point(0, -56), at, k);
+                _chain_show = 8;
+            }
         }
 
         // perf: one jump per frame (a travelling bolt); all jumps in one frame measured 2471 ticks (56 %).
@@ -4233,6 +4431,24 @@ namespace
         {
             int lv = _levels[up_lance];
 
+            if(_lance_t == 1 && _eclipse_v_damage > 0)
+            {
+                // Eclipse: the vertical arm of the cross (|dx| <= half, |dy| <= 88).
+                for(int i = _enemies.size() - 1; i >= 0; --i)
+                {
+                    fixed_point d = _enemies[i].pos - _eclipse_v_pos;
+
+                    if(abs_int(to_int(d.x())) <= _eclipse_v_half && abs_int(to_int(d.y())) <= 88 &&
+                       abs_int(to_int(d.y())) > _eclipse_v_half)
+                    {
+                        test_lance_hits = test_lance_hits + 1;
+                        _hit_enemy(i, _eclipse_v_damage, _eclipse_v_pos);
+                    }
+                }
+
+                _eclipse_v_damage = 0;
+            }
+
             if(_lance_t >= 0)
             {
                 ++_lance_t;
@@ -4255,10 +4471,11 @@ namespace
                 return;
             }
 
-            _lance_cd = _cooldown(lv >= 5 ? 60 : 90);
-            int damage = _damage(lv >= 2 ? 15 : 10);
+            bool eclipse = _evolved & evo_eclipse;
+            _lance_cd = _cooldown(lv >= 5 || eclipse ? 60 : 90);
+            int damage = _damage(eclipse ? 30 : lv >= 2 ? 15 : 10);
             int width = _area(lv >= 3 ? 18 : 12);
-            bool behind = lv >= 4;
+            bool behind = lv >= 4 || eclipse;
 
             // 8 directions from the facing vector.
             fixed fx = _facing.x();
@@ -4269,6 +4486,23 @@ namespace
             if(sx == 0 && sy == 0)
             {
                 sx = 1;
+            }
+
+            if(eclipse)
+            {
+                // Eclipse: a fixed cross (right/left here, up/down below) and every gem on screen flies in.
+                sx = 1;
+                sy = 0;
+
+                for(pickup& g : _pickups)
+                {
+                    if(g.kind == pickup_gem && ! g.flying && abs_int(to_int(g.pos.x() - _pos.x())) <= 136 &&
+                       abs_int(to_int(g.pos.y() - _pos.y())) <= 96)
+                    {
+                        g.flying = true;
+                        test_evo_fx = test_evo_fx + 1;
+                    }
+                }
             }
 
             constexpr int angles[3][3] = { { 135, 90, 45 }, { 180, 0, 0 }, { 225, 270, 315 } };
@@ -4287,11 +4521,31 @@ namespace
             _lance_mat_back->set_vertical_scale(fixed(width) / 12);
             _lance_sprites.clear();
 
-            for(int side = 0; side < (behind ? 2 : 1); ++side)
+            if(eclipse && ! _lance_mat_up)
             {
-                for(int k = 0; k < 4; ++k)
+                _lance_mat_up = bn::sprite_affine_mat_ptr::create();
+                _lance_mat_down = bn::sprite_affine_mat_ptr::create();
+                _lance_mat_up->set_rotation_angle(90);
+                _lance_mat_down->set_rotation_angle(270);
+            }
+
+            if(eclipse)
+            {
+                _lance_mat_up->set_vertical_scale(fixed(width) / 12);
+                _lance_mat_down->set_vertical_scale(fixed(width) / 12);
+            }
+
+            // Eclipse: 4 arms of 2 pieces (8 sprites, as a Lv 4 lance: 12 measured 116 % on the cast frame,
+            // ~5 % per new sprite); otherwise 1-2 arms of 4.
+            for(int side = 0; side < (eclipse ? 4 : behind ? 2 : 1); ++side)
+            {
+                fixed_point arm = side < 2 ? (side ? fixed_point(-dir.x(), -dir.y()) : dir) : fixed_point(0, side == 2 ? -1 : 1);
+                const bn::sprite_affine_mat_ptr& mat = side == 0 ? *_lance_mat : side == 1 ? *_lance_mat_back :
+                                                       side == 2 ? *_lance_mat_up : *_lance_mat_down;
+
+                for(int k = 0; k < (eclipse ? 2 : 4); ++k)
                 {
-                    fixed_point c = _pos + fixed_point(0, -4) + dir * (side ? -(16 + 32 * k) : 16 + 32 * k);
+                    fixed_point c = _pos + fixed_point(0, -4) + arm * (16 + 32 * k);
                     bn::optional<bn::sprite_ptr> sp = bn::sprite_items::fx_lance.create_sprite_optional(c, 0);
 
                     if(! sp)
@@ -4302,7 +4556,7 @@ namespace
                     sp->set_camera(_camera);
                     sp->set_bg_priority(2);
                     sp->set_z_order(3);
-                    sp->set_affine_mat(side ? *_lance_mat_back : *_lance_mat);
+                    sp->set_affine_mat(mat);
                     _lance_sprites.push_back(bn::move(*sp));
                 }
             }
@@ -4311,6 +4565,14 @@ namespace
             _play(art::sfx_spark, fixed(0.4), fixed(0.7));
             int half = width / 2 + enemy_half_box;
 
+            if(eclipse)
+            {
+                // perf: the vertical arm hits 2 frames later (one arm per frame: 106 % -> see G-58 note).
+                _eclipse_v_damage = damage;
+                _eclipse_v_half = half;
+                _eclipse_v_pos = _pos;
+            }
+
             for(int i = _enemies.size() - 1; i >= 0; --i)
             {
                 const enemy& e = _enemies[i];
@@ -4318,7 +4580,11 @@ namespace
                 int along = to_int(d.x() * dir.x() + d.y() * dir.y());
                 int perp = abs_int(to_int(d.x() * dir.y() - d.y() * dir.x()));
 
-                if(perp <= half && along <= 128 && along >= (behind ? -128 : 0))
+                int reach = eclipse ? 88 : 128;
+                bool hit = perp <= half && along <= reach && along >= (behind ? -reach : 0);
+
+
+                if(hit)
                 {
                     test_lance_hits = test_lance_hits + 1;
                     _hit_enemy(i, damage, _pos);
@@ -4375,7 +4641,7 @@ namespace
         }
 
         // Evolution (§C3): weapon Nv5 + its passive; called when a boss or elite chest opens. True if one happened.
-        bool _try_evolve()
+        bool _try_evolve(int only_bit = 0)
         {
             struct recipe
             {
@@ -4385,15 +4651,19 @@ namespace
                 const char* text;
             };
 
-            constexpr recipe recipes[3] = {
+            constexpr recipe recipes[6] = {
                 { up_spark, up_tome, evo_starfall, "EVOLVED: STARFALL" },
                 { up_frost, up_lens, evo_blizzard, "EVOLVED: BLIZZARD" },
                 { up_rune, up_ward, evo_ward_of_ages, "EVOLVED: WARD OF AGES" },
+                { up_ember, up_heart, evo_phoenix, "EVOLVED: PHOENIX EMBER" },
+                { up_chain, up_boots, evo_tempest, "EVOLVED: TEMPEST" },
+                { up_lance, up_lodestone, evo_eclipse, "EVOLVED: ECLIPSE" },
             };
 
             for(const recipe& r : recipes)
             {
-                if(! (_evolved & r.bit) && _levels[r.weapon] >= max_upgrade_level && _levels[r.passive] > 0)
+                if(! (_evolved & r.bit) && _levels[r.weapon] >= max_upgrade_level && _levels[r.passive] > 0 &&
+                   (only_bit == 0 || only_bit == r.bit))
                 {
                     _evolved |= r.bit;
                     test_evolved = _evolved;
@@ -4414,6 +4684,13 @@ namespace
                (id == up_rune && (_evolved & evo_ward_of_ages)))
             {
                 return id == up_spark ? 13 : id == up_frost ? 14 : 15;
+            }
+
+            // Block 6: frames of evo_icons, + 100.
+            if((id == up_ember && (_evolved & evo_phoenix)) || (id == up_chain && (_evolved & evo_tempest)) ||
+               (id == up_lance && (_evolved & evo_eclipse)))
+            {
+                return id == up_ember ? 100 : id == up_chain ? 101 : 102;
             }
 
             return upgrade_texts[id].icon;
@@ -4729,6 +5006,7 @@ namespace
                 _frost_cd = _cooldown((_evolved & evo_blizzard) ? 90 : lv >= 4 ? 110 : 150);
                 _frost_t = 0;
                 ++_frost_pulse_id;
+                _sigil_hits = 0;
 
                 if(_frost_pulse_id == 0)
                 {
@@ -4785,6 +5063,12 @@ namespace
                 {
                     e.frost_pulse = _frost_pulse_id;
                     e.slow = 90;
+
+                    if(_relic == relic_frost_sigil && ++_sigil_hits == 5)
+                    {
+                        _player_hp = bn::min(_player_max_hp, _player_hp + 1);   // Frost Sigil: 5 hit -> heal 1
+                        test_relic_fx = test_relic_fx + 1;
+                    }
 
                     if(lv >= 5)
                     {
@@ -5248,6 +5532,8 @@ namespace
                             {
                                 speed *= fixed(1.6);
                             }
+
+                            speed *= _enemy_speed_mult;   // §C5 Frenzy +20 %, Glass Hourglass -10 %
 
                             fixed_point to = unit(dx, dy);
                             int dist = abs_int(dx) + abs_int(dy);
@@ -5801,6 +6087,36 @@ namespace
                 return;
             }
 
+            if(! _landmark_scan_done)
+            {
+                // Test data: distance from the start to the nearest landmark (5 chunks around).
+                _landmark_scan_done = true;
+                int best = 9999;
+
+                for(int ky = -5; ky <= 5; ++ky)
+                {
+                    for(int kx = -5; kx <= 5; ++kx)
+                    {
+                        if((_map.chunk_template(kx, ky) >> 1) >= template_throne)
+                        {
+                            int cx = kx * chunk_px + 64;
+                            int cy = ky * chunk_px + 64;
+                            int d2 = cx * cx + cy * cy;
+                            int r = 0;
+
+                            while((r + 1) * (r + 1) <= d2)
+                            {
+                                ++r;
+                            }
+
+                            best = bn::min(best, r);
+                        }
+                    }
+                }
+
+                test_landmark_dist = best;
+            }
+
             int px = to_int(_pos.x());
             int py = to_int(_pos.y());
 
@@ -5808,7 +6124,9 @@ namespace
             {
                 for(int kx = (px >> 7) - 1; kx <= (px >> 7) + 1; ++kx)
                 {
-                    if((_map.chunk_template(kx, ky) >> 1) != template_throne)
+                    int tpl = _map.chunk_template(kx, ky) >> 1;
+
+                    if(tpl != template_throne && tpl != template_crypt)
                     {
                         continue;
                     }
@@ -5822,7 +6140,7 @@ namespace
                     }
 
                     int cx = kx * chunk_px + 64;
-                    int cy = ky * chunk_px + 104;
+                    int cy = ky * chunk_px + (tpl == template_crypt ? 72 : 104);
 
                     if(! claimed && abs_int(px - cx) + abs_int(py - cy) < 150)
                     {
@@ -5832,8 +6150,18 @@ namespace
                         }
 
                         _throne_claimed.push_back(key);
-                        _spawn_pickup(fixed_point(cx, cy), pickup_chest, 1);
-                        test_f3_events = test_f3_events | 8192;
+
+                        if(tpl == template_crypt)
+                        {
+                            _spawn_pickup(fixed_point(cx, cy), pickup_cursed, 1);   // Crypt Gate: cursed chest
+                            test_landmark_events = test_landmark_events | 2;
+                        }
+                        else
+                        {
+                            _spawn_pickup(fixed_point(cx, cy), pickup_chest, 1);
+                            test_f3_events = test_f3_events | 8192;
+                            test_landmark_events = test_landmark_events | 4;
+                        }
                     }
                 }
             }
@@ -8831,7 +9159,8 @@ namespace
             // Boss chest (§C3 cartas): 1 (60 %), 3 (30 %) or 5 (10 %) upgrades; 8 s rest (E1); the boss jingle with
             // the music stopped, then the meadow music.
             int roll = _random.get_int(10);
-            _spawn_pickup(_boss_pos + fixed_point(-12, 0), pickup_chest, roll < 6 ? 1 : roll < 9 ? 3 : 5);
+            _spawn_pickup(_boss_pos + fixed_point(-12, 0), pickup_chest,
+                          (roll < 6 ? 1 : roll < 9 ? 3 : 5) + (_boss_kind % 3 == 1 ? 100 : 0));   // +100: relic chest
             ++_bosses_killed;
             _rest_t = 8 * fps;
             bn::music::stop();
@@ -8936,7 +9265,7 @@ namespace
 
         bool _spawn_pickup(const fixed_point& p, int kind, int value, int source = gold_drops)
         {
-            if(_pickups.full())
+            if(_pickups.full() || (kind == pickup_heart && (_hexes & hex_famine)))   // §C5 Famine: no hearts
             {
                 return false;
             }
@@ -9029,8 +9358,17 @@ namespace
                         }
                         else
                         {
-                            // §C3: a ready evolution comes first and takes one of the chest's items.
-                            _free_upgrades += _try_evolve() ? g.value - 1 : g.value;
+                            // §C3: a ready evolution comes first and takes one of the chest's items. The minute-10
+                            // boss chest (value + 100) also gives a relic, picked first (§C5).
+                            int items = g.value;
+
+                            if(items >= 100)
+                            {
+                                items -= 100;
+                                _relic_pending = _relic < 0;
+                            }
+
+                            _free_upgrades += _try_evolve() ? items - 1 : items;
                         }
 
                         _play(g.kind == pickup_heart ? art::sfx_gem : art::sfx_chest, fixed(0.6));
@@ -9084,6 +9422,23 @@ namespace
 
             _add_xp(g.value);
             _add_nova(1);
+
+            if(_relic == relic_ember_heart)
+            {
+                // Ember Heart: the gem bursts (r 16, 4 damage); <= 3 per frame (Magnet sweeps).
+                if(_ember_heart_t != _t)
+                {
+                    _ember_heart_t = _t;
+                    _ember_heart_n = 0;
+                }
+
+                if(++_ember_heart_n <= 3)
+                {
+                    _area_damage(g.pos, 16, _damage(4), true);
+                    _spawn_particle(g.pos, fixed_point(), art::fx_impact, { 0, 3, 2 }, 6, 2);
+                    test_relic_fx = test_relic_fx + 1;
+                }
+            }
             fixed pitch = 1 + fixed(0.03) * bn::min(_gem_combo, 8);   // <= 1.24: higher rates corrupted memory
             _play(art::sfx_gem, fixed(0.5), pitch);
             ++_gem_combo;
@@ -9263,6 +9618,37 @@ namespace
         void _spawn_shrine()
         {
             _shrine_pos = _spawn_point(160, 220, false);
+
+            // Stone Circle (§C5): the shrine appears in the middle of the nearest circle within 4 chunks.
+            if(_stage == 0)
+            {
+                int px = to_int(_pos.x()) >> 7;
+                int py = to_int(_pos.y()) >> 7;
+                int best = 1 << 30;
+
+                for(int ky = py - 4; ky <= py + 4; ++ky)
+                {
+                    for(int kx = px - 4; kx <= px + 4; ++kx)
+                    {
+                        if((_map.chunk_template(kx, ky) >> 1) == template_circle)
+                        {
+                            int d = (kx - px) * (kx - px) + (ky - py) * (ky - py);
+
+                            if(d < best)
+                            {
+                                best = d;
+                                _shrine_pos = fixed_point(kx * chunk_px + 64, ky * chunk_px + 72);
+                            }
+                        }
+                    }
+                }
+
+                if(best < (1 << 30))
+                {
+                    test_landmark_events = test_landmark_events | 1;
+                }
+            }
+
             _shrine = _world_sprite(art::shrine, _shrine_pos, 0, 12);
             bn::sprite_ptr arrow = art::edge_arrow.create_sprite(0, 0, art::arrow_east);
             arrow.set_bg_priority(0);
@@ -9383,9 +9769,13 @@ namespace
                 }
             }
 
-            if(_stage == 1 && (_fx.dusk || (_boss && _boss_kind == 5 && _boss_phase == 3)))
+            // §C5 Dark Moon: night fade 0.5 from the start, whatever the dusk option.
+            fixed hex_dusk = (_hexes & hex_dark_moon) ? fixed(0.5) : fixed(0);
+
+            if(_stage == 1 && (_fx.dusk || hex_dusk > 0 || (_boss && _boss_kind == 5 && _boss_phase == 3)))
             {
                 fixed dusk = _fx.dusk ? fixed(0.2) + fixed(0.25) * bn::min(_t, 15 * 60 * fps) / (15 * 60 * fps) : 0;
+                dusk = bn::max(dusk, hex_dusk);
 
                 if(_boss && _boss_kind == 5 && _boss_phase == 3)
                 {
@@ -9394,16 +9784,17 @@ namespace
 
                 bn::bg_palettes::set_fade(bn::color(9, 3, 14), dusk);
             }
-            else if(_stage == 2 && _fx.dusk)
+            else if(_stage == 2 && (_fx.dusk || hex_dusk > 0))
             {
                 // E1: stage 3 0.1 -> 0.3 towards red over the 15 minutes.
                 fixed dusk = fixed(0.1) + fixed(0.2) * bn::min(_t, 15 * 60 * fps) / (15 * 60 * fps);
+                dusk = bn::max(dusk, hex_dusk);
                 bn::bg_palettes::set_fade(bn::color(14, 2, 0), dusk);
             }
-            else if(_fx.dusk)
+            else if(_fx.dusk || hex_dusk > 0)
             {
                 // 0 -> 0.35 towards dark blue over the full 15 minute stage (§12).
-                fixed dusk = fixed(0.35) * bn::min(_t, 15 * 60 * fps) / (15 * 60 * fps);
+                fixed dusk = bn::max(fixed(0.35) * bn::min(_t, 15 * 60 * fps) / (15 * 60 * fps), hex_dusk);
                 bn::bg_palettes::set_fade(bn::color(2, 3, 12), dusk);
             }
             else
@@ -9591,17 +9982,12 @@ namespace
                 }
             }
 
-            for(int i = pool_n - 1; i > 0; --i)
-            {
-                int j = _random.get_int(i + 1);
-                uint8_t tmp = pool[i];
-                pool[i] = pool[j];
-                pool[j] = tmp;
-            }
+            _shuffle(pool, pool_n);
 
-            _card_count = 3;
+            // Lucky Coin (§C5): 4 cards; never more cards than offers + Heal + Gold.
+            _card_count = bn::min(_relic == relic_lucky_coin ? 4 : 3, pool_n + 2);
 
-            for(int i = 0; i < 3; ++i)
+            for(int i = 0; i < _card_count; ++i)
             {
                 _card_ids[i] = i < pool_n ? pool[i] : uint8_t(i == pool_n ? up_heal : up_gold);
             }
@@ -9627,11 +10013,27 @@ namespace
 
         void _open_shrine_pick()
         {
-            int a = _random.get_int(bless_count);
-            int b = (a + 1 + _random.get_int(bless_count - 1)) % bless_count;
-            _card_ids[0] = uint8_t(a);
-            _card_ids[1] = uint8_t(b);
-            _card_count = 2;
+            // 2 of the blessings (Lucky Coin: 3); Famine never offers Mend (§C5).
+            uint8_t pool[bless_count];
+            int pool_n = 0;
+
+            for(int i = 0; i < bless_count; ++i)
+            {
+                if(i != bless_mend || ! (_hexes & hex_famine))
+                {
+                    pool[pool_n++] = uint8_t(i);
+                }
+            }
+
+            _shuffle(pool, pool_n);
+            _card_count = bn::min(_relic == relic_lucky_coin ? 3 : 2, pool_n);
+
+            for(int i = 0; i < _card_count; ++i)
+            {
+                _card_ids[i] = pool[i];
+            }
+
+            _relic_pick = false;
             _mode = game_mode::shrine_pick;
             _cursor = 0;
             _level_flash = 12;
@@ -9640,9 +10042,67 @@ namespace
             _draw_cards();
         }
 
+        void _shuffle(uint8_t* pool, int n)
+        {
+            for(int i = n - 1; i > 0; --i)
+            {
+                int j = _random.get_int(i + 1);
+                uint8_t tmp = pool[i];
+                pool[i] = pool[j];
+                pool[j] = tmp;
+            }
+        }
+
+        // §C5: the minute-10 boss chest offers 1 of 2 relics from the unlocked pool (shown like a shrine).
+        void _open_relic_pick()
+        {
+            uint8_t pool[relic_count];
+            int pool_n = 0;
+
+            for(int i = 0; i < relic_count; ++i)
+            {
+                if(relic_open(i, _boss_bits_start))
+                {
+                    pool[pool_n++] = uint8_t(i);
+                }
+            }
+
+            _shuffle(pool, pool_n);
+            _card_count = bn::min(2, pool_n);
+
+            for(int i = 0; i < _card_count; ++i)
+            {
+                _card_ids[i] = pool[i];
+            }
+
+            _relic_pick = true;
+            _mode = game_mode::shrine_pick;
+            _cursor = 0;
+            _level_flash = 12;
+            _play(art::sfx_level, fixed(0.8));
+            _hide_world_extras(true);
+            _draw_cards();
+        }
+
+        void _apply_relic(int id)
+        {
+            _relic = id;
+            test_relic = id;
+
+            if(id == relic_gold_tooth)
+            {
+                _player_max_hp = bn::max(10, _player_max_hp - 20);
+                _player_hp = bn::min(_player_hp, _player_max_hp);
+            }
+            else if(id == relic_glass_hourglass)
+            {
+                _enemy_speed_mult = _enemy_speed_mult * fixed(0.9);
+            }
+        }
+
         [[nodiscard]] int _card_x(int i) const
         {
-            return _card_count == 3 ? -76 + i * 76 : -40 + i * 80;
+            return _card_count == 4 ? -87 + i * 58 : _card_count == 3 ? -76 + i * 76 : -40 + i * 80;
         }
 
         void _draw_cards()
@@ -9651,13 +10111,13 @@ namespace
             bool shrine = _mode == game_mode::shrine_pick;
             _big_text.set_center_alignment();
             _big_text.set_palette_item(art::text_gold);
-            _big_text.generate(0, -56, shrine ? "SHRINE" : "LEVEL UP!", _menu);
+            _big_text.generate(0, -56, _relic_pick && shrine ? "RELIC" : shrine ? "SHRINE" : "LEVEL UP!", _menu);
             _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
             _text.set_center_alignment();
 
             if(shrine)
             {
-                _text.generate(0, 72, "Pick a blessing: D-PAD + A", _menu);
+                _text.generate(0, 72, _relic_pick ? "Pick a relic: D-PAD + A" : "Pick a blessing: D-PAD + A", _menu);
             }
             else if(_rerolls > 0)
             {
@@ -9707,7 +10167,8 @@ namespace
                 base.set_bg_priority(1);
                 _menu.push_back(bn::move(base));
 
-                const upgrade_text& u = shrine ? blessing_texts[_card_ids[i]] : upgrade_texts[_card_ids[i]];
+                const upgrade_text& u = shrine ? (_relic_pick ? relic_texts[_card_ids[i]] : blessing_texts[_card_ids[i]]) :
+                                                 upgrade_texts[_card_ids[i]];
                 bn::sprite_ptr icon = u.icon_item->create_sprite(x, cy - 14, u.icon);
                 icon.set_bg_priority(0);
                 _menu.push_back(bn::move(icon));
@@ -9735,7 +10196,12 @@ namespace
                     _text.generate(x, cy + 4, name, _menu);
                 }
 
-                if(shrine)
+                if(shrine && _relic_pick)
+                {
+                    _text.generate(x, cy + 22, u.desc[0], _menu);
+                    _text.generate(x, cy + 31, u.desc[1], _menu);
+                }
+                else if(shrine)
                 {
                     _text.generate(x, cy + 22, u.desc[1], _menu);
                     _text.generate(x, cy + 31, u.desc[0], _menu);
@@ -9882,7 +10348,12 @@ namespace
                     _cursor = bn::min(1, _card_count - 1);   // DBG Bot C picks the 2nd card
                 }
 
-                if(_mode == game_mode::shrine_pick)
+                if(_mode == game_mode::shrine_pick && _relic_pick)
+                {
+                    _relic_pick = false;
+                    _apply_relic(_card_ids[_cursor]);
+                }
+                else if(_mode == game_mode::shrine_pick)
                 {
                     _apply_blessing(_card_ids[_cursor]);
                 }
@@ -10028,6 +10499,7 @@ namespace
                 int icon = _upgrade_icon(i);
                 bn::sprite_ptr slot = icon < 8 ?
                             art::slots.create_sprite(x, row_y, (weapon ? art::slot_weapon_first : art::slot_passive_first) + icon) :
+                            icon >= 100 ? art::evo_icons.create_sprite(x, row_y, icon - 100) :
                             art::icons.create_sprite(x, row_y, icon);
                 slot.set_bg_priority(0);
                 _menu.push_back(bn::move(slot));
@@ -10039,6 +10511,36 @@ namespace
                 row_y += 20;
             }
 
+            // Block 6: relic (icon + name), active hexes and the seed (§C5 "SEED 4F2A").
+            if(_relic >= 0)
+            {
+                bn::sprite_ptr r = art::relics.create_sprite(-104, 38, _relic);
+                r.set_bg_priority(0);
+                _menu.push_back(bn::move(r));
+                _text.generate(-92, 38, relic_texts[_relic].name, _menu);
+            }
+
+            for(int h = 0, hx = 30; h < hex_count; ++h)
+            {
+                if(_hexes & (1 << h))
+                {
+                    bn::sprite_ptr hs = art::hex_icons.create_sprite(hx, 38, h);
+                    hs.set_bg_priority(0);
+                    _menu.push_back(bn::move(hs));
+                    hx += 10;
+                }
+            }
+
+            constexpr char hex_digits[] = "0123456789ABCDEF";
+            unsigned seed16 = (_map_seed ^ (_map_seed >> 16)) & 0xFFFFu;
+            bn::string<12> seed_line("SEED ");
+
+            for(int k = 3; k >= 0; --k)
+            {
+                seed_line.push_back(hex_digits[(seed16 >> (4 * k)) & 15]);
+            }
+
+            _text.generate(40, 62, seed_line, _menu);
             _text.generate(-60, 50, _cursor == 0 ? "> Resume" : "  Resume", _menu);
             _text.generate(-60, 62, _cursor == 1 ? "> Quit" : "  Quit", _menu);
         }
@@ -10069,7 +10571,7 @@ namespace
         static constexpr int fx_rows = 11;
         static constexpr int debug_rows = 7;
         static constexpr int dbg_start_count = 15;
-        static constexpr int dbg_force_count = 13;
+        static constexpr int dbg_force_count = 13 + relic_count + 4;   // + each relic, Phoenix / Tempest / Eclipse, relic chest
 
         [[nodiscard]] static const char* _dbg_start_name(int i)
         {
@@ -10088,11 +10590,12 @@ namespace
 
         [[nodiscard]] static const char* _dbg_force_name(int i)
         {
-            constexpr const char* names[dbg_force_count] = { "Treasure", "Split elite", "Wolves", "Warchief",
-                                                             "Wolf Pack", "Goblin Raid", "Big slime", "Cursed chest",
-                                                             "Treant", "Elite pair", "Stampede", "Grave ring",
-                                                             "Colossus" };
-            return names[i];
+            constexpr const char* names[13] = { "Treasure", "Split elite", "Wolves", "Warchief",
+                                                "Wolf Pack", "Goblin Raid", "Big slime", "Cursed chest",
+                                                "Treant", "Elite pair", "Stampede", "Grave ring",
+                                                "Colossus" };
+            constexpr const char* evos[4] = { "Evo Phoenix", "Evo Tempest", "Evo Eclipse", "Relic chest" };
+            return i < 13 ? names[i] : i < 13 + relic_count ? relic_texts[i - 13].name : evos[i - 13 - relic_count];
         }
 
         // DBG "Start at mm:ss": the clock jumps and the wizard gets the level and build of profile C at that minute
@@ -10164,6 +10667,37 @@ namespace
 
         void _dbg_force_event(int i)
         {
+            if(i >= 13 && i < 13 + relic_count)
+            {
+                if(_relic == relic_gold_tooth)
+                {
+                    _player_max_hp += 20;   // DBG swap: undo the old relic's one-off changes
+                }
+
+                _enemy_speed_mult = (_hexes & hex_frenzy) ? fixed(1.2) : fixed(1);
+                _apply_relic(i - 13);
+                return;
+            }
+
+            if(i == 13 + relic_count + 3)
+            {
+                _spawn_pickup(_pos + fixed_point(0, 4), pickup_chest, 101);   // minute-10 boss chest (+100)
+                return;
+            }
+
+            if(i >= 13 + relic_count)
+            {
+                // Weapon Nv5 + its passive, then the evolution (as a boss chest would).
+                constexpr uint8_t weapons[3] = { up_ember, up_chain, up_lance };
+                constexpr uint8_t passives[3] = { up_heart, up_boots, up_lodestone };
+                int k = i - 13 - relic_count;
+                _levels[weapons[k]] = max_upgrade_level;
+                _levels[passives[k]] = bn::max(int(_levels[passives[k]]), 1);
+                constexpr int bits[3] = { evo_phoenix, evo_tempest, evo_eclipse };
+                _try_evolve(bits[k]);
+                return;
+            }
+
             switch(i)
             {
             case 0:
@@ -10499,6 +11033,8 @@ namespace
             uint32_t before = d.unlock_bits;
             int earned = _gold + 5 * (s / 60) + (won ? 100 : 0);
             earned = earned * (100 + 10 * _shop[shop_greed]) / 100;
+            _meta_bonus_pct = hexes_gold_pct(_hexes) + (_relic == relic_gold_tooth ? 50 : 0);   // §C5
+            earned = earned * (100 + _meta_bonus_pct) / 100;
             _meta_earned = earned;
             test_meta_gold = earned;
             d.gold += uint32_t(earned);
@@ -10528,6 +11064,7 @@ namespace
 
             if(won)
             {
+                r.best_hexes = uint8_t(bn::max(int(r.best_hexes), __builtin_popcount(unsigned(_hexes))));
                 ++r.clears;
                 d.stages_cleared |= uint8_t(1 << _setup.stage);
                 d.unlock_bits |= _setup.stage == 0 ? unlock_stage2 : unlock_stage3;
@@ -10623,6 +11160,14 @@ namespace
 
             line = "Gold +";
             line.append(bn::to_string<6>(_meta_earned));
+
+            if(_meta_bonus_pct > 0)
+            {
+                line.append(" (+");
+                line.append(bn::to_string<4>(_meta_bonus_pct));
+                line.append("%)");
+            }
+
             line.append("   Total ");
             line.append(bn::to_string<8>(int(save().gold)));
             _text.set_palette_item(art::text_gold);
@@ -10677,6 +11222,11 @@ run_end play_run(unsigned seed, fx_settings& fx, const run_setup& setup)
     test_cpu_max = 0;
     test_cpu_nova_max = 0;
     test_cpu_max_plain = 0;
+    test_relic = -1;
+    test_relic_fx = 0;
+
+    test_evo_fx = 0;
+    test_landmark_events = 0;
     bn::unique_ptr<game> g(new game(seed, fx, setup));
     return g->run();
 }

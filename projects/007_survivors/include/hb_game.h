@@ -34,6 +34,7 @@ namespace hb
     {
         int character = 0;   // hb::character_id
         int stage = 0;
+        int hexes = 0;       // hb::hex_bit
     };
 
     // Plays one run (run -> summary). Reads the meta save (shop ranks, unlocks) and writes it at the end of the run.

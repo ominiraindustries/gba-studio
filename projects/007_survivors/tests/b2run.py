@@ -62,6 +62,18 @@ def menu(inp, rows):
         inp.press("right", 10)
         if os.environ.get("STAGE") == "3":
             inp.press("right", 10)
+    hexes = os.environ.get("HEXES")   # G-58: hex indices to switch on, e.g. "01" = Swarm + Frenzy
+    if hexes:
+        if os.environ.get("STAGE") not in ("2", "3"):
+            inp.press("select", 10)  # DBG: opens the hex row too (unlock_stage2)
+        inp.press("down", 10)
+        cur = 0
+        for ch in hexes:
+            for _ in range(int(ch) - cur):
+                inp.press("right", 8)
+            cur = int(ch)
+            inp.press("a", 10)
+        inp.press("up", 10)
     inp.press("a", 30)       # stage -> run
     inp.press("select", 10)
     for r in rows:
@@ -92,6 +104,16 @@ def main():
             rows.append((ROW_FORCE, "a", int(force)))
         menu(inp, rows)
         inp.kite(seconds * 60)
+        if os.environ.get("QUIT") == "1":
+            # G-58: pause -> Quit (banks the gold: test_meta_gold), screenshot of the pause first
+            for _ in range(4):
+                inp.press("a", 25)           # close any open cards first
+            inp.press("start", 30)
+            inp.f += 30
+            inp.press("down", 10)
+            inp.press("a", 60)
+            seconds = 0
+            os.environ.setdefault("SHOTS", str(inp.f - 100))
     elif case == "times":
         # Tiempos (DISENO_RUTA block 2): profile C, no God, from 0:00, SEED 1-5 = frames waited on the title.
         inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))
@@ -104,6 +126,8 @@ def main():
         idx = int(os.environ.get("START_AT", "-1"))
         if idx >= 0:
             rows.append((ROW_START, "a", idx))
+        if os.environ.get("FORCE") is not None:
+            rows.append((ROW_FORCE, "a", int(os.environ["FORCE"])))   # G-58: relic / evolution
         rows.append((ROW_BOT,))
         menu(inp, rows)
         inp.f += seconds * 60
@@ -261,7 +285,7 @@ def main():
     syms = []
     for sym in ["test_tiles_used", "test_tiles_menu", "test_tiles_menu_mode", "test_cpu_max", "test_cpu_max_plain", "test_cpu_max_enemies", "test_time_s",
                 "test_level", "test_hp", "test_kills", "test_boss_hp", "test_mode", "test_enemies", "test_gold",
-                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending", "test_bursts", "test_burst_frame_max", "test_burst_queued", "test_narrow_gaps", "test_ring_postponed", "test_f3_events", "test_breath_hits", "test_meteor_hits", "test_shield_blocks", "test_warn_min", "test_title_star"]:
+                "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending", "test_bursts", "test_burst_frame_max", "test_burst_queued", "test_narrow_gaps", "test_ring_postponed", "test_f3_events", "test_breath_hits", "test_meteor_hits", "test_shield_blocks", "test_warn_min", "test_title_star", "test_relic", "test_relic_fx", "test_phoenix", "test_evo_fx", "test_landmark_dist", "test_landmark_events"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
         syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(16)]

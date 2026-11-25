@@ -71,7 +71,8 @@ namespace hb
         uint16_t boss_bits;
         uint8_t stages_cleared;
         uint8_t flags;           // save_flag (was padding: old saves read 0, no version bump)
-        uint8_t pad1[2];
+        uint8_t hexes;           // hex_bit chosen last time (was padding: old saves read 0, no version bump)
+        uint8_t pad1;
         stage_record records[3];
         uint32_t kills_total;
         uint16_t runs;
@@ -96,6 +97,58 @@ namespace hb
         option_no_shake = 1u << 0,
         option_no_flash = 1u << 1
     };
+
+    // §C5 Hexes: optional curses on the stage select (after clearing stage 1); each adds gold.
+    enum hex_bit : uint8_t
+    {
+        hex_swarm = 1u << 0,      // cap +8 (<= 56), groups x1.25; +30 % gold
+        hex_frenzy = 1u << 1,     // monsters +20 % speed; +30 %
+        hex_frail = 1u << 2,      // -30 % max HP; +25 %
+        hex_dark_moon = 1u << 3,  // night fade 0.5 from the start, monsters +25 % HP; +30 %
+        hex_famine = 1u << 4,     // no hearts, shrines never offer Mend; +20 %
+        hex_count = 5
+    };
+
+    constexpr int hex_gold_pct[hex_count] = { 30, 30, 25, 30, 20 };
+    constexpr const char* hex_names[hex_count] = { "Swarm", "Frenzy", "Frail", "Dark Moon", "Famine" };
+    constexpr const char* hex_descs[hex_count] = { "More monsters", "Faster monsters", "-30% max HP",
+                                                   "Night, tougher foes", "No hearts, no Mend" };
+
+    [[nodiscard]] constexpr int hexes_gold_pct(int hexes)
+    {
+        int pct = 0;
+
+        for(int i = 0; i < hex_count; ++i)
+        {
+            pct += (hexes >> i) & 1 ? hex_gold_pct[i] : 0;
+        }
+
+        return pct;
+    }
+
+    // §C5 Relics (minute-10 boss chest: pick 1 of 2 from the unlocked pool; lasts the run).
+    enum relic_id : uint8_t
+    {
+        relic_ember_heart,
+        relic_blink_feather,
+        relic_gold_tooth,
+        relic_frost_sigil,
+        relic_bone_charm,
+        relic_hex_battery,
+        relic_lucky_coin,
+        relic_glass_hourglass,
+        relic_moon_shard,
+        relic_count
+    };
+
+    // Unlocks follow boss_bits (bit = boss index 0-8: Slime King, Orc Warchief, Treant, Bone Colossus, Banshee,
+    // The Lich, Gargoyle Lord, Iron Champion, Ember Dragon); the first 3 relics are always open.
+    [[nodiscard]] constexpr bool relic_open(int relic, int boss_bits)
+    {
+        constexpr uint16_t needs[relic_count] = { 0, 0, 0, 1u << 1, 1u << 2, 1u << 3, 1u << 4, 1u << 5,
+                                                  (1u << 6) | (1u << 7) | (1u << 8) };
+        return needs[relic] == 0 || (boss_bits & needs[relic]) != 0;
+    }
 
     struct shop_def
     {

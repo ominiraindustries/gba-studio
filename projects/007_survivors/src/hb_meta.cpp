@@ -59,6 +59,15 @@ namespace
     };
     constexpr bn::sprite_palette_item silhouette(silhouette_colors, bn::bpp_mode::BPP_4);
 
+    // Hex icons that are off: flat grey (block 6).
+    constexpr bn::color hex_off_colors[16] = {
+        bn::color(0, 31, 0), bn::color(2, 2, 4), bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12),
+        bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12),
+        bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12), bn::color(9, 9, 12),
+        bn::color(9, 9, 12)
+    };
+    constexpr bn::sprite_palette_item hex_off(hex_off_colors, bn::bpp_mode::BPP_4);
+
     struct screen
     {
         bn::sprite_text_generator small;
@@ -621,7 +630,9 @@ namespace
         screen sc;
         bn::vector<bn::sprite_ptr, 3> cards;
         bn::optional<bn::sprite_ptr> wizard;
+        bn::vector<bn::sprite_ptr, hex_count> hex_icons;
         int stage = stage_open(save().last_stage) ? int(save().last_stage) : 0;
+        int hex_cursor = -1;   // block 6: >= 0 while DOWN has moved the cursor to the hex row
         int character = character_available(save().character) ? int(save().character) : int(char_wendel);
         bool redraw = true;
 
@@ -647,7 +658,20 @@ namespace
                 sc.text(-76 + stage * 76, -50, ">", true, true);
                 sc.text(0, 26, names[stage], true, true);
 
-                if(stage_open(stage))
+                bool hexes_open = unlocked(unlock_stage2);
+                hex_icons.clear();
+
+                if(hex_cursor >= 0)
+                {
+                    bn::string<40> line(hex_names[hex_cursor]);
+                    line.append(": ");
+                    line.append(hex_descs[hex_cursor]);
+                    line.append(" +");
+                    line.append(bn::to_string<4>(hex_gold_pct[hex_cursor]));
+                    line.append("%G");
+                    sc.text(0, 37, line, false, true);
+                }
+                else if(stage_open(stage))
                 {
                     const stage_record& r = save().records[stage];
                     if(r.best_time_s == 0 && r.best_kills == 0)
@@ -690,7 +714,40 @@ namespace
                     wizard->set_palette(bn::sprite_items::wizard.palette_item());
                 }
 
-                sc.text(0, 68, "A: START  B: BACK", false, true);
+                if(hexes_open)
+                {
+                    // §C5 Hexes: 5 icons right of the character (grey = off); the gold bonus next to them.
+                    for(int h = 0; h < hex_count; ++h)
+                    {
+                        bool on = save().hexes & (1 << h);
+                        bn::sprite_ptr icon = art::hex_icons.create_sprite(14 + h * 12, h == hex_cursor ? 51 : 54, h);
+
+                        if(! on)
+                        {
+                            icon.set_palette(hex_off);
+                        }
+
+                        hex_icons.push_back(bn::move(icon));
+                    }
+
+                    int pct = hexes_gold_pct(save().hexes);
+                    bn::string<16> bonus;
+
+                    if(pct > 0)
+                    {
+                        bonus.append("+");
+                        bonus.append(bn::to_string<4>(pct));
+                        bonus.append("%G");
+                    }
+                    else if(hex_cursor < 0)
+                    {
+                        bonus.append("v HEX");
+                    }
+
+                    sc.text(74, 54, bonus, pct > 0);
+                }
+
+                sc.text(0, 68, hex_cursor >= 0 ? "A: TOGGLE  UP: DONE" : "A: START  B: BACK", false, true);
             }
 
             bn::core::update();
@@ -707,7 +764,44 @@ namespace
                 redraw = true;
             }
 
-            if(bn::keypad::left_pressed() && stage > 0)
+            if(hex_cursor >= 0)
+            {
+                // Hex row: LEFT/RIGHT pick, A toggles, UP / B back to the stages.
+                if(bn::keypad::left_pressed() && hex_cursor > 0)
+                {
+                    --hex_cursor;
+                    play_sfx(bn::sound_items::sfx_menu_move);
+                    redraw = true;
+                }
+                else if(bn::keypad::right_pressed() && hex_cursor < hex_count - 1)
+                {
+                    ++hex_cursor;
+                    play_sfx(bn::sound_items::sfx_menu_move);
+                    redraw = true;
+                }
+                else if(bn::keypad::a_pressed())
+                {
+                    save().hexes ^= uint8_t(1 << hex_cursor);
+                    play_sfx(art::sfx_card);
+                    redraw = true;
+                }
+                else if(bn::keypad::up_pressed() || bn::keypad::start_pressed())
+                {
+                    hex_cursor = -1;
+                    play_sfx(bn::sound_items::sfx_menu_move);
+                    redraw = true;
+                }
+
+                continue;
+            }
+
+            if(bn::keypad::down_pressed() && unlocked(unlock_stage2))
+            {
+                hex_cursor = 0;
+                play_sfx(bn::sound_items::sfx_menu_move);
+                redraw = true;
+            }
+            else if(bn::keypad::left_pressed() && stage > 0)
             {
                 --stage;
                 play_sfx(bn::sound_items::sfx_menu_move);
@@ -758,6 +852,7 @@ namespace
                 save().last_stage = uint8_t(stage);
                 setup.character = character;
                 setup.stage = stage;
+                setup.hexes = unlocked(unlock_stage2) ? int(save().hexes) : 0;
                 play_sfx(art::sfx_card);
                 bn::core::update();   // consume A
                 return true;
