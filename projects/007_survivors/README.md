@@ -228,3 +228,39 @@ Rendimiento G-56 (peor frame; mismas partidas antes/después):
 - **OPTIONS** (menú principal): Music, Sound FX, Screen shake, Flash (ON por defecto) y Erase save (mantener A 2 s).
   Se guarda en `music_vol`, `sfx_vol` y `fx_bits` del guardado (sin cambiar de versión). Pruebas: `meta` con
   `PHASE=4` (tienda, fase, Start at) y `PHASE=5` (flechas de la tienda y OPTIONS).
+
+## Bloque 7 (G-57): F3 Ashen Keep y final
+
+Se abre al superar F2 (`unlock_stage3`). **DBG**: SELECT en la elección de fase abre F2 y F3; Start at tiene 3:50
+(índice 14) además de 4:30 / 9:45 / 14:45. Pruebas: `STAGE=3` en `tests/b2run.py` (`start` y `botc`).
+
+- Suelo/atrezzo con `ground_keep_palette` / `props_keep_palette`, fundido rojo 0.1 -> 0.3, `music_keep`, rótulo
+  "ASHEN KEEP". Trozos nuevos (§C5): muros en L (2 `ruin_wall`, pasillo de 32 px), brasero + estandarte, grieta de
+  lava; hito **Broken Throne** (centro de un bloque 3x3 de trozos, 30 %: ~1 de 30, >= 384 px) con cofre de élite.
+  Sólidos de F3 sólo en columnas/filas 2..13 (hueco >= 32 px también entre trozos); `test_narrow_gaps` = 0.
+- Bestiario E4: cinder slime, ash bat, imp (`fx_fireball`, 1 disparo cada 10 f entre todos), cultist, gargoyle (DASH
+  volando, 2.6), ash knight, ember warden, hellhound (DASH 3.2). Línea temporal E4 completa (0:04 slime que estalla
+  solo a 0:07, Ash Swarm 2:30, Cinder Ring 4:00, Imp Swarm 7:00, Hound Pack 9:00/13:00, Double Cinder Ring 12:00,
+  Elite Pair 13:00, Grand Stampede 14:00). RING sólo con >= 70 % de celdas libres en r 150 (si no, +10 s).
+- BURST: brillo `fx_fire` 30 f (parpadeo) y explosión que daña al mago y a <= 20 monstruos; <= 2 por frame, el resto
+  espera (`test_burst_frame_max`, `test_burst_queued`). Élite Blazing (paleta naranja), máx. 5 élites.
+- Jefes E5.3 (avisos >= 30 f, `test_warn_min`): Gargoyle Lord (picado con sombra 45 f, 4 esquirlas; piel de piedra
+  4 s gris al 25 %; picado doble), Iron Champion (Warchief + `iron_champion_palette`; escudo 25 % por delante; tajo
+  `fx_slash` 30 f; salto con sombra 40 f y onda; 4 ash knights; tajo doble), Ember Dragon (aliento 40 f + cono 60°
+  de 96 px que barre 30°; vuelo con 6 meteoritos de sombra 45 f; aterriza con sombra 60 f; fuego 5 s; 4 hellhounds
+  cada 20 s; Hex Moon a 3:00). HP por R13: Lord 400, Champion 500, Dragon 3000.
+- Final (§E5.4 paso 4): la primera muerte del Dragon pone "A: CONTINUE" en el resumen -> 3 pantallas sobre
+  `ending_bg` -> créditos 20 s (START salta) -> título con estrella dorada. Bandera `save_flag_ending_seen` en el
+  antiguo relleno `pad1[0]` del guardado (sin cambiar de versión). También en partidas Start at (para probarlo).
+
+| Prueba | Resultado |
+|---|---|
+| F3 0:00 Bot C sin God, 75 s, semillas 1-4 | vivo en las 4 (Lv 5-7); `narrow_gaps` 0 en las 4 |
+| Cinder Ring (Start 3:50) | ring a 4:00, 45 explosiones, máx. 2 por frame, 5 en cola |
+| Lord / Champion / Dragon (God, perfil C) | TTK 53 s con 700 -> 400; Champion 7,7 dps -> 500; Dragon 93 s con 3000 |
+| Final | resumen, 3 pantallas, créditos, estrella (`test_title_star` 1) |
+| Minuto 14 (Start 13:50) | tiles 861, <= 4 proyectiles; CPU peor frame 123 % -> 111 % (glows en pool) |
+| Cordura F1 Start 4:30 + 60 s | Lv 14, 79,6 % |
+
+Provisionales: sin `music_final` (final con `music_title`, jefe con `music_boss`); sin sfx breath/meteor/burst/slash
+(se usan horn, explosion, slam, stomp); esquirlas del Lord con `fx_bone`.

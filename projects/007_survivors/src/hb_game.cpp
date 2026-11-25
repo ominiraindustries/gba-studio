@@ -1057,6 +1057,16 @@ namespace
             }
 
             _stage_music().play(music_volume(art::music_volume_pct));
+            if(_stage == 2)
+            {
+                for(int k = 0; k < glow_count; ++k)
+                {
+                    bn::sprite_ptr g = _world_sprite(art::fx_fire, fixed_point(), 0, 9);
+                    g.set_visible(false);
+                    _glow_pool.push_back(bn::move(g));
+                }
+            }
+
             // perf: the Storm Chain sprites are created once, hidden (creating 16 in one frame cost ~60 %).
             for(int k = 0; k < chain_sprites; ++k)
             {
@@ -1480,6 +1490,22 @@ namespace
         int _imp_fire_cd = 0;
         int _bursts_this_frame = 0;
         bn::vector<unsigned, 16> _throne_claimed;
+
+        // BURST glows: a pool of hidden fx_fire sprites created at load (perf G-57: creating a glow per death in a
+        // Cinder Ring / Nova frame pushed minute 14 to 123 %).
+        struct burst
+        {
+            fixed_point pos;
+            int16_t timer;
+            uint8_t damage;
+            uint8_t radius;
+            uint8_t slot;
+        };
+
+        static constexpr int glow_count = 12;
+        bn::vector<burst, glow_count> _bursts;
+        bn::vector<bn::sprite_ptr, glow_count> _glow_pool;
+        unsigned _glow_used = 0;
         fixed_point _boss_face = fixed_point(1, 0);
         int _boss_lift = 0;
         bool _boss_shadow_target = false;
@@ -5815,19 +5841,76 @@ namespace
 
         void _queue_burst(const fixed_point& p, int radius, int damage)
         {
-            if(_marks.full())
+            if(_bursts.full() || _glow_pool.size() < glow_count)
             {
                 return;   // never an explosion without its glow (R5)
             }
 
-            bn::sprite_ptr glow = _world_sprite(art::fx_fire, p, 0, 9);
-            _marks.push_back({ bn::move(glow), p, 30, mark_burst, uint8_t(damage), uint16_t(radius) });
+            int slot = 0;
+
+            while(_glow_used & (1u << slot))
+            {
+                ++slot;
+            }
+
+            _glow_used |= 1u << slot;
+            bn::sprite_ptr& g = _glow_pool[slot];
+            g.set_position(p);
+            g.set_visible(true);
+            _bursts.push_back({ p, 30, uint8_t(damage), uint8_t(radius), uint8_t(slot) });
+        }
+
+        // BURST (§C1): 30 f red blink, then the explosion; <= 2 explosions per frame, the rest wait (§C6).
+        void _update_bursts()
+        {
+            _bursts_this_frame = 0;
+
+            for(int i = 0; i < _bursts.size();)
+            {
+                burst& b = _bursts[i];
+                bn::sprite_ptr& g = _glow_pool[b.slot];
+
+                if(b.timer > 0)
+                {
+                    --b.timer;
+
+                    if((b.timer & 7) == 0)
+                    {
+                        g.set_tiles(art::fx_fire.tiles_item(), (b.timer >> 3) & 3);
+                    }
+
+                    g.set_visible(b.timer < 10 || (b.timer & 4) != 0);
+                    ++i;
+                    continue;
+                }
+
+                if(_bursts_this_frame >= 2)
+                {
+                    test_burst_queued = test_burst_queued + 1;
+                    ++i;
+                    continue;
+                }
+
+                ++_bursts_this_frame;
+                test_burst_frame_max = bn::max(int(test_burst_frame_max), _bursts_this_frame);
+                fixed_point p = b.pos;
+                int radius = b.radius;
+                int damage = b.damage;
+                g.set_visible(false);
+                _glow_used &= ~(1u << b.slot);
+                _bursts.erase(_bursts.begin() + i);
+                _burst_explode(p, radius, damage);   // may queue new bursts (chain), handled from the next frame
+            }
         }
 
         void _burst_explode(const fixed_point& p, int radius, int damage)
         {
-            _spawn_particle(p, fixed_point(), art::fx_explosion, art::explosion_anim,
-                            art::explosion_anim.count * art::explosion_anim.frame_time, 4);
+            if(_create_budget-- > 0)
+            {
+                _spawn_particle(p, fixed_point(), art::fx_explosion, art::explosion_anim,
+                                art::explosion_anim.count * art::explosion_anim.frame_time, 4);
+            }
+
             _play(art::sfx_explosion, fixed(0.4));
             test_bursts = test_bursts + 1;
             int x = to_int(p.x());
@@ -6105,7 +6188,7 @@ namespace
                 --_rise_sound_cd;
             }
 
-            _bursts_this_frame = 0;
+            _update_bursts();
 
             for(int i = 0; i < _marks.size();)
             {
