@@ -1,4 +1,6 @@
-# 007_survivors
+# Magic & Destroy (antes HEXBOUND)
+
+Carpeta `007_survivors`.
 
 Juego GBA hecho con [Butano](https://github.com/GValiente/butano) (motor C++), creado con
 `python -I tools/scripts/new_game.py 007_survivors`.

@@ -1,4 +1,4 @@
-# Arte de 007_survivors (HEXBOUND) — estilo C "paleta limitada con brillo"
+# Arte de Magic & Destroy (antes HEXBOUND, carpeta 007_survivors) — estilo C "paleta limitada con brillo"
 
 Desde G-44 (seguimiento) todo el set está en el **estilo C** elegido por el usuario (`style_samples/style_C.png`):
 suelo casi negro con textura sutil, enemigos oscuros con **borde frío de 1 px** (`#3d5590`) y ojos de color,
@@ -103,13 +103,16 @@ Texto: `text_ink` = blanco frío sobre el panel oscuro de la carta, `text_gold` 
 | `hud_bossbar` | sprite | 32×8 | fill 0–16 (frame k = 2·k px llenos, igual que `hud_xp`), notch 17 | barra de jefe en rojo; `notch` = muesca blanca en las columnas 15–16 (centro del frame) para marcar fases; sustituye `tmp_bossbar` |
 | `fx_levelup` | sprite | 64×64 | burst 0–3 (60 ms; 0–2 crece, 3 girado) | rayos detrás del mago al subir de nivel; alternar 2↔3 en bucle |
 | `card` + `card_base` | sprite | 64×64 + 64×32 | normal 0, selected 1 | carta 64×80 = `card` en (x,y) + `card_base` en (x,y+48) (se solapan 16 filas idénticas) |
-| `logo` | sprite | 64×32 | 6 celdas | logo HEXBOUND 192×64: celda k en (24 + (k%3)·64, 4 + (k/3)·32) |
+| `logo` | sprite | 64×32 | 9 celdas | logo "MAGIC & / DESTROY" 192×96: celda k en (24 + (k%3)·64, −1 + (k/3)·32) |
 | `title_bg` | regular_bg **8 bpp** 256×256 | — | — | título: la imagen ocupa (0,0)–(239,159); `create_bg(8, 48)` la alinea a pantalla |
 | `text_ink` / `text_gold` / `text_red` | sprite_palette | — | — | `text_generator.set_palette_item(...)`: tinta marrón para la carta, oro para "LEVEL UP!", rojo de aviso |
 
 Fuente del editable: `card.aseprite` es la carta entera 64×80 con 2 frames; la exportación la parte en `card` +
-`card_base`. `logo.aseprite` es el logo entero 192×64; la exportación lo corta en celdas de 64×32. Si cambia el nombre
-del juego, sólo hay que repintar `logo.aseprite` (o `seed logo` tras borrarlo y cambiar la palabra en `build_ui.py`).
+`card_base`. `logo.aseprite` es el logo entero 192×96 (dos líneas; G-64); la exportación lo corta en celdas de 64×32 por filas.
+Si cambia el nombre del juego, se repinta `logo.aseprite` (índices: 1 contorno, 2/3 extrusión (oscuro/magenta), 5–8 y 15 cara
+plata→verde azulado, gema 1/3/15/2). `logo()` de `build_ui.py` lo dibuja con letras 11×15 a 2x (`GLYPHS` + `letter()`)
+pero `seed` usa la paleta UI antigua: copiar la paleta del `logo.aseprite` actual. Si cambia el número de celdas, tocar
+los bucles de `title_screen()`/`main_menu()` en `src/hb_meta.cpp`. El logo HEXBOUND está en `old_style/logo_hexbound.aseprite`.
 
 Carta: hueco de icono 16×16 en (x+24, y+10) dentro de un círculo de 20 px; texto de pergamino de unos 48 px de ancho:
 nombre en dos líneas (y+28, y+37), filete en y+46, nivel/"NEW!" en y+50, efecto corto en y+59. "Swift Boots" no cabe

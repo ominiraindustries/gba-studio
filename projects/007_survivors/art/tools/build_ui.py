@@ -309,9 +309,36 @@ def card():
 
 
 # ---------------------------------------------------------------- logo
+GLYPHS = {  # 11x15 ascii glyphs (x = ink) for the "MAGIC & DESTROY" logo, same 3 px stroke as H E X B O U N D
+    "M": ["xxx.....xxx", "xxxx...xxxx", "xxxxx.xxxxx", "xxxxxxxxxxx", "xxx.xxx.xxx", "xxx..x..xxx"]
+         + ["xxx.....xxx"] * 9,
+    "A": [".xxxxxxxxx."] + ["xxxxxxxxxxx"] * 2 + ["xxx.....xxx"] * 3 + ["xxxxxxxxxxx"] * 3 + ["xxx.....xxx"] * 6,
+    "G": [".xxxxxxxxx."] + ["xxxxxxxxxxx"] * 2 + ["xxx.....xxx"] + ["xxx........"] * 3 + ["xxx..xxxxxx"] * 2
+         + ["xxx.....xxx"] * 3 + ["xxxxxxxxxxx"] * 2 + [".xxxxxxxxx."],
+    "I": ["..xxxxxxx.."] * 3 + ["....xxx...."] * 9 + ["..xxxxxxx.."] * 3,
+    "C": [".xxxxxxxxx."] + ["xxxxxxxxxxx"] * 2 + ["xxx.....xxx"] + ["xxx........"] * 7 + ["xxx.....xxx"]
+         + ["xxxxxxxxxxx"] * 2 + [".xxxxxxxxx."],
+    "S": [".xxxxxxxxx."] + ["xxxxxxxxxxx"] * 2 + ["xxx.....xxx"] + ["xxx........"] * 2
+         + ["xxxxxxxxxx.", "xxxxxxxxxxx", ".xxxxxxxxxx"] + ["........xxx"] * 2 + ["xxx.....xxx"]
+         + ["xxxxxxxxxxx"] * 2 + [".xxxxxxxxx."],
+    "T": ["xxxxxxxxxxx"] * 3 + ["....xxx...."] * 12,
+    "R": ["xxxxxxxxx..", "xxxxxxxxxx.", "xxxxxxxxxxx"] + ["xxx.....xxx"] * 3
+         + ["xxxxxxxxxx.", "xxxxxxxxx..", "xxxxxxxxx..", "xxx...xxx..", "xxx...xxxx.", "xxx....xxx.",
+            "xxx....xxxx", "xxx.....xxx", "xxx.....xxx"],
+    "Y": ["xxx.....xxx"] * 3 + ["xxxx...xxxx", ".xxxx.xxxx.", "..xxxxxxx..", "...xxxxx..."] + ["....xxx...."] * 8,
+    "&": ["...xxxxx.....", "..xxxxxxx....", "..xx...xx....", "..xx...xx....", "..xxxxxxx....", "...xxxxx.....",
+          "..xxxxxx..xxx", ".xxxxxxxx.xxx", "xxx..xxxxxxx.", "xxx...xxxxx..", "xxx....xxx...", "xxx...xxxxx..",
+          "xxx..xxxxxxx.", ".xxxxxxx.xxxx", "..xxxxx...xxx"],  # 13 wide
+}
+
+
 def letter(ch):
-    """11x15 bold letters; 1 = ink."""
+    """11x15 bold letters (the & is 13 wide); 1 = ink."""
     g = canvas(11, 15)
+    if ch in GLYPHS:
+        rows = GLYPHS[ch]
+        assert len(rows) == 15 and all(len(r) == len(rows[0]) for r in rows), ch
+        return [[1 if v == "x" else 0 for v in r] for r in rows]
     F = lambda a, b, c_, d: rect(g, a, b, c_, d, 1)
     if ch == "H":
         F(0, 0, 2, 14); F(8, 0, 10, 14); F(0, 6, 10, 8)
@@ -340,46 +367,60 @@ def letter(ch):
     return g
 
 
-def logo(word="HEXBOUND"):
-    """192x64 logo: gold bevelled letters (2x), purple extrusion, dark outline, rune underline."""
-    W, H = 192, 64
+def logo(lines=("MAGIC &", "DESTROY")):
+    """192x(32*rows) logo: bevelled letters (2x), extrusion, dark outline, rune underline (style C via palette).
+
+    One line -> 192x64 (the old HEXBOUND layout); two lines -> 192x96. Each line is centred; a space is 6 px.
+    """
+    if isinstance(lines, str):
+        lines = (lines,)
+    W, H = 192, 64 if len(lines) == 1 else 96
     ink = canvas(W, H)
-    lw, gap = 22, 2
-    total = len(word) * lw + (len(word) - 1) * gap
-    ox, oy = (W - total) // 2, 6
-    for i, ch in enumerate(word):
-        g = letter(ch)
-        for y in range(15):
-            for x in range(11):
-                if g[y][x]:
-                    for sy in range(2):
-                        for sx in range(2):
-                            ink[oy + y * 2 + sy][ox + i * (lw + gap) + x * 2 + sx] = 1
+    lw, gap, sw = 22, 2, 6
+    adv = lambda ch: sw if ch == " " else (2 * len(GLYPHS[ch][0]) if ch in GLYPHS else lw)
+    widths = [sum(adv(ch) for ch in ln) + (len(ln) - 1) * gap for ln in lines]
+    tops = [6] if len(lines) == 1 else [6, 43]
+    for ln, top, total in zip(lines, tops, widths):
+        x = (W - total) // 2
+        for ch in ln:
+            if ch == " ":
+                x += sw + gap
+                continue
+            g = letter(ch)
+            for y in range(15):
+                for gx in range(len(g[0])):
+                    if g[y][gx]:
+                        for sy in range(2):
+                            for sx in range(2):
+                                ink[top + y * 2 + sy][x + gx * 2 + sx] = 1
+            x += adv(ch) + gap
     c = canvas(W, H)
-    # extrusion (3 px down-right), purple
+    # extrusion (3 px down-right)
     for d in (3, 2, 1):
         for y in range(H):
             for x in range(W):
                 if ink[y][x] and y + d < H and x + d // 2 < W and not ink[y + d][x + d // 2]:
                     c[y + d][x + d // 2] = PD if d == 3 else PU
-    # face: vertical gold gradient + highlight on top edge
-    for y in range(H):
+    # face: vertical gradient per line + highlight on top edge
+    for top in tops:
+        for y in range(top, top + 30):
+            for x in range(W):
+                if ink[y][x]:
+                    t = (y - top) / 30
+                    v = GL if t < 0.38 else (GO if t < 0.72 else BL)
+                    if y > 0 and not ink[y - 1][x]:
+                        v = WH
+                    elif y + 1 < H and not ink[y + 1][x]:
+                        v = BR
+                    c[y][x] = v
+        # horizontal sheen band (bevel)
         for x in range(W):
-            if ink[y][x]:
-                t = (y - oy) / 30
-                v = GL if t < 0.38 else (GO if t < 0.72 else BL)
-                if y > 0 and not ink[y - 1][x]:
-                    v = WH
-                elif y + 1 < H and not ink[y + 1][x]:
-                    v = BR
-                c[y][x] = v
-    # horizontal sheen band (bevel)
-    for y in (oy + 13,):
-        for x in range(W):
-            if ink[y][x] and c[y][x] == GO:
-                c[y][x] = GL
-    # rune underline: bar with a central hex gem
-    uy = oy + 39
+            if ink[top + 13][x] and c[top + 13][x] == GO:
+                c[top + 13][x] = GL
+    # rune underline under the widest line: bar with a central hex gem
+    total = max(widths)
+    ox = (W - total) // 2
+    uy = tops[-1] + 39 if len(lines) == 1 else tops[-1] + 37
     for x in range(ox + 8, ox + total - 8):
         c[uy][x] = GO; c[uy + 1][x] = BR
     cx = W // 2
@@ -435,7 +476,7 @@ def specs():
         "hud_alert": ((16, 16), PAL_UI, [("blink", alert(), 150)]),
         "fx_levelup": ((64, 64), PAL_UI, [("burst", levelup_burst(), 60)]),
         "card": ((64, 80), PAL_UI, [("normal", card()[:1], 100), ("selected", card()[1:], 100)]),
-        "logo": ((192, 64), PAL_UI, [("logo", [logo()], 100)]),
+        "logo": ((192, 96), PAL_UI, [("logo", [logo()], 100)]),
     }
 
 

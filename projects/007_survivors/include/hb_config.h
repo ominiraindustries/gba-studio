@@ -9,7 +9,7 @@ namespace hb
 {
     // PROVISIONAL (DISENO.md §18.1, recommended answer): change the on-screen title and hero name here.
     // The ROM header title is ROMTITLE in the Makefile.
-    constexpr const char* game_title = "HEXBOUND";
+    constexpr const char* game_title = "MAGIC & DESTROY";
     constexpr const char* hero_name = "Wendel";
     constexpr const char* stage_name = "Gloam Meadow";   // G-47
 

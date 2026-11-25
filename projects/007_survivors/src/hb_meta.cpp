@@ -865,7 +865,7 @@ namespace
     }
 }
 
-// E5.4: a gold star next to HEXBOUND once the ending has been seen.
+// E5.4: a gold star next to the logo once the ending has been seen.
 bn::optional<bn::sprite_ptr> title_star()
 {
     bn::optional<bn::sprite_ptr> star;
@@ -873,7 +873,7 @@ bn::optional<bn::sprite_ptr> title_star()
 
     if(test_title_star)
     {
-        star = art::icons.create_sprite(106, -66, art::icon_star);
+        star = art::icons.create_sprite(92, -61, art::icon_star);
     }
 
     return star;
@@ -908,7 +908,7 @@ void ending_sequence()
     test_screen = 8;
     sc.clear();
     bn::bg_palettes::set_fade(bn::color(0, 0, 0), bn::fixed(0.6));
-    sc.title("HEXBOUND");
+    sc.title(game_title);
     sc.text(0, -20, "A game by David", false, true);
     sc.text(0, 0, "Made with Butano", false, true);
     sc.text(0, 40, "Thanks for playing!", true, true);
@@ -931,15 +931,15 @@ void ending_sequence()
 unsigned title_screen()
 {
     test_screen = 1;
-    // Title art (art/LÉEME.md "Bloque 2"): 8 bpp illustration + HEXBOUND logo in 6 sprite cells.
+    // Title art (art/LÉEME.md "Bloque 2"): 8 bpp illustration + MAGIC & DESTROY logo in 9 sprite cells.
     bn::regular_bg_ptr title_bg = art::title_bg.create_bg(8, 48);
     bn::sprite_text_generator small(common::variable_8x8_sprite_font);
     small.set_center_alignment();
-    bn::vector<bn::sprite_ptr, 6> logo;
+    bn::vector<bn::sprite_ptr, 9> logo;
 
-    for(int k = 0; k < 6; ++k)
+    for(int k = 0; k < 9; ++k)
     {
-        logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -60 + 32 * (k / 3), k));
+        logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -65 + 32 * (k / 3), k));
     }
 
     bn::optional<bn::sprite_ptr> star = title_star();
@@ -973,7 +973,7 @@ unsigned title_screen()
 bool main_menu(run_setup& setup)
 {
     bn::optional<bn::regular_bg_ptr> title_bg;
-    bn::vector<bn::sprite_ptr, 6> logo;
+    bn::vector<bn::sprite_ptr, 9> logo;
     bn::optional<bn::sprite_ptr> star;
     constexpr const char* items[4] = { "PLAY", "SHOP", "RECORDS", "OPTIONS" };
     int cursor = 0;
@@ -987,9 +987,9 @@ bool main_menu(run_setup& setup)
         {
             title_bg = art::title_bg.create_bg(8, 48);
 
-            for(int k = 0; k < 6; ++k)
+            for(int k = 0; k < 9; ++k)
             {
-                logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -60 + 32 * (k / 3), k));
+                logo.push_back(art::logo.create_sprite(-64 + 64 * (k % 3), -65 + 32 * (k / 3), k));
             }
 
             star = title_star();
