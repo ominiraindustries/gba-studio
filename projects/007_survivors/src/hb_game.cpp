@@ -17,6 +17,7 @@
 #include "bn_blending.h"
 #include "bn_camera_ptr.h"
 #include "bn_core.h"
+#include "bn_sprites.h"
 #include "bn_keypad.h"
 #include "bn_math.h"
 #include "bn_memory.h"
@@ -77,10 +78,12 @@ volatile int test_cpu_nova_max;   // worst frame in which a Hex Nova was cast
 // 0 player, 1 director, 2 spark, 3 runes, 4 frost, 5 bolts, 6 enemies, 7 boss, 8 pickups, 9 particles,
 // 10 rest of the logic, 11 engine (bn::core::update until the next frame starts), 12 ticks inside _kill_enemy,
 // 13 kills in the frame, 14 ticks of _update_horde_frames (inside 6), 15 enemies alive.
-volatile int test_prof[16];
-volatile int test_prof_worst[16];     // worst frame without a Nova cast
-volatile int test_prof_nova[16];      // worst Nova frame
+volatile int test_prof[22];   // 16 cpu ticks when the play logic starts, 17 logic end -> core::update, 20 vblank commit, 21 sprites (G-59)
+volatile int test_prof_worst[22];     // worst frame without a Nova cast
+volatile int test_prof_nova[22];      // worst Nova frame
 volatile int test_cpu_max_plain;      // worst frame without a Nova cast
+volatile int test_cpu_over90;         // measured play frames above 90 % / 100 % (G-59)
+volatile int test_cpu_over100;
 volatile int test_prof_worst_frame;    // test_frames of that frame
 volatile int test_wolf_crouches;      // DASH warnings started
 volatile int test_wolf_dashes;        // dashes started (each one after a 30 f crouch)
@@ -1247,13 +1250,23 @@ namespace
                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
                 bool nova_frame = _nova_cast_frame;
                 _nova_cast_frame = false;
-                _prof_timer.restart();
+                test_prof[20] = _vblank_ticks;
+                test_prof[21] = bn::sprites::used_items_count();
+                int before_update = bn::core::current_cpu_ticks();
+                test_prof[17] = before_update - _logic_end_ticks;
                 bn::core::update();
-                test_prof[11] = _prof_timer.elapsed_ticks();
+                test_prof[11] = bn::core::last_cpu_ticks() - before_update;   // engine work before the vblank wait
+                _vblank_ticks = bn::core::last_vblank_ticks();
 
                 // Only frames that were play -> play are measured (menus build text, the first frame loads BGs).
                 int cpu = (bn::core::last_cpu_usage() * 10000).right_shift_integer();
                 test_cpu = cpu;
+
+                if(measured && _mode == game_mode::play)
+                {
+                    test_cpu_over90 = test_cpu_over90 + (cpu > 9000);
+                    test_cpu_over100 = test_cpu_over100 + (cpu > 10000);
+                }
 
                 if(measured && _mode == game_mode::play && cpu > test_cpu_max)
                 {
@@ -1267,7 +1280,7 @@ namespace
                     {
                         test_cpu_nova_max = cpu;
 
-                        for(int k = 0; k < 16; ++k)
+                        for(int k = 0; k < 22; ++k)
                         {
                             test_prof_nova[k] = test_prof[k];
                         }
@@ -1277,7 +1290,7 @@ namespace
                         test_cpu_max_plain = cpu;
                         test_prof_worst_frame = test_frames;
 
-                        for(int k = 0; k < 16; ++k)
+                        for(int k = 0; k < 22; ++k)
                         {
                             test_prof_worst[k] = test_prof[k];
                         }
@@ -1399,7 +1412,8 @@ namespace
         fixed_point _eclipse_v_pos;
         bool _phoenix_used = false;
         unsigned _map_seed = 0;
-        bool _landmark_scan_done = false;
+        int _landmark_scan_row = -5;
+        int _landmark_best_d2 = 0x7FFFFFFF;
         bn::optional<bn::sprite_affine_mat_ptr> _lance_mat;
         bn::optional<bn::sprite_affine_mat_ptr> _lance_mat_back;
         int _ward_kills = 0;
@@ -1494,6 +1508,8 @@ namespace
         static constexpr int nova_hit_frames = 6;
         static constexpr int nova_hits_per_frame = 12;
         bn::timer _prof_timer;
+        int _vblank_ticks = 0;
+        int _logic_end_ticks = 0;
 
         // Feel
         int _shake = 0;
@@ -1961,6 +1977,7 @@ namespace
 
             ++_t;
             _create_budget = create_budget_per_frame;
+            test_prof[16] = bn::core::current_cpu_ticks();
             _prof_timer.restart();
             _update_player();
             _prof(0);
@@ -2104,6 +2121,7 @@ namespace
             test_projectiles = _bolts.size() + _runes.size() + (_frost_t >= 0 ? _frost.size() : 0);
             test_gems = _pickups.size();
             _prof(10);
+            _logic_end_ticks = bn::core::current_cpu_ticks();
         }
 
         void _prof(int section)
@@ -6087,26 +6105,23 @@ namespace
         // Broken Throne (§C5): its event is an elite chest at the foot of the steps, once per throne.
         void _update_throne(bool second)
         {
-            if(! second)
+            if(_landmark_scan_row <= 5)
             {
-                return;
-            }
+                // Test data: distance from the start to the nearest landmark (5 chunks around). perf (G-59): one
+                // row of 11 chunks per frame and squared distances (the whole scan in one frame cost ~2300 ticks).
+                int ky = _landmark_scan_row++;
 
-            if(! _landmark_scan_done)
-            {
-                // Test data: distance from the start to the nearest landmark (5 chunks around).
-                _landmark_scan_done = true;
-                int best = 9999;
-
-                for(int ky = -5; ky <= 5; ++ky)
+                for(int kx = -5; kx <= 5; ++kx)
                 {
-                    for(int kx = -5; kx <= 5; ++kx)
+                    if((_map.chunk_template(kx, ky) >> 1) >= template_throne)
                     {
-                        if((_map.chunk_template(kx, ky) >> 1) >= template_throne)
+                        int cx = kx * chunk_px + 64;
+                        int cy = ky * chunk_px + 64;
+                        int d2 = cx * cx + cy * cy;
+
+                        if(d2 < _landmark_best_d2)
                         {
-                            int cx = kx * chunk_px + 64;
-                            int cy = ky * chunk_px + 64;
-                            int d2 = cx * cx + cy * cy;
+                            _landmark_best_d2 = d2;
                             int r = 0;
 
                             while((r + 1) * (r + 1) <= d2)
@@ -6114,15 +6129,15 @@ namespace
                                 ++r;
                             }
 
-                            if(r < best % 10000)
-                            {
-                                best = r + 10000 * ((cx > 0 ? 1 : 0) | (cy > 0 ? 2 : 0));   // + quadrant (test walk)
-                            }
+                            test_landmark_dist = r + 10000 * ((cx > 0 ? 1 : 0) | (cy > 0 ? 2 : 0));   // + quadrant
                         }
                     }
                 }
+            }
 
-                test_landmark_dist = best;
+            if(! second)
+            {
+                return;
             }
 
             int px = to_int(_pos.x());
@@ -11235,6 +11250,7 @@ run_end play_run(unsigned seed, fx_settings& fx, const run_setup& setup)
 
     test_evo_fx = 0;
     test_landmark_events = 0;
+    test_landmark_dist = 9999;   // none within 5 chunks (the scan runs one row per frame, G-59)
     bn::unique_ptr<game> g(new game(seed, fx, setup));
     return g->run();
 }
