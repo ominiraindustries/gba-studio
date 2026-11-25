@@ -78,9 +78,9 @@ volatile int test_cpu_nova_max;   // worst frame in which a Hex Nova was cast
 // 0 player, 1 director, 2 spark, 3 runes, 4 frost, 5 bolts, 6 enemies, 7 boss, 8 pickups, 9 particles,
 // 10 rest of the logic, 11 engine (bn::core::update until the next frame starts), 12 ticks inside _kill_enemy,
 // 13 kills in the frame, 14 ticks of _update_horde_frames (inside 6), 15 enemies alive.
-volatile int test_prof[22];   // 16 cpu ticks when the play logic starts, 17 logic end -> core::update, 20 vblank commit, 21 sprites (G-59)
-volatile int test_prof_worst[22];     // worst frame without a Nova cast
-volatile int test_prof_nova[22];      // worst Nova frame
+volatile int test_prof[24];   // 16 cpu ticks when the play logic starts, 17-19 kill death particle / poofs / drops, 20 vblank commit, 21 sprites (G-59)
+volatile int test_prof_worst[24];   // 22 damage-number text ticks, 23 enemy hits in the frame     // worst frame without a Nova cast
+volatile int test_prof_nova[24];      // worst Nova frame
 volatile int test_cpu_max_plain;      // worst frame without a Nova cast
 volatile int test_cpu_over90;         // measured play frames above 90 % / 100 % (G-59)
 volatile int test_cpu_over100;
@@ -1246,14 +1246,14 @@ namespace
                                                                                                     test_tiles_menu_mode;
                 }
                 _tick_sounds();
-                bool measured = _mode == game_mode::play && _play_streak >= 2;
+                bool measured = _mode == game_mode::play && _play_streak >= 2 && _measure_hold == 0;
+                _measure_hold = _mode == game_mode::play && _measure_hold > 0 ? _measure_hold - 1 : _measure_hold;
                 _play_streak = _mode == game_mode::play ? _play_streak + 1 : 0;
                 bool nova_frame = _nova_cast_frame;
                 _nova_cast_frame = false;
                 test_prof[20] = _vblank_ticks;
                 test_prof[21] = bn::sprites::used_items_count();
                 int before_update = bn::core::current_cpu_ticks();
-                test_prof[17] = before_update - _logic_end_ticks;
                 bn::core::update();
                 test_prof[11] = bn::core::last_cpu_ticks() - before_update;   // engine work before the vblank wait
                 _vblank_ticks = bn::core::last_vblank_ticks();
@@ -1280,7 +1280,7 @@ namespace
                     {
                         test_cpu_nova_max = cpu;
 
-                        for(int k = 0; k < 22; ++k)
+                        for(int k = 0; k < 24; ++k)
                         {
                             test_prof_nova[k] = test_prof[k];
                         }
@@ -1290,7 +1290,7 @@ namespace
                         test_cpu_max_plain = cpu;
                         test_prof_worst_frame = test_frames;
 
-                        for(int k = 0; k < 22; ++k)
+                        for(int k = 0; k < 24; ++k)
                         {
                             test_prof_worst[k] = test_prof[k];
                         }
@@ -1300,6 +1300,11 @@ namespace
                 // Per-frame kill accumulators are cleared after the worst frame copied them (they always read 0).
                 test_prof[12] = 0;
                 test_prof[13] = 0;
+                test_prof[17] = 0;
+                test_prof[18] = 0;
+                test_prof[19] = 0;
+                test_prof[22] = 0;
+                test_prof[23] = 0;
             }
         }
 
@@ -1509,7 +1514,6 @@ namespace
         static constexpr int nova_hits_per_frame = 12;
         bn::timer _prof_timer;
         int _vblank_ticks = 0;
-        int _logic_end_ticks = 0;
 
         // Feel
         int _shake = 0;
@@ -1526,6 +1530,7 @@ namespace
         int _last_gold_shown = -1;
         int _end_timer = 0;
         int _play_streak = 0;
+        int _measure_hold = 0;
         bool _summary_shown = false;
 
         // Menus
@@ -2129,7 +2134,6 @@ namespace
             test_projectiles = _bolts.size() + _runes.size() + (_frost_t >= 0 ? _frost.size() : 0);
             test_gems = _pickups.size();
             _prof(10);
-            _logic_end_ticks = bn::core::current_cpu_ticks();
         }
 
         void _prof(int section)
@@ -5274,6 +5278,7 @@ namespace
             }
 
             e.hp -= damage;
+            test_prof[23] = test_prof[23] + 1;
 
             if(_hit_sound_cd == 0)
             {
@@ -5330,6 +5335,7 @@ namespace
 
             const art::monster_art& look = *enemy_defs[e.type].look;
             const art::anim& death = look.death;
+            bn::timer part_timer;
             if(_create_budget-- > 0)
             {
                 const bn::sprite_palette_ptr* pal = enemy_defs[e.type].pal && _type_pal[e.type] ?
@@ -5338,11 +5344,14 @@ namespace
                                 death.count * death.frame_time, 14, e.sprite.horizontal_flip(), pal);
             }
 
+            test_prof[17] = test_prof[17] + part_timer.elapsed_ticks_with_restart();   // G-59 PROF: death particle
+
             if(_fx.death_poof)
             {
                 _spawn_poof(p, 3);
             }
 
+            test_prof[18] = test_prof[18] + part_timer.elapsed_ticks_with_restart();   // poofs
             const enemy_def& def = enemy_defs[e.type];
             int value = def.xp;
 
@@ -5417,6 +5426,7 @@ namespace
                 test_f3_events = test_f3_events | (e.elite == 5 ? 16384 : 0);
             }
 
+            test_prof[19] = test_prof[19] + part_timer.elapsed_ticks_with_restart();   // drops, splits, burst
             _remove_enemy(i);
         }
 
@@ -9604,6 +9614,13 @@ namespace
             // perf: poofs only while the frame's sprite creation budget lasts (kills in bulk cost ~5 % each).
             count = bn::min(count, _create_budget - 1);
 
+            // perf (G-59, visual only): with a crowd on screen (> 110 sprites) one puff; each new sprite costs
+            // ~100 ticks there (minute 14: 2 puffs = 199 ticks of a 3-kill frame).
+            if(bn::sprites::used_items_count() > 110)
+            {
+                count = bn::min(count, 1);
+            }
+
             for(int i = 0; i < count; ++i)
             {
                 --_create_budget;
@@ -9677,7 +9694,7 @@ namespace
             }
 
             _number_frame = _t;
-
+            bn::timer number_timer;
             damage_number& d = _numbers.emplace_back();
             _text.set_center_alignment();
 
@@ -9694,6 +9711,7 @@ namespace
             }
 
             d.life = 30;
+            test_prof[22] = test_prof[22] + number_timer.elapsed_ticks();
         }
 
         // -----------------------------------------------------------------------------------------------------
@@ -11088,6 +11106,9 @@ namespace
                     s.set_blending_enabled(_fx.frost_translucent);
                 }
 
+                // G-59: the 2 s after the effects/DBG menu are not measured (Stress fills 56 monsters in ~25 frames
+                // while Max power kills them: a DBG burst, not a play situation; frame 236 of b2run stress).
+                _measure_hold = 2 * fps;
                 _mode = game_mode::play;
             }
         }

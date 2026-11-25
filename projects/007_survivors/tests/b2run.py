@@ -299,7 +299,7 @@ def main():
                 "test_dead_at", "test_boss_phase", "test_wolf_crouches", "test_wolf_dashes", "test_wolf_dash_hits", "test_events", "test_prof_ember", "test_prof_chain", "test_boss_ttk", "test_first_crouch_frame", "test_frames", "test_cpu_over90", "test_cpu_over100", "test_prof_worst_frame", "test_thorn_radius", "test_wall_onscreen", "test_thorn_first_hurt", "test_thorn_hits_max", "test_curse_elites", "test_gold_drops", "test_gold_bosses", "test_nova_pulled", "test_novas_cast", "test_charge_offscreen", "test_evolved", "test_meta_gold", "test_new_unlocks", "test_lance_hits", "test_screen", "test_level_at_600", "test_shots_max", "test_shooters_max", "test_archer_warns", "test_rise_min", "test_rises", "test_skulls_broken", "test_wail_hits", "test_f2_events", "test_palette_refusals", "test_pending", "test_bursts", "test_burst_frame_max", "test_burst_queued", "test_narrow_gaps", "test_ring_postponed", "test_f3_events", "test_breath_hits", "test_meteor_hits", "test_shield_blocks", "test_warn_min", "test_title_star", "test_relic", "test_relic_fx", "test_phoenix", "test_evo_fx", "test_landmark_dist", "test_landmark_events"]:
         syms.append(f"{sym}.32>=-99999999")
     if os.environ.get("PROF"):
-        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(22)]
+        syms += [f"test_prof_worst+{4 * k}.32>=-99999999" for k in range(24)]
     cmd += ["--check", ",".join(checks + syms)]
     # Block 4: the run reads the meta save (Mesen keeps it in Documents/Mesen2/Saves). A fresh save by default so
     # the card pool and shop ranks are those of a first run; KEEP_SAVE=1 keeps it.
