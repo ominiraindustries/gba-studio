@@ -4,7 +4,7 @@
                                      # redraws gems.aseprite (6 frames 8x8). Then build_art.py export.
 
 Shared pickups palette (gems, icons, coin, heart, chest, hud_slots), entries changed:
-  2 #1a7f9c cyan dark, 3 #40e8f8 cyan, 4 #a06818 gold dark, 10 #fd3ffd magenta, 12 #ffc838 gold, 13 #fff4b0 gold light
+  2 #1a7f9c cyan dark, 3 #40e8f8 cyan, 4 #a06818 gold dark, 10 #ff3838 magenta, 12 #ffc838 gold, 13 #fff4b0 gold light
 Shared FX palette (fx_*, shadows): 7 #c0fcff ice light, 8 #40e8f8 ice, 9 #1a7f9c ice dark.
 Gems: 0-1 = 1 XP small cyan, 2-3 = 5 XP medium magenta, 4-5 = 25 XP large gold (frame 1 of each = glint).
 PISA gems.aseprite: no lo ejecutes si alguien lo ha editado a mano.
@@ -26,7 +26,7 @@ def hexc(h):
     return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
 
 
-PICKUPS = {2: "#1a7f9c", 3: "#40e8f8", 4: "#a06818", 10: "#fd3ffd", 12: "#ffc838", 13: "#fff4b0"}
+PICKUPS = {2: "#1a7f9c", 3: "#40e8f8", 4: "#a06818", 10: "#ff3838", 12: "#ffc838", 13: "#fff4b0"}
 FX = {7: "#c0fcff", 8: "#40e8f8", 9: "#1a7f9c"}
 PICKUP_FILES = ["gems", "icons", "coin", "heart", "chest", "hud_slots"]
 FX_FILES = ["fx_aura", "fx_blink", "fx_frost", "fx_impact", "fx_nova", "fx_nova_spark", "fx_poof", "fx_rune",
@@ -105,7 +105,7 @@ def main():
     for c in NEONS:
         if c not in data["master"]:
             data["master"].append(c)
-    data["neons"] = NEONS + ["#fd3ffd", "#e020c0", "#ff9cf0"]
+    data["neons"] = NEONS + ["#ff3838", "#c81c28", "#ffa08c"]
     json.dump(data, open(pj, "w"), indent=1)
     for n in PICKUP_FILES:
         p = os.path.join(ART, n + ".aseprite")

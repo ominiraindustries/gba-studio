@@ -1886,7 +1886,7 @@ namespace
             _fireball_colors[8] = bn::color(29, 31, 24);
 
             // Elite tint (§4 2b): Swift = gold, Shielded = cyan; computed from whatever palette the item has.
-            const bn::color tints[4] = { bn::color(31, 26, 4), bn::color(8, 28, 31), bn::color(30, 8, 28),
+            const bn::color tints[4] = { bn::color(31, 26, 4), bn::color(8, 28, 31), bn::color(31, 6, 4),
                                          bn::color(31, 22, 0) };
 
             for(int t = 0; t < type_count; ++t)
@@ -9932,8 +9932,8 @@ namespace
             {
                 --_nova_flash;
                 fixed intensity = _fx.level_flash ? fixed(_nova_flash) / 30 : fixed(0);
-                bn::bg_palettes::set_fade(bn::color(28, 22, 31), intensity);
-                bn::sprite_palettes::set_fade(bn::color(31, 28, 31), intensity / 2);
+                bn::bg_palettes::set_fade(bn::color(31, 24, 22), intensity);
+                bn::sprite_palettes::set_fade(bn::color(31, 28, 27), intensity / 2);
                 return;
             }
 

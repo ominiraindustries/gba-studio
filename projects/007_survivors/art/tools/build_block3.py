@@ -17,7 +17,7 @@ from build_block2 import (ART, blank, put, get, rim, shift, line, disc, save, re
 
 # woods palette (roots, thorns, seeds, treant): bark teals + magenta hex glow
 WOOD_HEX = ["#07060c", "#0c0d1c", "#1c242c", "#2a343d", "#1e434e", "#2a5d69", "#346675", "#4b8787", "#8ca4b4",
-            "#c8dfeb", "#4b1530", "#e020c0", "#fd3ffd", "#ff9cf0", "#34466e"]
+            "#c8dfeb", "#4b1530", "#c81c28", "#ff3838", "#ffa08c", "#34466e"]
 WOOD = pal(WOOD_HEX)
 # 1 black 2 deep 3 bark dark 4 bark 5 teal dark 6 teal 7 teal light 8 moss light 9 pale 10 white 11 wine
 # 12 magenta 13 neon magenta 14 pink 15 cold rim
@@ -155,7 +155,7 @@ def extend_chest():
     if any(t[0] == "cursed_closed" for t in tags):
         print("chest already extended"); return
     backup("chest")
-    # recogibles: 1 #07060c 8 #46155a 9 #e63c3c 10 #fd3ffd 11 #4b1530 12 #ffc838 13 #fff4b0 15 #2a343d
+    # recogibles: 1 #07060c 8 #46155a 9 #e63c3c 10 #ff3838 11 #4b1530 12 #ffc838 13 #fff4b0 15 #2a343d
     recol = {15: 8, 11: 1, 12: 15, 13: 9}   # dark purple body, black planks, slate iron, red studs
     closed = [[recol.get(c, c) for c in r] for r in frames[0]]
     # red rune on the front (rows 9-12) and a magenta lock

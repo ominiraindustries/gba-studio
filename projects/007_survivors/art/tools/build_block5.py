@@ -86,7 +86,7 @@ def dissolve(f, k, n, rnd, up=0, recol=None):
 
 # ---------------------------------------------------------------- banshee 64x64
 BANSHEE = pal(["#07060c", "#191935", "#21263b", "#36435b", "#34466e", "#8ca4b4", "#abc4d2", "#c8dfeb", "#1a7f9c",
-               "#40e8f8", "#c0fcff", "#46155a", "#e020c0", "#fd3ffd", "#2a343d"])
+               "#40e8f8", "#c0fcff", "#46155a", "#c81c28", "#ff3838", "#2a343d"])
 # 1 black 2-4 shroud dark 5 rim? (#34466e) 6-8 shroud light 9-11 cyan eyes/glow 12-14 magenta wail 15 grey
 
 
@@ -128,7 +128,7 @@ def banshee():
 
 # ---------------------------------------------------------------- lich 64x64
 LICH = pal(["#07060c", "#190922", "#2a012f", "#2d1153", "#3b2171", "#46155a", "#341d60", "#8ca4b4", "#c8dfeb",
-            "#e020c0", "#fd3ffd", "#ff9cf0", "#1a7f9c", "#40e8f8", "#34466e"])
+            "#c81c28", "#ff3838", "#ffa08c", "#1a7f9c", "#40e8f8", "#34466e"])
 # 1 black 2-7 robes violets 8-9 bone 10-12 magenta 13-14 cyan orb 15 rim
 
 
@@ -223,8 +223,8 @@ def bone_colossus():
 
 
 # ---------------------------------------------------------------- F2 enemy projectiles (shared palette)
-EPROJ = pal(["#07060c", "#2a343d", "#8ca4b4", "#c8dfeb", "#bc161b", "#e63c3c", "#fd3ffd", "#e020c0", "#46155a",
-             "#40e8f8", "#1a7f9c", "#ff9cf0", "#a06818", "#ffc838", "#4b1530"])
+EPROJ = pal(["#07060c", "#2a343d", "#8ca4b4", "#c8dfeb", "#bc161b", "#e63c3c", "#ff3838", "#c81c28", "#46155a",
+             "#40e8f8", "#1a7f9c", "#ffa08c", "#a06818", "#ffc838", "#4b1530"])
 # 1 black 2 grey 3 bone 4 bone light 5 red 6 red light 7 magenta 8 magenta dark 9 violet 10 cyan 11 cyan dark
 # 12 pink 13 amber 14 gold 15 wine
 

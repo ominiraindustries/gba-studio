@@ -234,7 +234,7 @@ def build():
         frames += fr
         durs += [ms] * n
     out["wizard"] = (frames, durs, tags, sub)
-    ghost_sub = [hexc("#341d60"), hexc("#fd3ffd")]
+    ghost_sub = [hexc("#341d60"), hexc("#ff3838")]
     ghost = [rim(flat(np.where((f[..., 3:] >= 128) & (np.arange(32)[None, :, None] > -1), f, 0).astype(np.uint8),
                       ghost_sub[0]), ghost_sub[1]) if (f[..., 3] >= 128).any() else f for f in frames]
     # keep the ghost inside the frame: shrink the rim where it touches the border (rim() never grows past it)

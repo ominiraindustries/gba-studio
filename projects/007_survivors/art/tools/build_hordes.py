@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_block2 import ART, blank, put, get, rim, shift, line, disc, save, pal  # noqa: E402
 
 GHOST = pal(["#07060c", "#191935", "#34466e", "#36435b", "#8ca4b4", "#abc4d2", "#c8dfeb", "#40e8f8", "#1a7f9c",
-             "#c0fcff", "#3b2171", "#2d1153", "#fd3ffd", "#e020c0"])
+             "#c0fcff", "#3b2171", "#2d1153", "#ff3838", "#c81c28"])
 # 1 black 2 deep 3 rim 4 shade dark 5 shade 6 body 7 light 8 cyan eye 9 cyan dark 10 cyan white
 # 11-14 violet/magenta (wraith recolour slots)
 

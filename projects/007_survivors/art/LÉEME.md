@@ -9,6 +9,17 @@ El set anterior (pradera, colores vivos) está guardado en `old_style/` (no se e
 Fuente de verdad: los `.aseprite` de esta carpeta (modo **indexado**, 16 colores, **índice 0 = transparente**, una
 etiqueta por animación con sus tiempos). El build de Butano lee `graphics/*.bmp` + `.json`, que se exportan desde aquí.
 
+## Rojo en vez de rosa (G-65)
+
+El usuario pidió quitar el rosa: sólo se cambiaron **entradas de paleta** (mismos índices y píxeles) con
+`python -I art/tools/pink_to_red.py` y luego `build_art.py export`. Mapa: magenta `#fd3ffd` → rojo neón `#ff3838`,
+fucsia `#e020c0` → rojo hondo `#c81c28`, rosa claro `#ff9cf0` → rojo claro `#ffa08c`, cristal de Wendel `#ff70ff` →
+`#ff5a48`. También en `palette_c.json` y en las constantes de los generadores de `art/tools/`, para que no vuelva
+el rosa. `pink_to_red.py --check` lista los tonos rosados que queden en `graphics/` (se dejan a propósito el violeta
+oscuro `#46155a`, el malva oscuro de las sombras de texto `#6c385a` y el índice 0 `#ff00ff` de los `tmp_*`).
+No toques: violetas y lilas (túnica de Wendel, cielos), la bola de fuego verde enemiga (G-61).
+Donde este documento dice "magenta" o "rosa" de una paleta, ahora es el rojo equivalente.
+
 ## Flujo
 
 ```
@@ -84,8 +95,8 @@ carta, `title_a.png` = ilustración del título); el resto está dibujado en `bu
 Todos los `hud_*`, `card`, `fx_levelup` y `logo` comparten la **paleta UI** (un solo `sprite_palette_ptr`). Mismos
 índices que antes, colores de estilo C: 1 contorno `#05050a`; 2 panel `#14162c`; 3 lila neón `#b070ff`; 4–6 marcos de
 acero frío `#1c2440 #34466e #5a74a8` (antes maderas); 7–8 cian neón `#1aa8d0 #80f4ff` (antes oros: logo, flechas
-"gold", "selected"); 9–10 panel de carta `#181c36 #22284a` (antes pergamino); 11–13 magenta de XP `#7a1478 #e020c0
-#ff9cf0`; 14 rojo `#ff3050`; 15 blanco `#f4f0ff`. `hud_slots` usa la paleta **recogibles** (la de `icons`).
+"gold", "selected"); 9–10 panel de carta `#181c36 #22284a` (antes pergamino); 11–13 magenta de XP `#7a1478 #c81c28
+#ffa08c`; 14 rojo `#ff3050`; 15 blanco `#f4f0ff`. `hud_slots` usa la paleta **recogibles** (la de `icons`).
 Texto: `text_ink` = blanco frío sobre el panel oscuro de la carta, `text_gold` = cian neón, `text_red` = rojo neón
 (los nombres se mantienen por el código).
 
@@ -199,7 +210,7 @@ Colores exactos en `tools/restyle_c.py` (tablas `WIZ`, `UI`, `PICK`, `FX`, `CLAS
   tela de la plantilla pasada al verde azulado de las costillas, para que pese como la vista frontal.
 - **Neones** (`python -I art/tools/neon_c.py`, PISA `gems.aseprite`): añade a `palette_c.json` cian `#1a7f9c #40e8f8
   #c0fcff` y oro `#a06818 #ffc838 #fff4b0` (lista `neons`, con los magentas de la muestra). Recogibles: 2–3 cian, 4 oro
-  oscuro, 10 magenta `#fd3ffd`, 12–13 oro; FX: 7–9 hielo cian (Frost Ring, Blink).
+  oscuro, 10 magenta `#ff3838`, 12–13 oro; FX: 7–9 hielo cian (Frost Ring, Blink).
 - **goblin / orco**: personajes PixelLab v3 desde las muestras C 16 y C 20 (`raw/style_c2/goblin_c`, `orc_c`), walk
   plantilla de 4 frames en 5 direcciones + muerte de lado; paleta común de las muestras 16–21 con borde frío `#34466e`.
   Ojo VRAM: 32×32 en 5 direcciones = 64 tiles por dirección; con goblin y orco a la vez en caché llenó la VRAM de

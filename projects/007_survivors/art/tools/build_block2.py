@@ -286,7 +286,7 @@ def wolf():
 # ---------------------------------------------------------------- fire FX palette (ember, explosion, fire, dust)
 
 FIRE_PAL = pal(["#07060c", "#190922", "#4b1530", "#bc161b", "#e63c3c", "#a06818", "#ffc838", "#fff4b0", "#c8dfeb",
-                "#2a343d", "#36435b", "#8ca4b4", "#e020c0", "#fd3ffd", "#ff9cf0"])
+                "#2a343d", "#36435b", "#8ca4b4", "#c81c28", "#ff3838", "#ffa08c"])
 # 1 black 2 deep purple 3 wine 4 dark red 5 red 6 amber 7 gold 8 pale gold 9 white 10 smoke dark 11 smoke 12 dust
 # 13 magenta 14 neon magenta 15 pink
 
@@ -410,8 +410,8 @@ def fx_dust():
 
 # ---------------------------------------------------------------- fx_chain (FX palette, cyan neon)
 
-FX_PAL_HEX = ["#190922", "#c8dfeb", "#c8dfeb", "#ff9cf0", "#e020c0", "#e63c3c", "#c0fcff", "#40e8f8", "#1a7f9c",
-              "#346675", "#c8dfeb", "#fd3ffd", "#e020c0", "#3b2171", "#07060c"]
+FX_PAL_HEX = ["#190922", "#c8dfeb", "#c8dfeb", "#ffa08c", "#c81c28", "#e63c3c", "#c0fcff", "#40e8f8", "#1a7f9c",
+              "#346675", "#c8dfeb", "#ff3838", "#c81c28", "#3b2171", "#07060c"]
 FX_PAL = pal(FX_PAL_HEX)   # = fx_spark / fx_impact palette (shared slot)
 
 

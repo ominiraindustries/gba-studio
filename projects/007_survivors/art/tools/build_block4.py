@@ -55,8 +55,8 @@ def nearest_master(rgb):
 
 
 # ---------------------------------------------------------------- shop_icons (UI palette = hud_xp)
-# UI: 1 #07060c outline, 2 #0c1626, 3 #fd3ffd, 4 #21263b, 5 #34466e, 6/7 #4b8787, 8 #c8dfeb, 9 #191935, 10 #21263b,
-# 11 #46155a, 12 #e020c0, 13 #ff9cf0, 14 #e63c3c, 15 #c8dfeb
+# UI: 1 #07060c outline, 2 #0c1626, 3 #ff3838, 4 #21263b, 5 #34466e, 6/7 #4b8787, 8 #c8dfeb, 9 #191935, 10 #21263b,
+# 11 #46155a, 12 #c81c28, 13 #ffa08c, 14 #e63c3c, 15 #c8dfeb
 O, PN, MG, DK, ST, TL, WH, NV, PU, MA, PK, RD = 1, 2, 3, 4, 5, 6, 8, 9, 11, 12, 13, 14
 
 
@@ -249,15 +249,15 @@ GROUND_PALETTES = {   # ground.bmp: 1 #07060c 2-3 #0c0d1c 4 #191935 5 #1a3645 6-
                     "#290c36", "#4b1530"],
 }
 PROPS_PALETTES = {    # props: 1 #07060c 2 #0c0d1c 3 #0c1626 4 #1c242c 5 #2a343d 6 #2f3551 7 #34466e 8 #4b8787
-                      # 9 #8ca4b4 10 #1a3645 11 #22525b 12 #abc4d2 13 #c8dfeb 14 #e020c0 15 #abc4d2
+                      # 9 #8ca4b4 10 #1a3645 11 #22525b 12 #abc4d2 13 #c8dfeb 14 #c81c28 15 #abc4d2
     "props_graveyard": ["#07060c", "#07060c", "#0c0d1c", "#0c1626", "#1c242c", "#2d434a", "#2a343d", "#344d53",
-                        "#4b8787", "#8ca4b4", "#1e434e", "#2a5d69", "#abc4d2", "#c8dfeb", "#fd3ffd", "#abc4d2"],
+                        "#4b8787", "#8ca4b4", "#1e434e", "#2a5d69", "#abc4d2", "#c8dfeb", "#ff3838", "#abc4d2"],
     "props_keep": ["#07060c", "#07060c", "#0c0d1c", "#190922", "#1c242c", "#2a343d", "#2f3551", "#4b1530",
                    "#e63c3c", "#8ca4b4", "#2a012f", "#bc161b", "#abc4d2", "#c8dfeb", "#ffc838", "#abc4d2"],
 }
 # Sprite recolours (same tiles; DISENO_CONTENIDO C2 / C4).
 SPRITE_PALETTES = {
-    # wizard: 1 #0c0d1c 2 #290c36 3 #191935 4 #2d1153 5 #21263b 6 #3b2171 7 #36435b 8 #fd3ffd crystal 9 #8ca4b4 rim
+    # wizard: 1 #0c0d1c 2 #290c36 3 #191935 4 #2d1153 5 #21263b 6 #3b2171 7 #36435b 8 #ff3838 crystal 9 #8ca4b4 rim
     "wizard_cinda": ("wizard", {2: "#4b1530", 3: "#190922", 4: "#bc161b", 5: "#2a343d", 6: "#e63c3c", 7: "#2a343d",
                                 8: "#ffc838", 9: "#eecf74"}),
     "wizard_morrow": ("wizard", {2: "#122635", 3: "#0c1626", 4: "#1e434e", 5: "#1c242c", 6: "#2a5d69", 7: "#2d434a",
@@ -265,15 +265,15 @@ SPRITE_PALETTES = {
     # goblin/orc (pieles verdes): 7 #1a3645 8 #2f3551 9 #36435b 12 #346675 14 #a06818 eyes
     "rotten": ("goblin", {4: "#1c242c", 5: "#2a343d", 7: "#22525b", 8: "#2a5d69", 9: "#4b8787", 12: "#4b8787",
                           10: "#2d434a", 14: "#e63c3c"}),
-    # bat/skeleton (no-muertos): 7 #3b2171 wings 12 #fd3ffd 9-10 reds 13-15 bones
+    # bat/skeleton (no-muertos): 7 #3b2171 wings 12 #ff3838 9-10 reds 13-15 bones
     "crow": ("bat", {6: "#21263b", 7: "#2f3551", 8: "#36435b", 12: "#ffc838", 9: "#a06818", 10: "#ffc838",
                      13: "#36435b", 14: "#8ca4b4", 15: "#abc4d2"}),
     "grey_flesh": ("skeleton", {13: "#2a343d", 14: "#36435b", 15: "#8ca4b4", 11: "#344d53", 6: "#2d434a",
-                                7: "#1c242c", 10: "#fd3ffd", 9: "#e020c0"}),
-    "red_bone": ("skeleton", {13: "#bc161b", 14: "#e63c3c", 15: "#ff9cf0", 11: "#4b1530", 6: "#2a012f",
+                                7: "#1c242c", 10: "#ff3838", 9: "#c81c28"}),
+    "red_bone": ("skeleton", {13: "#bc161b", 14: "#e63c3c", 15: "#ffa08c", 11: "#4b1530", 6: "#2a012f",
                               7: "#46155a", 10: "#ffc838", 9: "#a06818"}),
     # ghost: 3 rim 5-7 body 8-10 eyes
-    "violet": ("ghost", {3: "#3b2171", 4: "#2d1153", 5: "#46155a", 6: "#e020c0", 7: "#ff9cf0", 2: "#2a012f"}),
+    "violet": ("ghost", {3: "#3b2171", 4: "#2d1153", 5: "#46155a", 6: "#c81c28", 7: "#ffa08c", 2: "#2a012f"}),
 }
 
 
@@ -371,7 +371,7 @@ def stage_cards():
     meadow = scene(["#07060c", "#07060c", "#0c0d1c", "#0c0d1c", "#191935", "#1a3645", "#0c1626", "#0c1626",
                     "#122635", "#2f3551"],
                    ["#07060c", "#07060c", "#0c0d1c", "#0c1626", "#1c242c", "#2a343d", "#2f3551", "#34466e", "#4b8787",
-                    "#8ca4b4", "#1a3645", "#22525b", "#abc4d2", "#c8dfeb", "#e020c0", "#abc4d2"],
+                    "#8ca4b4", "#1a3645", "#22525b", "#abc4d2", "#c8dfeb", "#c81c28", "#abc4d2"],
                    [("tree", 4, 10), ("mushrooms", 70, 78), ("rock", 86, 30), ("tall_grass", 40, 92),
                     ("rune_stone", 66, 40)], 1)
     grave = scene(GROUND_PALETTES["ground_graveyard"], PROPS_PALETTES["props_graveyard"],
@@ -381,7 +381,7 @@ def stage_cards():
     # locked: the graveyard scene sunk into darkness
     lock = grave.point(lambda v: v // 3)
     palette, idx, frames = card_from([meadow, grave, keep, lock], ["#07060c", "#34466e", "#8ca4b4", "#c8dfeb",
-                                                                    "#fd3ffd"])
+                                                                    "#ff3838"])
     borders = [("#07060c", "#34466e", "#8ca4b4"), ("#07060c", "#344d53" if hexc("#344d53") in idx else "#34466e",
                                                      "#8ca4b4"),
                ("#07060c", "#34466e", "#8ca4b4"), ("#07060c", "#34466e", "#34466e")]
@@ -416,8 +416,8 @@ def stage_cards():
 
 
 # ---------------------------------------------------------------- FX palette gold + new FX
-# FX palette: 1 #190922 2 #c8dfeb 3 (=2) 4 #ff9cf0 5 #e020c0 6 #e63c3c 7 #c0fcff 8 #40e8f8 9 #1a7f9c 10 #346675
-# 11 (=2) 12 #fd3ffd 13 (=5) 14 #3b2171 15 #07060c.  3, 11 and 13 duplicate other entries: their pixels are moved to
+# FX palette: 1 #190922 2 #c8dfeb 3 (=2) 4 #ffa08c 5 #c81c28 6 #e63c3c 7 #c0fcff 8 #40e8f8 9 #1a7f9c 10 #346675
+# 11 (=2) 12 #ff3838 13 (=5) 14 #3b2171 15 #07060c.  3, 11 and 13 duplicate other entries: their pixels are moved to
 # the twin and the slots become gold: 3 #a06818, 11 #ffc838, 13 #fff4b0 (no visible change to the old FX).
 FX_FILES = ["fx_spark", "fx_rune", "fx_frost", "fx_impact", "fx_poof", "fx_aura", "fx_nova", "fx_nova_spark",
             "fx_blink", "fx_chain", "shadow_small", "shadow_big"]
@@ -518,7 +518,7 @@ def fx_star():
 
 
 # ---------------------------------------------------------------- icons +10..16 (recogibles palette)
-# 1 #07060c 2 #1a7f9c 3 #40e8f8 4 #a06818 5 #346675 6 #8ca4b4 7 #c8dfeb 8 #46155a 9 #e63c3c 10 #fd3ffd 11 #4b1530
+# 1 #07060c 2 #1a7f9c 3 #40e8f8 4 #a06818 5 #346675 6 #8ca4b4 7 #c8dfeb 8 #46155a 9 #e63c3c 10 #ff3838 11 #4b1530
 # 12 #ffc838 13 #fff4b0 14 #c8dfeb 15 #2a343d
 def ic_moon_lance():
     m = blank(16, 16)

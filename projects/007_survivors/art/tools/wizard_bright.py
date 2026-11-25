@@ -18,7 +18,7 @@ ASEPRITE = r"C:\Program Files (x86)\Steam\steamapps\common\Aseprite\Aseprite.exe
 # 1 inner outline, 2/3 deep shade, 4 robe shade, 5/7 staff-hat greys, 6 robe, 8 crystal, 9 light rim
 RECIPES = {
     "wizard": {1: "#1c1838", 2: "#4a2060", 3: "#2e2c58", 4: "#6a48b8", 5: "#3c4466", 6: "#9878e8", 7: "#5a6c8c",
-               8: "#ff70ff", 9: "#c8b8f8"},
+               8: "#ff5a48", 9: "#c8b8f8"},
     "wizard_cinda_palette": {1: "#2a1418", 2: "#6a2038", 3: "#3a1430", 4: "#d03a2c", 5: "#4a4c58", 6: "#f06048",
                              7: "#4a4c58", 8: "#ffc838", 9: "#eecf74"},
     "wizard_morrow_palette": {1: "#0e1c26", 2: "#1e4258", 3: "#1a2c44", 4: "#2e6e80", 5: "#3a4a58", 6: "#4a9cb0",
