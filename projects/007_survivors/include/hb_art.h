@@ -439,6 +439,12 @@ namespace hb::art
     inline constexpr const bn::sound_item& sfx_skull = bn::sound_items::sfx_skull;
     inline constexpr const bn::sound_item& sfx_teleport = bn::sound_items::sfx_teleport;
     inline constexpr const bn::sound_item& sfx_bone = bn::sound_items::sfx_bone;
+    // Block 7 (9c0e439): Ember Dragon breath, meteor impact, BURST explosion, Iron Champion slash.
+    inline constexpr const bn::sound_item& sfx_breath = bn::sound_items::sfx_breath;   // 1.48 s
+    inline constexpr const bn::sound_item& sfx_meteor = bn::sound_items::sfx_meteor;   // 1.45 s
+    inline constexpr const bn::sound_item& sfx_burst = bn::sound_items::sfx_burst;     // 0.98 s
+    inline constexpr const bn::sound_item& sfx_slash = bn::sound_items::sfx_slash;     // 0.87 s
+    inline constexpr const bn::sound_item& sfx_error = bn::sound_items::sfx_error;     // G-62 empty Nova click
     inline constexpr const bn::sound_item& jingle_victory = bn::sound_items::jingle_victory;
     inline constexpr const bn::sound_item& jingle_defeat = bn::sound_items::jingle_defeat;
     inline constexpr const bn::sound_item& jingle_boss_down = bn::sound_items::jingle_boss_down;
@@ -449,6 +455,8 @@ namespace hb::art
     inline constexpr const bn::music_item& music_graveyard = bn::music_items::music_graveyard;
     inline constexpr const bn::music_item& music_boss = bn::music_items::music_boss;
     inline constexpr const bn::music_item& music_keep = bn::music_items::music_keep;
+    inline constexpr const bn::music_item& music_final = bn::music_items::music_final;   // ending sequence
+
     constexpr int music_volume_pct = 55;
 }
 

@@ -134,6 +134,7 @@ volatile int test_ring_postponed;     // RING formations postponed 10 s (< 70 % 
 volatile int test_relic;              // G-58: relic of the run (-1 none)
 volatile int test_relic_fx;           // G-58: relic effects fired (Ember Heart bursts, Feather frost, Sigil heals...)
 volatile int test_phoenix;            // G-58: Phoenix Ember revivals
+volatile int test_nova_denied;        // G-62: A presses with the Nova meter not full
 volatile int test_evo_fx;             // G-58: Tempest strikes + Eclipse gem pulls
 volatile int test_landmark_dist;      // G-58: px from the start to the nearest landmark (9999 none within 5 chunks)
 volatile int test_landmark_events;    // G-58: 1 shrine in a Stone Circle, 2 Crypt Gate cursed chest, 4 throne chest
@@ -894,6 +895,7 @@ namespace
         int16_t angle = 0;
         uint8_t kind = 0;
         uint8_t damage = 0;
+        bool green = false;   // G-61: holds the green fireball palette
 
         explicit shot(bn::sprite_ptr&& s) :
             sprite(bn::move(s))
@@ -1349,6 +1351,7 @@ namespace
         bn::array<bn::color, 16> _elite_colors[type_count][4];   // swift, shielded, splitting, treasure gold
         bn::array<bn::color, 16> _boss_white_colors;
         bn::array<bn::color, 16> _wolf_red_colors;
+        bn::array<bn::color, 16> _fireball_colors;     // G-61: enemy fireball, sickly green (not Ember Toss orange)
         bn::optional<bn::sprite_palette_ptr> _wolf_red_pal;
         int _crouching = 0;        // wolves crouching in the previous frame (max 3 at once)
         int _crouching_now = 0;
@@ -1450,6 +1453,8 @@ namespace
         int _nova_flash = 0;
         bool _nova_hint_done = false;
         int _last_nova_shown = -1;
+        int _nova_deny_t = 0;    // G-62: meter blink after A with the meter not full
+        int _nova_deny_cd = 0;   // G-62: frames until the dull click can play again
         bn::vector<bn::sprite_ptr, 2> _nova_bar;
         bn::vector<bn::sprite_ptr, 2> _nova_text;
 
@@ -1563,6 +1568,7 @@ namespace
         int _boss_state = 0;
         int _boss_timer = 0;
         int _boss_flash = 0;
+        int _boss_flash_cd = 0;                                // G-60: frames until the hit flash can re-arm
         int _boss_rune_cd = 0;
         uint8_t _boss_frost_pulse = 0;
         int _boss_wave_t = 0;
@@ -1594,6 +1600,9 @@ namespace
         static constexpr int f3_takeoff = 10;     // Champion crouch, Dragon take-off
         static constexpr int f3_land = 11;        // Dragon landing shadow
         static constexpr int hit_from_wizard = 1 << 30;
+        static constexpr int boss_flash_frames = 4;    // G-60
+        static constexpr int boss_flash_gap = 12;      // G-60: frames of normal art between boss flashes
+
         uint16_t _intro_uid = 0;
         int _ring_wanted = 0;
         int _ring_retry_t = 0;
@@ -1752,10 +1761,17 @@ namespace
         // Butano keeps a handle per playing sound (8 with 4 channels): track estimated lengths and keep <= 6 alive.
         int _sounds_this_frame = 0;
         int _sound_slots[6] = {};
+        int _burst_sound_cd = 0;
 
         void _tick_sounds()
         {
             _sounds_this_frame = 0;
+
+            if(_burst_sound_cd)
+            {
+                --_burst_sound_cd;
+            }
+
 
             for(int& slot : _sound_slots)
             {
@@ -1787,6 +1803,14 @@ namespace
             else if(item == art::sfx_nova || item == art::sfx_wave || item == art::sfx_howl || item == art::sfx_horn)
             {
                 length = 80;
+            }
+            else if(item == art::sfx_breath || item == art::sfx_meteor)
+            {
+                length = 89;
+            }
+            else if(item == art::sfx_burst || item == art::sfx_slash)
+            {
+                length = 59;
             }
             else if(item == art::sfx_poof || item == art::sfx_blink || item == art::sfx_explosion ||
                     item == art::sfx_stomp || item == art::sfx_chest || item == art::sfx_coin_burst)
@@ -1844,6 +1868,22 @@ namespace
                 int level = bn::min(31, 6 + lum);
                 _gold_arrow_colors[k] = k == 0 ? c : bn::color(level, level * 4 / 5, level / 5);
             }
+
+            // G-61: enemy fireballs share fx_ember's orange on the F3 lava floor; recolour the ramp (indices 3-8 of
+            // fx_fireball: rim, dark, body, ember, core, hot core) to a sickly green with a near-black rim.
+            bn::span<const bn::color> fireball_colors = art::fx_fireball.palette_item().colors_ref();
+
+            for(int k = 0; k < 16 && k < fireball_colors.size(); ++k)
+            {
+                _fireball_colors[k] = fireball_colors[k];
+            }
+
+            _fireball_colors[3] = bn::color(2, 5, 2);
+            _fireball_colors[4] = bn::color(6, 14, 3);
+            _fireball_colors[5] = bn::color(10, 22, 4);
+            _fireball_colors[6] = bn::color(8, 16, 3);
+            _fireball_colors[7] = bn::color(22, 31, 8);
+            _fireball_colors[8] = bn::color(29, 31, 24);
 
             // Elite tint (§4 2b): Swift = gold, Shielded = cyan; computed from whatever palette the item has.
             const bn::color tints[4] = { bn::color(31, 26, 4), bn::color(8, 28, 31), bn::color(30, 8, 28),
@@ -2651,6 +2691,23 @@ namespace
             if((bn::keypad::a_pressed() || _bot_c) && _nova >= nova_max)
             {
                 _cast_nova();
+            }
+            else if(bn::keypad::a_pressed() && ! _bot_c)
+            {
+                // G-62: every action answers; a short meter blink and a quiet click, the click at most every 20 f.
+                _nova_deny_t = 8;
+                test_nova_denied = test_nova_denied + 1;
+
+                if(_nova_deny_cd == 0)
+                {
+                    _nova_deny_cd = 20;
+                    _play(art::sfx_error, fixed(0.25));
+                }
+            }
+
+            if(_nova_deny_cd)
+            {
+                --_nova_deny_cd;
             }
             fixed speed = player_speed * _speed_multiplier();
             fixed tx = speed * ax;
@@ -3917,7 +3974,9 @@ namespace
             arrow.set_tiles(art::edge_arrow.tiles_item(), frame + first);
             arrow.set_horizontal_flip(dx < 0);
             arrow.set_vertical_flip(dy > 0);
-            arrow.set_position(bn::max(-110, bn::min(110, dx)), bn::max(-58, bn::min(70, dy)));
+            // The top HUD row (Lv, clock, "G n") ends at y -60: the 16x16 arrow stays below it.
+            arrow.set_position(bn::max(-110, bn::min(110, dx)), bn::max(-50, bn::min(70, dy)));
+
         }
 
         void _begin_swarm_warning(int kind, int frames)
@@ -6334,7 +6393,12 @@ namespace
                                 art::explosion_anim.count * art::explosion_anim.frame_time, 4);
             }
 
-            _play(art::sfx_explosion, fixed(0.4));
+            if(_burst_sound_cd == 0)
+            {
+                _burst_sound_cd = 16;   // chains: one 1 s sample at a time keeps the 6 sound slots free
+                _play(art::sfx_burst, fixed(0.4));
+            }
+
             test_bursts = test_bursts + 1;
             int x = to_int(p.x());
             int y = to_int(p.y());
@@ -6414,7 +6478,7 @@ namespace
 
                 _spawn_particle(m.pos, fixed_point(), art::fx_explosion, art::explosion_anim,
                                 art::explosion_anim.count * art::explosion_anim.frame_time, 4);
-                _play(art::sfx_explosion, fixed(0.5));
+                _play(art::sfx_meteor, fixed(0.5));
                 _shake = bn::max(_shake, 4);
 
                 if(px * px + py * py <= (16 + player_half_box) * (16 + player_half_box))
@@ -6754,6 +6818,25 @@ namespace
                                           kind == shot_fireball ? art::fx_fireball : art::fx_bone;
             shot& s = _shots.emplace_back(_world_sprite(item, p, 0, 6));
             s.pos = p;
+
+            // G-61: the green variant takes a palette only while 3 are free (else the orange art), shared by fireballs.
+            if(kind == shot_fireball)
+            {
+                bool shared = false;
+
+                for(const shot& o : _shots)
+                {
+                    shared = shared || o.green;
+                }
+
+                if(shared || bn::sprite_palettes::available_colors_count() >= 48)
+                {
+                    s.sprite.set_palette(bn::sprite_palette_item(_fireball_colors, bn::bpp_mode::BPP_4));
+                    s.green = true;
+                }
+            }
+
+
             s.vel = vel;
             s.life = int16_t(life);
             s.kind = uint8_t(kind);
@@ -7684,7 +7767,7 @@ namespace
                 {
                     _boss->set_palette(_boss_palette_item());
                     _slash->set_tiles(art::fx_slash.tiles_item(), 1);
-                    _play(art::sfx_slam, fixed(0.7));
+                    _play(art::sfx_slash, fixed(0.7));
                     int px = to_int(_pos.x() - _boss_pos.x());
                     int py = to_int(_pos.y() - _boss_pos.y());
                     fixed_point u = unit(px, py);
@@ -7843,7 +7926,7 @@ namespace
                         _breath.push_back(_world_sprite(art::fx_breath, _dragon_mouth(), k % 3, 6));
                     }
 
-                    _play(art::sfx_explosion, fixed(0.4));
+                    _play(art::sfx_breath, fixed(0.5));
                     _boss_state = f3_act;
                     _boss_timer = 60;
                 }
@@ -8114,10 +8197,13 @@ namespace
             }
 
             _boss_hp -= damage;
-            _boss_flash = hit_flash_frames;
 
-            if(_fx.hit_flash && _boss)
+            // G-60: flash at most boss_flash_frames, then boss_flash_gap frames of normal art before it can
+            // re-arm, so several weapons do not keep the boss white and hide its telegraphs.
+            if(_fx.hit_flash && _boss && _boss_flash_cd == 0)
             {
+                _boss_flash = boss_flash_frames;
+                _boss_flash_cd = boss_flash_frames + boss_flash_gap;
                 _boss->set_palette(bn::sprite_palette_item(_boss_white_colors, bn::bpp_mode::BPP_4));
             }
 
@@ -8181,6 +8267,11 @@ namespace
                 }
 
                 return;
+            }
+
+            if(_boss_flash_cd)
+            {
+                --_boss_flash_cd;
             }
 
             if(_boss_flash && --_boss_flash == 0)
@@ -9928,6 +10019,13 @@ namespace
                                               (_nova * art::nova_meter_charge_frames) / nova_max);
             _nova_bar[0].set_tiles(art::nova_meter.tiles_item(), meter_frame);
 
+            if(_nova_deny_t)
+            {
+                --_nova_deny_t;
+                _nova_bar[0].set_visible(_nova_deny_t == 0 || (_nova_deny_t & 2) != 0);
+            }
+
+
             int nova_state = ready ? 1 + ((_t >> 4) & 1) : 0;
 
             if(force || nova_state != _last_nova_shown)
@@ -10367,7 +10465,14 @@ namespace
             _wizard.set_visible(! cards);
             _wizard_shadow.set_visible(! cards && _fx.shadows);
             _hp_bar.set_visible(! cards);
+
+            // The boss bar sits on the "LEVEL UP!" title row (y -56): hidden while the cards are up.
+            for(bn::sprite_ptr& s : _boss_bar)
+            {
+                s.set_visible(! cards);
+            }
         }
+
 
         void _push_enemies_out(int radius)
         {

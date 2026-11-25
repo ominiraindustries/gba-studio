@@ -31,6 +31,8 @@
 extern volatile int test_mode;
 volatile int test_screen;   // 1 title, 2 menu, 3 stage select, 4 shop, 5 records, 6 options, 7 ending, 8 credits
 volatile int test_title_star;   // 1: the title shows the ending star
+volatile int test_music_id;     // last music item requested (bn::music_items id)
+
 
 namespace hb
 {
@@ -125,6 +127,8 @@ namespace
 
     void play_music(const bn::music_item& item)
     {
+        test_music_id = item.id();
+
         if(! bn::music::playing() || bn::music::playing_item() != item)
         {
             item.play(music_volume(art::music_volume_pct));
@@ -881,7 +885,7 @@ void ending_sequence()
     test_screen = 7;
     bn::regular_bg_ptr bg = art::ending_bg.create_bg(8, 48);
     screen sc;
-    play_music(art::music_title);   // PROVISIONAL: no music_final yet (DISENO_RUTA block 7 audio)
+    play_music(art::music_final);
     constexpr const char* lines[3] = { "The Hex Moon fades.", "Wendel walks home at dawn.",
                                        "THE END - thanks for playing" };
 
