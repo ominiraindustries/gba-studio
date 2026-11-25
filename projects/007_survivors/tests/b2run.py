@@ -114,6 +114,17 @@ def main():
             inp.press("a", 60)
             seconds = 0
             os.environ.setdefault("SHOTS", str(inp.f - 100))
+    elif case == "walk":
+        # G-58 landmarks: God, hold WALK (e.g. "right+down") for WALK_F frames, then stand still SECONDS.
+        inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))   # same seeds as botc
+        menu(inp, [(ROW_GOD,)])
+        wf = int(os.environ.get("WALK_F", "300"))
+        inp.parts.append(f"{inp.f}-{inp.f + wf}:{os.environ['WALK']}")
+        inp.f += wf
+        for t in range(inp.f, inp.f + seconds * 60, 150):
+            inp.parts.append(f"{t}:a")              # closes level-up cards (and casts the Nova)
+        inp.f += seconds * 60
+        seconds = 0
     elif case == "times":
         # Tiempos (DISENO_RUTA block 2): profile C, no God, from 0:00, SEED 1-5 = frames waited on the title.
         inp = Inputs(start=60 + 13 * int(os.environ.get("SEED", "1")))

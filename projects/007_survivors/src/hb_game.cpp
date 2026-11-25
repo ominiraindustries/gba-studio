@@ -3504,6 +3504,11 @@ namespace
 
             // 2:00 Bat Swarm with a 1 s warning (§5, §6); 8:00 Wolf Pack (STAMPEDE, 90 f + howl); 9:15 Goblin Raid
             // (SWARM, 60 f).
+            if(_stage < 2)
+            {
+                _update_throne(second);   // block 6: Crypt Gate event + landmark scan (stage 3 calls it in f3)
+            }
+
             if(_stage == 1)
             {
                 _update_events_f2(s, second);
@@ -6109,7 +6114,10 @@ namespace
                                 ++r;
                             }
 
-                            best = bn::min(best, r);
+                            if(r < best % 10000)
+                            {
+                                best = r + 10000 * ((cx > 0 ? 1 : 0) | (cy > 0 ? 2 : 0));   // + quadrant (test walk)
+                            }
                         }
                     }
                 }
