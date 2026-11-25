@@ -1562,6 +1562,10 @@ namespace
         uint8_t _boss_frost_pulse = 0;
         int _boss_wave_t = 0;
         int _boss_title_t = 0;
+        const char* _banner_text = nullptr;                    // G-59: banner still to write (see _show_banner)
+        const bn::sprite_palette_item* _banner_palette = nullptr;
+        int _banner_step = 0;
+        int _banner_t = -1;
         int _boss_fight_t = 0;
         int _boss_phase = 1;
         int _boss_invuln = 0;
@@ -1722,6 +1726,8 @@ namespace
         static constexpr int wolf_pack_gap = 75;
         int _wolf_pack_cd = 0;
         int _create_budget = create_budget_per_frame;
+        static constexpr int hit_sparks_per_frame = 2;
+        int _hit_sparks_left = hit_sparks_per_frame;
         int _chain_jumps = 0;
         int _chain_damage = 0;
         int _chain_range = 0;
@@ -1977,6 +1983,7 @@ namespace
 
             ++_t;
             _create_budget = create_budget_per_frame;
+            _hit_sparks_left = hit_sparks_per_frame;
             test_prof[16] = bn::core::current_cpu_ticks();
             _prof_timer.restart();
             _update_player();
@@ -2002,6 +2009,7 @@ namespace
             _prof(9);
             _update_shrine();
             _update_timers();
+            _update_banner();
 
             if(_t == 600 * fps && test_level_at_600 == 0)
             {
@@ -3245,14 +3253,55 @@ namespace
         }
 
         // Big centred banner (boss names, CURSED!, THE HEX MOON RISES, STAGE CLEAR).
+        // perf (G-59): a 16x16 banner built in one frame cost ~1000 ticks on top of a boss spawn / evolution /
+        // kill frame. The text (always a literal) is written on the next play frames, one half per frame.
         void _show_banner(const char* text, const bn::sprite_palette_item& palette, int frames)
         {
             _boss_title.clear();
-            _big_text.set_center_alignment();
-            _big_text.set_palette_item(palette);
-            _big_text.generate(0, -30, text, _boss_title);
+            _banner_text = text;
+            _banner_palette = &palette;
+            _banner_step = 0;
+            _banner_t = _t;
+            _boss_title_t = frames + 3;
+        }
+
+        void _update_banner()
+        {
+            if(! _banner_text || _banner_t == _t)
+            {
+                return;   // not on the frame that asked for it (boss spawn, evolution, kill)
+            }
+
+            bn::string_view all(_banner_text);
+            int split = all.size() / 2;   // the space nearest the middle, else the middle letter
+
+            for(int d = 0, best = all.size(); d < all.size(); ++d)
+            {
+                if(all[d] == ' ' && abs_int(d - all.size() / 2) < best)
+                {
+                    best = abs_int(d - all.size() / 2);
+                    split = d;
+                }
+            }
+
+            int x = -_big_text.width(all) / 2;
+            bn::string_view part = all.substr(0, split);
+
+            if(_banner_step == 1)
+            {
+                x += _big_text.width(part);
+                part = all.substr(split);
+            }
+
+            _big_text.set_left_alignment();
+            _big_text.set_palette_item(*_banner_palette);
+            static_cast<void>(_big_text.generate_optional(x, -30, part, _boss_title));
             _big_text.set_palette_item(common::variable_16x16_sprite_font.item().palette_item());
-            _boss_title_t = frames;
+
+            if(++_banner_step >= 2)
+            {
+                _banner_text = nullptr;
+            }
         }
 
         void _make_room(int needed)
@@ -4456,6 +4505,13 @@ namespace
 
             if(_lance_t == 1 && _eclipse_v_damage > 0)
             {
+                // perf (G-59): the vertical arm's 4 sprites are built here too, a frame after the horizontal ones
+                // (8 new sprites on the cast frame cost ~1000 ticks).
+                for(int side = 2; side < 4; ++side)
+                {
+                    _create_lance_arm(side, fixed_point(), _eclipse_v_pos, 2);
+                }
+
                 // Eclipse: the vertical arm of the cross (|dx| <= half, |dy| <= 88).
                 for(int i = _enemies.size() - 1; i >= 0; --i)
                 {
@@ -4559,29 +4615,10 @@ namespace
             }
 
             // Eclipse: 4 arms of 2 pieces (8 sprites, as a Lv 4 lance: 12 measured 116 % on the cast frame,
-            // ~5 % per new sprite); otherwise 1-2 arms of 4.
-            for(int side = 0; side < (eclipse ? 4 : behind ? 2 : 1); ++side)
+            // ~5 % per new sprite; the vertical arm is built on the next frame); otherwise 1-2 arms of 4.
+            for(int side = 0; side < (behind ? 2 : 1); ++side)
             {
-                fixed_point arm = side < 2 ? (side ? fixed_point(-dir.x(), -dir.y()) : dir) : fixed_point(0, side == 2 ? -1 : 1);
-                const bn::sprite_affine_mat_ptr& mat = side == 0 ? *_lance_mat : side == 1 ? *_lance_mat_back :
-                                                       side == 2 ? *_lance_mat_up : *_lance_mat_down;
-
-                for(int k = 0; k < (eclipse ? 2 : 4); ++k)
-                {
-                    fixed_point c = _pos + fixed_point(0, -4) + arm * (16 + 32 * k);
-                    bn::optional<bn::sprite_ptr> sp = bn::sprite_items::fx_lance.create_sprite_optional(c, 0);
-
-                    if(! sp)
-                    {
-                        break;
-                    }
-
-                    sp->set_camera(_camera);
-                    sp->set_bg_priority(2);
-                    sp->set_z_order(3);
-                    sp->set_affine_mat(mat);
-                    _lance_sprites.push_back(bn::move(*sp));
-                }
+                _create_lance_arm(side, dir, _pos, eclipse ? 2 : 4);
             }
 
             _lance_t = 0;
@@ -4626,6 +4663,31 @@ namespace
                         break;
                     }
                 }
+            }
+        }
+
+        void _create_lance_arm(int side, const fixed_point& dir, const fixed_point& origin, int pieces)
+        {
+            fixed_point arm = side < 2 ? (side ? fixed_point(-dir.x(), -dir.y()) : dir) : fixed_point(0, side == 2 ? -1 : 1);
+            const bn::sprite_affine_mat_ptr& mat = side == 0 ? *_lance_mat : side == 1 ? *_lance_mat_back :
+                                                   side == 2 ? *_lance_mat_up : *_lance_mat_down;
+            int frame = _lance_t < 2 ? 0 : _lance_t < 6 ? 1 : 2;
+
+            for(int k = 0; k < pieces && ! _lance_sprites.full(); ++k)
+            {
+                fixed_point c = origin + fixed_point(0, -4) + arm * (16 + 32 * k);
+                bn::optional<bn::sprite_ptr> sp = bn::sprite_items::fx_lance.create_sprite_optional(c, frame);
+
+                if(! sp)
+                {
+                    break;
+                }
+
+                sp->set_camera(_camera);
+                sp->set_bg_priority(2);
+                sp->set_z_order(3);
+                sp->set_affine_mat(mat);
+                _lance_sprites.push_back(bn::move(*sp));
             }
         }
 
@@ -7995,13 +8057,10 @@ namespace
                 _boss_bar.push_back(bn::move(notch));
             }
 
-            _boss_title.clear();
-            _big_text.set_center_alignment();
             constexpr const char* names[9] = { "SLIME KING", "ORC WARCHIEF", "THORNWOOD TREANT", "BONE COLOSSUS",
                                                "BANSHEE", "THE LICH", "GARGOYLE LORD", "IRON CHAMPION",
                                                "EMBER DRAGON" };
-            _big_text.generate(0, -30, names[kind], _boss_title);
-            _boss_title_t = 2 * fps;
+            _show_banner(names[kind], common::variable_16x16_sprite_font.item().palette_item(), 2 * fps);
             _shake = 12;
             _play(art::sfx_boss);
         }
@@ -9555,8 +9614,10 @@ namespace
 
         void _spawn_hit_spark(const fixed_point& p)
         {
-            if(_fx.hit_flash)
+            // perf (G-59): <= 2 hit sparks per frame (visual only; a Starfall frame built one per impact, ~450 ticks).
+            if(_fx.hit_flash && _hit_sparks_left > 0)
             {
+                --_hit_sparks_left;
                 _spawn_particle(p, fixed_point(), art::fx_impact, { 0, 3, 2 }, 6, 2);
             }
         }
