@@ -36,6 +36,7 @@ MUSIC = {
     "graveyard": ("music/graveyard_loop.mp3", None, None, 16000),
     "keep": ("music/keep_loop.mp3", None, None, 16000),
     "shop": ("music/shop_loop.mp3", None, None, 16000),
+    "final": ("music/final_loop.mp3", None, None, 16000),
 }
 LOOPS_FILE = HERE / "music" / "loops.txt"   # lines: name loop_start loop_end (seconds, from get_music)
 
@@ -43,7 +44,7 @@ SFX = ["spark", "hit", "poof", "gem", "levelup", "card", "blink", "nova", "hurt"
        "howl", "horn", "stomp", "explosion", "zap", "chest", "coin_burst",
        # blocks 3-5
        "root_crack", "slam", "thorn", "curse_sting", "buy", "refund", "menu_move", "error", "evolve",
-       "wail", "arrow", "rise", "skull", "teleport", "bone"]
+       "wail", "arrow", "rise", "skull", "teleport", "bone", "breath", "meteor", "burst", "slash"]
 # Short one-shot jingles (no loop): same processing as SFX, saved as audio/<name>.wav (no sfx_ prefix).
 JINGLES = ["jingle_victory", "jingle_defeat", "jingle_unlock", "jingle_boss_down"]
 SFX_RATE = 16000
